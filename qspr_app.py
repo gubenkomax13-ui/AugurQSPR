@@ -279,11 +279,6 @@ except Exception as e:
 RESULTS_DIR = "results"
 DATA_BANK_FILE = "data_bank.csv"
 HELP_DIR = "help"
-SPECTRA_BANK_ONLINE_URL = (
-    "https://drive.google.com/drive/folders/"
-    "1OsxFY_Rs2K55tPVqoo1QhyB0hxwZPoKd?usp=drive_link"
-)
-
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(HELP_DIR, exist_ok=True)
 
@@ -8358,8 +8353,8 @@ with st.expander(
 
     else:
         st.info(
-            "Спектральная база Augur опубликована как подготовленная онлайн-директория. "
-            "Импорт, переиндексация и ручное пополнение базы из Streamlit сейчас не используются."
+            "Спектральная база Augur подключается автоматически. "
+            "Импорт, переиндексация и ручное пополнение базы скрыты в обычном режиме."
         )
 
     spectra_index = spectra_load_index()
@@ -8440,10 +8435,9 @@ with st.expander(
             st.markdown(
                 "Доступно спектров: "
                 f"**{len(idx_active)}**\n\n"
-                f"Источник: [подготовленная база Augur / Google Drive]({SPECTRA_BANK_ONLINE_URL})\n\n"
                 f"Статус: **{status_text}**\n\n"
-                "Онлайн-поиск, ручное скачивание новых спектров и служебное пополнение базы "
-                "в Streamlit сейчас не используются."
+                "База используется автоматически для проверки ваших SMILES. "
+                "Служебное пополнение, переиндексация и внешние загрузки не показываются."
             )
 
         # ------------------------------------------------------------
@@ -8785,33 +8779,40 @@ with st.expander(
         smiles_col=smiles_col_current
     )
 
-    st.subheader(t('spectra.search_settings'))
-    st.markdown(t('spectra.spectrum_types_title'))
+    if is_admin():
+        st.subheader(t('spectra.search_settings'))
+        st.markdown(t('spectra.spectrum_types_title'))
 
-    col_type_1, col_type_2, col_type_spacer = st.columns([1, 1, 6])
+        col_type_1, col_type_2, col_type_spacer = st.columns([1, 1, 6])
 
-    with col_type_1:
-        search_ir = st.checkbox(t('spectra.checkbox_ir'), value=True, key="spectra_type_ir")
+        with col_type_1:
+            search_ir = st.checkbox(t('spectra.checkbox_ir'), value=True, key="spectra_type_ir")
 
-    with col_type_2:
-        search_mass = st.checkbox(
-            t('spectra.checkbox_mass'),
-            value=True,
-            key="spectra_type_mass",
-        )
+        with col_type_2:
+            search_mass = st.checkbox(
+                t('spectra.checkbox_mass'),
+                value=True,
+                key="spectra_type_mass",
+            )
 
-    selected_spectrum_types = []
+        selected_spectrum_types = []
 
-    if search_ir:
-        selected_spectrum_types.append("IR")
+        if search_ir:
+            selected_spectrum_types.append("IR")
 
-    if search_mass:
-        selected_spectrum_types.append("Mass")
+        if search_mass:
+            selected_spectrum_types.append("Mass")
 
-    if not selected_spectrum_types:
-        st.warning(t('spectra.warning_select_type'))
+        if not selected_spectrum_types:
+            st.warning(t('spectra.warning_select_type'))
+        else:
+            st.caption(t('spectra.types_for_search', types=" + ".join(selected_spectrum_types)))
     else:
-        st.caption(t('spectra.types_for_search', types=" + ".join(selected_spectrum_types)))
+        search_ir = True
+        search_mass = True
+        selected_spectrum_types = ["IR", "Mass"]
+        st.subheader("Подходящие спектры для ваших веществ")
+        st.caption("Проверяются IR и Mass спектры из автоматически подключенной базы Augur.")
 
     # Быстрая проверка spectra_bank без тысяч повторных чтений spectra_index.csv
 
@@ -9143,6 +9144,82 @@ with st.expander(
             key="download_current_dataset_spectra_status_details"
         )
 
+    matched_spectra_rows = []
+
+    if not index_fast.empty and not compounds_for_search.empty:
+        matched_index = index_fast.copy()
+
+        for col in ["spectrum_id", "phase", "source", "source_database"]:
+            if col not in matched_index.columns:
+                matched_index[col] = ""
+
+        for _, compound_row in compounds_for_search.iterrows():
+            input_smiles = str(compound_row.get("input_smiles", "")).strip()
+            canonical_smiles_value = str(compound_row.get("canonical_smiles", "")).strip()
+            inchikey_value = str(compound_row.get("inchikey", "")).strip()
+
+            try:
+                row_number = int(compound_row.get("row_index", 0)) + 1
+            except Exception:
+                row_number = ""
+
+            match_mask = pd.Series(False, index=matched_index.index)
+
+            if inchikey_value:
+                match_mask = match_mask | (
+                    matched_index["inchikey"].astype(str).str.strip() == inchikey_value
+                )
+
+            if canonical_smiles_value:
+                match_mask = match_mask | (
+                    matched_index["canonical_smiles"].astype(str).str.strip() == canonical_smiles_value
+                )
+
+            compound_matches = matched_index[
+                match_mask
+                & matched_index["_spectrum_type_norm"].isin(selected_spectrum_types)
+            ].copy()
+
+            for _, spectrum_row in compound_matches.iterrows():
+                source_value = str(spectrum_row.get("source_database", "")).strip()
+
+                if not source_value or source_value.lower() in ["nan", "none", "unknown"]:
+                    source_value = str(spectrum_row.get("source", "")).strip()
+
+                matched_spectra_rows.append({
+                    "Строка": row_number,
+                    "SMILES": input_smiles or canonical_smiles_value,
+                    "InChIKey": inchikey_value,
+                    "Тип спектра": spectrum_row.get("_spectrum_type_norm", ""),
+                    "ID спектра": spectrum_row.get("spectrum_id", ""),
+                    "Фаза": spectrum_row.get("phase", ""),
+                    "Источник": source_value,
+                })
+
+    matched_spectra_df = pd.DataFrame(matched_spectra_rows)
+
+    if not is_admin():
+        st.subheader("Найденные спектры")
+
+        if matched_spectra_df.empty:
+            st.info("Для загруженных веществ совпавшие спектры в подключенной базе Augur не найдены.")
+        else:
+            st.dataframe(
+                matched_spectra_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+            matched_csv = matched_spectra_df.to_csv(index=False).encode("utf-8-sig")
+
+            st.download_button(
+                "Скачать найденные спектры CSV",
+                matched_csv,
+                "matched_augur_spectra.csv",
+                "text/csv",
+                key="download_matched_augur_spectra_csv"
+            )
+
     if is_admin():
         st.markdown(t('spectra.search_in_title'))
 
@@ -9202,7 +9279,7 @@ with st.expander(
         use_local_bank = True
         use_nist = False
         use_mona_mass = False
-        st.info('Используется только подготовленная спектральная база Augur. Внешний поиск NIST/MoNA доступен только администратору.')
+        st.caption("Используется только автоматически подключенная спектральная база Augur.")
 
     selected_sources = []
 
@@ -9224,7 +9301,8 @@ with st.expander(
             "mona_mass": t('spectra.source_label_mona'),
         }
 
-        st.caption(t('spectra.search_order', order=" → ".join([source_labels.get(s, s) for s in selected_sources])))
+        if is_admin():
+            st.caption(t('spectra.search_order', order=" → ".join([source_labels.get(s, s) for s in selected_sources])))
 
         if is_admin():
             with st.expander(t('spectra.cache_expander'), expanded=False):
@@ -10519,10 +10597,8 @@ with st.expander(
 
     else:
         st.info(
-            "Используется подготовленная спектральная база Augur. "
-            f"Онлайн-директория базы: {SPECTRA_BANK_ONLINE_URL}. "
-            "Поиск во внешних источниках, управление cache и очистка служебных результатов "
-            "скрыты в обычном режиме."
+            "Используется автоматически подключенная спектральная база Augur. "
+            "Внешний поиск, управление cache и очистка служебных результатов скрыты в обычном режиме."
         )
 
     st.subheader(t('spectra_desc.subheader'))
