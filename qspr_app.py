@@ -249,6 +249,8 @@ try:
         "AUGUR_SPECTRA_INDEX_FILE_ID",
         "AUGUR_SPECTRA_MANIFEST_URL",
         "AUGUR_SPECTRA_MANIFEST_FILE_ID",
+        "AUGUR_SPECTRA_SEARCH_CACHE_URL",
+        "AUGUR_SPECTRA_SEARCH_CACHE_FILE_ID",
     ]:
         try:
             _secret_value = st.secrets.get(_secret_key, "")
@@ -11188,12 +11190,24 @@ with st.expander(
                         "Значение": bank_status.get("manifest_rows", 0),
                     },
                     {
+                        "Параметр": "spectra_search_cache.csv найден",
+                        "Значение": "да" if bank_status.get("search_cache_exists") else "нет",
+                    },
+                    {
+                        "Параметр": "Строк в spectra_search_cache.csv",
+                        "Значение": bank_status.get("search_cache_rows", 0),
+                    },
+                    {
                         "Параметр": "AUGUR_SPECTRA_INDEX_* настроен",
                         "Значение": "да" if bank_status.get("remote_index_configured") else "нет",
                     },
                     {
                         "Параметр": "AUGUR_SPECTRA_MANIFEST_* настроен",
                         "Значение": "да" if bank_status.get("remote_manifest_configured") else "нет",
+                    },
+                    {
+                        "Параметр": "AUGUR_SPECTRA_SEARCH_CACHE_* настроен",
+                        "Значение": "да" if bank_status.get("remote_search_cache_configured") else "нет",
                     },
                     {
                         "Параметр": "Локальных IR processed CSV",

@@ -60,6 +60,8 @@ SPECTRA_REMOTE_INDEX_URL = os.environ.get("AUGUR_SPECTRA_INDEX_URL", "").strip()
 SPECTRA_REMOTE_INDEX_FILE_ID = os.environ.get("AUGUR_SPECTRA_INDEX_FILE_ID", "").strip()
 SPECTRA_REMOTE_MANIFEST_URL = os.environ.get("AUGUR_SPECTRA_MANIFEST_URL", "").strip()
 SPECTRA_REMOTE_MANIFEST_FILE_ID = os.environ.get("AUGUR_SPECTRA_MANIFEST_FILE_ID", "").strip()
+SPECTRA_REMOTE_SEARCH_CACHE_URL = os.environ.get("AUGUR_SPECTRA_SEARCH_CACHE_URL", "").strip()
+SPECTRA_REMOTE_SEARCH_CACHE_FILE_ID = os.environ.get("AUGUR_SPECTRA_SEARCH_CACHE_FILE_ID", "").strip()
 SPECTRA_REMOTE_MANIFEST_FILE = os.path.join(
     SPECTRA_BANK_DIR,
     "spectra_manifest.csv"
@@ -278,6 +280,36 @@ def spectra_ensure_remote_manifest():
     return False
 
 
+def spectra_ensure_remote_search_cache():
+    """
+    Подтягивает маленький spectra_search_cache.csv, если он настроен и локального файла нет.
+    """
+    if (
+        os.path.exists(SPECTRA_SEARCH_CACHE_FILE)
+        and os.path.getsize(SPECTRA_SEARCH_CACHE_FILE) > 0
+    ):
+        return True
+
+    try:
+        if SPECTRA_REMOTE_SEARCH_CACHE_URL:
+            return spectra_download_public_file(
+                SPECTRA_REMOTE_SEARCH_CACHE_URL,
+                SPECTRA_SEARCH_CACHE_FILE,
+                timeout=60
+            )
+
+        if SPECTRA_REMOTE_SEARCH_CACHE_FILE_ID:
+            return spectra_download_public_drive_file(
+                SPECTRA_REMOTE_SEARCH_CACHE_FILE_ID,
+                SPECTRA_SEARCH_CACHE_FILE,
+                timeout=60
+            )
+    except Exception:
+        return False
+
+    return False
+
+
 def spectra_normalize_bank_relative_path(path):
     """
     Приводит путь к виду относительно spectra_bank с прямыми слэшами.
@@ -344,8 +376,14 @@ def spectra_remote_bank_status():
         "manifest_file": SPECTRA_REMOTE_MANIFEST_FILE,
         "manifest_exists": os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE),
         "manifest_rows": 0,
+        "search_cache_file": SPECTRA_SEARCH_CACHE_FILE,
+        "search_cache_exists": os.path.exists(SPECTRA_SEARCH_CACHE_FILE),
+        "search_cache_rows": 0,
         "remote_index_configured": bool(SPECTRA_REMOTE_INDEX_URL or SPECTRA_REMOTE_INDEX_FILE_ID),
         "remote_manifest_configured": bool(SPECTRA_REMOTE_MANIFEST_URL or SPECTRA_REMOTE_MANIFEST_FILE_ID),
+        "remote_search_cache_configured": bool(
+            SPECTRA_REMOTE_SEARCH_CACHE_URL or SPECTRA_REMOTE_SEARCH_CACHE_FILE_ID
+        ),
         "local_ir_processed_files": 0,
         "local_mass_processed_files": 0,
     }
@@ -381,6 +419,21 @@ def spectra_remote_bank_status():
             status["manifest_rows"] = int(len(manifest_df))
     except Exception as e:
         status["manifest_error"] = str(e)
+
+    try:
+        if (
+            status["remote_search_cache_configured"]
+            or os.path.exists(SPECTRA_SEARCH_CACHE_FILE)
+        ):
+            spectra_ensure_remote_search_cache()
+
+        status["search_cache_exists"] = os.path.exists(SPECTRA_SEARCH_CACHE_FILE)
+
+        if status["search_cache_exists"]:
+            cache_df = pd.read_csv(SPECTRA_SEARCH_CACHE_FILE)
+            status["search_cache_rows"] = int(len(cache_df))
+    except Exception as e:
+        status["search_cache_error"] = str(e)
 
     try:
         if os.path.isdir(SPECTRA_IR_PROCESSED_DIR):
@@ -907,6 +960,8 @@ def spectra_load_search_cache():
         "message",
         "date_checked",
     ]
+
+    spectra_ensure_remote_search_cache()
 
     if os.path.exists(SPECTRA_SEARCH_CACHE_FILE):
         try:

@@ -95,15 +95,18 @@ IR/processed/IR_NIST_gas_XXXX_001_processed.csv,GOOGLE_DRIVE_FILE_ID
 Mass/processed/Mass_MASSBANK_gas_XXXX_001_processed.csv,GOOGLE_DRIVE_FILE_ID
 ```
 
-In Streamlit secrets add either direct URLs or file IDs for the two small files:
+In Streamlit secrets add either direct URLs or file IDs for the small service files:
 
 ```toml
 AUGUR_SPECTRA_INDEX_FILE_ID = "..."
 AUGUR_SPECTRA_MANIFEST_FILE_ID = "..."
+AUGUR_SPECTRA_SEARCH_CACHE_FILE_ID = "..." # optional
 ```
 
 The individual spectra are not listed in secrets; they are resolved through
-`spectra_manifest.csv` and downloaded on demand.
+`spectra_manifest.csv` and downloaded on demand. `spectra_search_cache.csv`
+is optional and stores service search history/statuses; it does not replace
+the manifest.
 
 Admin mode is enabled only through Streamlit secrets. In Streamlit Community Cloud, open the app settings and add:
 
