@@ -72,6 +72,14 @@ Python dependencies are installed from `requirements.txt`. System packages are i
 
 The application requires NumPy 1.x (`numpy<2`). If Streamlit Cloud previously installed NumPy 2.x, push the updated `requirements.txt` and reboot or redeploy the app from Streamlit Cloud.
 
+Admin mode is enabled only through Streamlit secrets. In Streamlit Community Cloud, open the app settings and add:
+
+```toml
+ADMIN_PASSWORD = "your-private-password"
+```
+
+Do not commit `.streamlit/secrets.toml` to GitHub.
+
 The public repository should not include private datasets, generated reports, local caches, or private model packages. These are excluded by `.gitignore`.
 
 ## Security Note
