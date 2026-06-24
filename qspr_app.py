@@ -26,6 +26,7 @@ import json
 import io
 import subprocess
 import importlib
+import hmac
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.linear_model import LinearRegression
@@ -3112,7 +3113,7 @@ def render_spectra_search_results_if_available():
     if status == "stopped_by_user":
         st.info("Поиск спектров остановлен пользователем. Показаны результаты уже выполненной работы.")
 
-    if st.button(t('spectra.clear_results_button'), key="clear_spectra_search_results_global"):
+    if is_admin() and st.button(t('spectra.clear_results_button'), key="clear_spectra_search_results_global"):
         del st.session_state.spectra_search_results
         st.session_state.pop("spectra_search_status", None)
         st.session_state.pop("spectra_search_total_tasks", None)
@@ -3569,6 +3570,68 @@ def load_markdown_help(help_path):
 def show_markdown_help(title, help_path, expanded=False):
     with st.expander(title, expanded=expanded):
         st.markdown(load_markdown_help(help_path))
+
+
+def get_admin_password_secret():
+    try:
+        return st.secrets.get("ADMIN_PASSWORD", "")
+    except Exception:
+        return ""
+
+
+def get_user_role():
+    if bool(st.session_state.get("admin_authenticated", False)):
+        return "admin"
+    return "user"
+
+
+def is_admin():
+    return get_user_role() == "admin"
+
+
+def is_user():
+    return get_user_role() == "user"
+
+
+def log_access_control(feature):
+    message = f"INFO | ACCESS_CONTROL | User attempted to open admin-only feature: {feature}."
+    add_log(message, stage="access_control", event="admin_only_blocked")
+
+
+def show_admin_only_notice(feature):
+    log_access_control(feature)
+    st.info("Эта функция доступна только администратору.")
+
+
+def render_admin_login_controls():
+    with st.sidebar.expander("Администратор", expanded=False):
+        if is_admin():
+            st.success("Режим администратора активен.")
+            if st.button("Выйти из режима администратора", key="admin_logout_button"):
+                st.session_state.admin_authenticated = False
+                st.rerun()
+            return
+
+        admin_password = get_admin_password_secret()
+        entered_password = st.text_input(
+            "Пароль администратора",
+            type="password",
+            key="admin_password_input",
+        )
+
+        if st.button("Войти", key="admin_login_button"):
+            if (
+                admin_password
+                and entered_password
+                and hmac.compare_digest(str(entered_password), str(admin_password))
+            ):
+                st.session_state.admin_authenticated = True
+                st.rerun()
+            else:
+                st.session_state.admin_authenticated = False
+                st.caption("Обычный пользовательский режим.")
+
+        st.caption("Без корректного пароля приложение работает в обычном режиме.")
 
 
 def show_compact_matplotlib_plot(fig, width=850, dpi=140):
@@ -6195,6 +6258,8 @@ def reset_project_state_for_new_file():
 
 st.title(t('app_title'))
 
+render_admin_login_controls()
+
 legacy_app_mode = st.session_state.get(
     "main_app_mode_code",
     st.session_state.get("main_app_mode"),
@@ -6218,9 +6283,15 @@ elif legacy_app_mode not in {"qspr", "prediction"}:
 else:
     st.session_state["main_app_mode_code"] = legacy_app_mode
 
+if not is_admin() and st.session_state.get("main_app_mode_code") == "prediction":
+    show_admin_only_notice("prediction_mode")
+    st.session_state["main_app_mode_code"] = "qspr"
+
+app_mode_options = ["qspr", "prediction"] if is_admin() else ["qspr"]
+
 app_mode = st.radio(
     t('mode.select'),
-    ["qspr", "prediction"],
+    app_mode_options,
     format_func=lambda mode: {
         "qspr": t('mode.qspr'),
         "prediction": t('mode.prediction'),
@@ -6228,6 +6299,9 @@ app_mode = st.radio(
     horizontal=True,
     key="main_app_mode_code",
 )
+
+if not is_admin():
+    st.caption('Режим "Прогноз свойства для новых веществ" доступен только администратору.')
 
 with st.sidebar:
     st.header(t('sidebar.title'))
@@ -6254,7 +6328,7 @@ with st.sidebar:
         else:
             st.warning(t('sidebar.padel_warning'))
 
-        if st.button(t('sidebar.update_desc_lists')):
+        if is_admin() and st.button(t('sidebar.update_desc_lists')):
             with st.spinner(t('sidebar.spinner_computing')):
                 lists = qspr_compute_descriptor_lists()
                 qspr_save_descriptor_lists(lists)
@@ -6287,16 +6361,20 @@ with st.sidebar:
         else:
             st.warning(t('sidebar.lists_not_created'))
 
-        with st.expander(t('sidebar.show_log')):
-            show_logs()
+        if is_admin():
+            with st.expander(t('sidebar.show_log')):
+                show_logs()
 
         st.divider()
 
-        st.toggle(
-            t('sidebar.show_data_bank'),
-            value=False,
-            key="show_data_bank_panel"
-        )
+        if is_admin():
+            st.toggle(
+                t('sidebar.show_data_bank'),
+                value=False,
+                key="show_data_bank_panel"
+            )
+        else:
+            st.session_state.show_data_bank_panel = False
 
 if app_mode == "prediction":
     qspr_show_standalone_prediction_page()
@@ -6305,7 +6383,7 @@ if app_mode == "prediction":
 st.header(t('header.qspr'))
 st.markdown(t('data_upload.instruction'))
 
-if app_mode != "prediction" and st.session_state.get("show_data_bank_panel", False):
+if app_mode != "prediction" and is_admin() and st.session_state.get("show_data_bank_panel", False):
     with st.expander(t('sidebar.manage_data_bank'), expanded=True):
         manage_data_bank()
 
@@ -8098,180 +8176,185 @@ with st.expander(
         expanded=False
     )
 
-    with st.expander(t('spectra.import_expander'), expanded=False):
-        st.markdown(t('spectra.import_section1_title'))
+    if is_admin():
+        with st.expander(t('spectra.import_expander'), expanded=False):
+            st.markdown(t('spectra.import_section1_title'))
 
-        st.caption(t('spectra.import_caption'))
+            st.caption(t('spectra.import_caption'))
 
-        uploaded_spectrum_files = st.file_uploader(
-            t('spectra.import_file_uploader'),
-            type=["jdx", "dx", "json", "txt", "csv"],
-            accept_multiple_files=True,
-            key="local_spectra_import_files"
-        )
-
-        local_import_type = st.selectbox(
-            t('spectra.import_type_select'),
-            ["auto", "IR", "Mass"],
-            index=0,
-            key="local_spectra_import_type"
-        )
-
-        overwrite_existing = st.checkbox(
-            t('spectra.import_overwrite_checkbox'),
-            value=False,
-            key="local_spectra_overwrite_existing"
-        )
-
-        st.caption(t('spectra.import_caption2'))
-
-        if uploaded_spectrum_files and st.button(
-            t('spectra.import_button'),
-            key="run_local_spectra_import"
-        ):
-            import_rows = []
-
-            temp_import_dir = os.path.join(
-                SPECTRA_BANK_DIR,
-                "_tmp_local_import"
+            uploaded_spectrum_files = st.file_uploader(
+                t('spectra.import_file_uploader'),
+                type=["jdx", "dx", "json", "txt", "csv"],
+                accept_multiple_files=True,
+                key="local_spectra_import_files"
             )
 
-            os.makedirs(temp_import_dir, exist_ok=True)
-
-            for uploaded_file in uploaded_spectrum_files:
-                safe_uploaded_name = spectra_safe_filename_part(
-                    uploaded_file.name
-                )
-
-                temp_path = os.path.join(
-                    temp_import_dir,
-                    safe_uploaded_name
-                )
-
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-
-                result = spectra_import_local_spectrum_file(
-                    filepath=temp_path,
-                    spectrum_type=local_import_type,
-                    compound_hint=None,
-                    overwrite_existing=overwrite_existing
-                )
-
-                record = result.get("record") or {}
-
-                import_rows.append({
-                    t('spectra.import_col_file'): uploaded_file.name,
-                    t('spectra.import_col_status'): result.get("status", ""),
-                    t('spectra.import_col_message'): result.get("message", ""),
-                    "spectrum_id": record.get("spectrum_id", ""),
-                    t('spectra.import_col_spectrum_type'): record.get("spectrum_type", ""),
-                    "InChIKey": record.get("inchikey", ""),
-                    t('spectra.import_col_name'): record.get("name", ""),
-                    t('spectra.import_col_points'): record.get("n_points_processed", ""),
-                    "processed_file": record.get("processed_file", ""),
-                })
-
-            import_report_df = pd.DataFrame(import_rows)
-
-            st.dataframe(
-                import_report_df,
-                use_container_width=True,
-                hide_index=True
+            local_import_type = st.selectbox(
+                t('spectra.import_type_select'),
+                ["auto", "IR", "Mass"],
+                index=0,
+                key="local_spectra_import_type"
             )
 
-            st.download_button(
-                t('spectra.import_download_report'),
-                import_report_df.to_csv(index=False).encode("utf-8-sig"),
-                "local_spectra_import_report.csv",
-                "text/csv",
-                key="download_local_spectra_import_report"
-            )
-
-        st.divider()
-
-        st.markdown(t('spectra.reindex_section_title'))
-
-        st.caption(t('spectra.reindex_caption'))
-
-        st.code(
-            f"IR:   {SPECTRA_IR_RAW_DIR}\n"
-            f"Mass: {SPECTRA_MASS_RAW_DIR}",
-            language="text"
-        )
-
-        col_reindex_1, col_reindex_2, col_reindex_3 = st.columns(3)
-
-        with col_reindex_1:
-            reindex_ir = st.checkbox(
-                t('spectra.reindex_ir_checkbox'),
-                value=True,
-                key="reindex_existing_ir_raw"
-            )
-
-        with col_reindex_2:
-            reindex_mass = st.checkbox(
-                t('spectra.reindex_mass_checkbox'),
-                value=True,
-                key="reindex_existing_mass_raw"
-            )
-
-        with col_reindex_3:
-            reindex_recursive = st.checkbox(
-                t('spectra.reindex_recursive_checkbox'),
+            overwrite_existing = st.checkbox(
+                t('spectra.import_overwrite_checkbox'),
                 value=False,
-                key="reindex_existing_raw_recursive"
+                key="local_spectra_overwrite_existing"
             )
 
-        if st.button(
-            t('spectra.reindex_button'),
-            key="run_reindex_existing_raw_spectra"
-        ):
-            reindex_report_df = spectra_reindex_existing_raw_spectra(
-                scan_ir=reindex_ir,
-                scan_mass=reindex_mass,
-                overwrite_existing=overwrite_existing,
-                recursive=reindex_recursive
+            st.caption(t('spectra.import_caption2'))
+
+            if uploaded_spectrum_files and st.button(
+                t('spectra.import_button'),
+                key="run_local_spectra_import"
+            ):
+                import_rows = []
+
+                temp_import_dir = os.path.join(
+                    SPECTRA_BANK_DIR,
+                    "_tmp_local_import"
+                )
+
+                os.makedirs(temp_import_dir, exist_ok=True)
+
+                for uploaded_file in uploaded_spectrum_files:
+                    safe_uploaded_name = spectra_safe_filename_part(
+                        uploaded_file.name
+                    )
+
+                    temp_path = os.path.join(
+                        temp_import_dir,
+                        safe_uploaded_name
+                    )
+
+                    with open(temp_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+
+                    result = spectra_import_local_spectrum_file(
+                        filepath=temp_path,
+                        spectrum_type=local_import_type,
+                        compound_hint=None,
+                        overwrite_existing=overwrite_existing
+                    )
+
+                    record = result.get("record") or {}
+
+                    import_rows.append({
+                        t('spectra.import_col_file'): uploaded_file.name,
+                        t('spectra.import_col_status'): result.get("status", ""),
+                        t('spectra.import_col_message'): result.get("message", ""),
+                        "spectrum_id": record.get("spectrum_id", ""),
+                        t('spectra.import_col_spectrum_type'): record.get("spectrum_type", ""),
+                        "InChIKey": record.get("inchikey", ""),
+                        t('spectra.import_col_name'): record.get("name", ""),
+                        t('spectra.import_col_points'): record.get("n_points_processed", ""),
+                        "processed_file": record.get("processed_file", ""),
+                    })
+
+                import_report_df = pd.DataFrame(import_rows)
+
+                st.dataframe(
+                    import_report_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                st.download_button(
+                    t('spectra.import_download_report'),
+                    import_report_df.to_csv(index=False).encode("utf-8-sig"),
+                    "local_spectra_import_report.csv",
+                    "text/csv",
+                    key="download_local_spectra_import_report"
+                )
+
+            st.divider()
+
+            st.markdown(t('spectra.reindex_section_title'))
+
+            st.caption(t('spectra.reindex_caption'))
+
+            st.code(
+                f"IR:   {SPECTRA_IR_RAW_DIR}\n"
+                f"Mass: {SPECTRA_MASS_RAW_DIR}",
+                language="text"
             )
 
-            st.dataframe(
-                reindex_report_df,
-                use_container_width=True,
-                hide_index=True
-            )
+            col_reindex_1, col_reindex_2, col_reindex_3 = st.columns(3)
 
-            n_added = int(
-                (reindex_report_df["status"] == "imported_local").sum()
-            )
+            with col_reindex_1:
+                reindex_ir = st.checkbox(
+                    t('spectra.reindex_ir_checkbox'),
+                    value=True,
+                    key="reindex_existing_ir_raw"
+                )
 
-            n_existing = int(
-                (
-                    (reindex_report_df["status"] == "already_registered")
-                    | (reindex_report_df["status"] == "already_in_bank")
-                ).sum()
-            )
+            with col_reindex_2:
+                reindex_mass = st.checkbox(
+                    t('spectra.reindex_mass_checkbox'),
+                    value=True,
+                    key="reindex_existing_mass_raw"
+                )
 
-            n_failed = len(reindex_report_df) - n_added - n_existing
+            with col_reindex_3:
+                reindex_recursive = st.checkbox(
+                    t('spectra.reindex_recursive_checkbox'),
+                    value=False,
+                    key="reindex_existing_raw_recursive"
+                )
 
-            col_r_1, col_r_2, col_r_3 = st.columns(3)
+            if st.button(
+                t('spectra.reindex_button'),
+                key="run_reindex_existing_raw_spectra"
+            ):
+                reindex_report_df = spectra_reindex_existing_raw_spectra(
+                    scan_ir=reindex_ir,
+                    scan_mass=reindex_mass,
+                    overwrite_existing=overwrite_existing,
+                    recursive=reindex_recursive
+                )
 
-            with col_r_1:
-                st.metric(t('spectra.reindex_metric_added'), n_added)
+                st.dataframe(
+                    reindex_report_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-            with col_r_2:
-                st.metric(t('spectra.reindex_metric_existing'), n_existing)
+                n_added = int(
+                    (reindex_report_df["status"] == "imported_local").sum()
+                )
 
-            with col_r_3:
-                st.metric(t('spectra.reindex_metric_failed'), n_failed)
+                n_existing = int(
+                    (
+                        (reindex_report_df["status"] == "already_registered")
+                        | (reindex_report_df["status"] == "already_in_bank")
+                    ).sum()
+                )
 
-            st.download_button(
-                t('spectra.reindex_download_report'),
-                reindex_report_df.to_csv(index=False).encode("utf-8-sig"),
-                "raw_jdx_reindex_report.csv",
-                "text/csv",
-                key="download_raw_jdx_reindex_report"
-            )
-           
+                n_failed = len(reindex_report_df) - n_added - n_existing
+
+                col_r_1, col_r_2, col_r_3 = st.columns(3)
+
+                with col_r_1:
+                    st.metric(t('spectra.reindex_metric_added'), n_added)
+
+                with col_r_2:
+                    st.metric(t('spectra.reindex_metric_existing'), n_existing)
+
+                with col_r_3:
+                    st.metric(t('spectra.reindex_metric_failed'), n_failed)
+
+                st.download_button(
+                    t('spectra.reindex_download_report'),
+                    reindex_report_df.to_csv(index=False).encode("utf-8-sig"),
+                    "raw_jdx_reindex_report.csv",
+                    "text/csv",
+                    key="download_raw_jdx_reindex_report"
+                )
+               
+
+    else:
+        st.info('Спектральная база Augur подключается из подготовленной базы. Импорт, переиндексация и обновление спектров доступны только администратору.')
+
     spectra_index = spectra_load_index()
 
     if spectra_index.empty:
@@ -8343,6 +8426,17 @@ with st.expander(
             mass=mass_count,
             other=other_count
         ))
+
+        if not is_admin():
+            st.subheader("Спектральная база Augur")
+            status_text = "подключена" if len(idx_active) > 0 else "не подключена"
+            st.info(
+                "Доступно спектров: "
+                f"{len(idx_active)}\n\n"
+                "Источник: подготовленная база Augur / Google Drive\n\n"
+                f"Статус: {status_text}\n\n"
+                "Онлайн-поиск и скачивание новых спектров доступны только администратору."
+            )
 
         # ------------------------------------------------------------
         # Объединённая сводка spectra_bank:
@@ -8670,7 +8764,7 @@ with st.expander(
                     key="download_spectra_combined_summary"
                 )
 
-    if st.checkbox(t('spectra.show_index_checkbox'), key="show_spectra_index"):
+    if is_admin() and st.checkbox(t('spectra.show_index_checkbox'), key="show_spectra_index"):
         if spectra_index.empty:
             st.info(t('spectra.index_empty'))
         else:
@@ -9041,58 +9135,66 @@ with st.expander(
             key="download_current_dataset_spectra_status_details"
         )
 
-    st.markdown(t('spectra.search_in_title'))
+    if is_admin():
+        st.markdown(t('spectra.search_in_title'))
 
-    st.caption(t('spectra.search_cascade'))
+        st.caption(t('spectra.search_cascade'))
 
-    st.markdown(t('spectra.main_sources_title'))
+        st.markdown(t('spectra.main_sources_title'))
 
-    col_src_1, col_src_2 = st.columns(2)
+        col_src_1, col_src_2 = st.columns(2)
 
-    with col_src_1:
-        use_local_bank = st.checkbox(
-            t('spectra.source_local_bank'),
-            value=True,
-            key="spectra_use_local_bank"
-        )
+        with col_src_1:
+            use_local_bank = st.checkbox(
+                t('spectra.source_local_bank'),
+                value=True,
+                key="spectra_use_local_bank"
+            )
 
-        use_nist = st.checkbox(
-            t('spectra.source_nist'),
-            value=True,
-            key="spectra_use_nist"
-        )
+            use_nist = st.checkbox(
+                t('spectra.source_nist'),
+                value=True,
+                key="spectra_use_nist"
+            )
 
-        use_mona_mass = st.checkbox(
-            t('spectra.source_mona'),
-            value=True,
-            key="spectra_use_mona_mass",
-            help=t('spectra.source_mona_help')
-        )
+            use_mona_mass = st.checkbox(
+                t('spectra.source_mona'),
+                value=True,
+                key="spectra_use_mona_mass",
+                help=t('spectra.source_mona_help')
+            )
 
-    with st.expander(t('spectra.extra_sources_title'), expanded=False):
-        use_local_jdx_folder = st.checkbox(
-            t('spectra.source_local_jdx'),
-            value=False,
-            key="spectra_use_local_jdx_folder",
-            disabled=True,
-            help=t('spectra.source_local_jdx_help')
-        )
+        with st.expander(t('spectra.extra_sources_title'), expanded=False):
+            use_local_jdx_folder = st.checkbox(
+                t('spectra.source_local_jdx'),
+                value=False,
+                key="spectra_use_local_jdx_folder",
+                disabled=True,
+                help=t('spectra.source_local_jdx_help')
+            )
 
-        use_spectralbench = st.checkbox(
-            t('spectra.source_spectralbench'),
-            value=False,
-            key="spectra_use_spectralbench",
-            disabled=True,
-            help=t('spectra.source_spectralbench_help')
-        )
+            use_spectralbench = st.checkbox(
+                t('spectra.source_spectralbench'),
+                value=False,
+                key="spectra_use_spectralbench",
+                disabled=True,
+                help=t('spectra.source_spectralbench_help')
+            )
 
-        use_nist_epa_srd35 = st.checkbox(
-            t('spectra.source_nist_epa'),
-            value=False,
-            key="spectra_use_nist_epa_srd35",
-            disabled=True,
-            help=t('spectra.source_nist_epa_help')
-        )
+            use_nist_epa_srd35 = st.checkbox(
+                t('spectra.source_nist_epa'),
+                value=False,
+                key="spectra_use_nist_epa_srd35",
+                disabled=True,
+                help=t('spectra.source_nist_epa_help')
+            )
+
+
+    else:
+        use_local_bank = True
+        use_nist = False
+        use_mona_mass = False
+        st.info('Используется только подготовленная спектральная база Augur. Внешний поиск NIST/MoNA доступен только администратору.')
 
     selected_sources = []
 
@@ -9116,807 +9218,701 @@ with st.expander(
 
         st.caption(t('spectra.search_order', order=" → ".join([source_labels.get(s, s) for s in selected_sources])))
 
-        with st.expander(t('spectra.cache_expander'), expanded=False):
-            st.caption(t('spectra.cache_caption'))
+        if is_admin():
+            with st.expander(t('spectra.cache_expander'), expanded=False):
+                st.caption(t('spectra.cache_caption'))
 
-            cache_df = spectra_load_search_cache()
+                cache_df = spectra_load_search_cache()
 
-            if cache_df.empty:
-                st.info(t('spectra.cache_empty'))
-            else:
-                cache_view = cache_df.copy()
+                if cache_df.empty:
+                    st.info(t('spectra.cache_empty'))
+                else:
+                    cache_view = cache_df.copy()
 
-                if "spectrum_type" not in cache_view.columns:
-                    cache_view["spectrum_type"] = ""
+                    if "spectrum_type" not in cache_view.columns:
+                        cache_view["spectrum_type"] = ""
 
-                cache_view["_spectrum_type_norm"] = cache_view["spectrum_type"].apply(
-                    spectra_normalize_spectrum_type
-                )
+                    cache_view["_spectrum_type_norm"] = cache_view["spectrum_type"].apply(
+                        spectra_normalize_spectrum_type
+                    )
 
-                n_cache_total = len(cache_view)
-                n_cache_ir = int((cache_view["_spectrum_type_norm"] == "IR").sum())
-                n_cache_mass = int((cache_view["_spectrum_type_norm"] == "Mass").sum())
+                    n_cache_total = len(cache_view)
+                    n_cache_ir = int((cache_view["_spectrum_type_norm"] == "IR").sum())
+                    n_cache_mass = int((cache_view["_spectrum_type_norm"] == "Mass").sum())
 
-                cache_col_1, cache_col_2, cache_col_3 = st.columns(3)
+                    cache_col_1, cache_col_2, cache_col_3 = st.columns(3)
 
-                with cache_col_1:
-                    st.metric(t('spectra.cache_total'), n_cache_total)
+                    with cache_col_1:
+                        st.metric(t('spectra.cache_total'), n_cache_total)
 
-                with cache_col_2:
-                    st.metric(t('spectra.cache_ir'), n_cache_ir)
+                    with cache_col_2:
+                        st.metric(t('spectra.cache_ir'), n_cache_ir)
 
-                with cache_col_3:
-                    st.metric(t('spectra.cache_mass'), n_cache_mass)
+                    with cache_col_3:
+                        st.metric(t('spectra.cache_mass'), n_cache_mass)
 
-                st.dataframe(
-                    cache_df.tail(100),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                    st.dataframe(
+                        cache_df.tail(100),
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
-            st.markdown(t('spectra.clear_cache_title'))
+                st.markdown(t('spectra.clear_cache_title'))
 
-            clear_col_1, clear_col_2, clear_col_3 = st.columns(3)
+                clear_col_1, clear_col_2, clear_col_3 = st.columns(3)
 
-            with clear_col_1:
-                if st.button(t('spectra.clear_ir_button'), key="clear_spectra_search_cache_ir"):
-                    try:
-                        cache_df = spectra_load_search_cache()
+                with clear_col_1:
+                    if st.button(t('spectra.clear_ir_button'), key="clear_spectra_search_cache_ir"):
+                        try:
+                            cache_df = spectra_load_search_cache()
 
-                        if not cache_df.empty and "spectrum_type" in cache_df.columns:
-                            work = cache_df.copy()
-                            work["_spectrum_type_norm"] = work["spectrum_type"].apply(
-                                spectra_normalize_spectrum_type
-                            )
-                            cache_df = work[
-                                work["_spectrum_type_norm"] != "IR"
-                            ].drop(columns=["_spectrum_type_norm"], errors="ignore")
+                            if not cache_df.empty and "spectrum_type" in cache_df.columns:
+                                work = cache_df.copy()
+                                work["_spectrum_type_norm"] = work["spectrum_type"].apply(
+                                    spectra_normalize_spectrum_type
+                                )
+                                cache_df = work[
+                                    work["_spectrum_type_norm"] != "IR"
+                                ].drop(columns=["_spectrum_type_norm"], errors="ignore")
 
-                            spectra_save_search_cache(cache_df)
+                                spectra_save_search_cache(cache_df)
 
-                        st.success(t('spectra.clear_ir_success'))
-                        st.rerun()
-
-                    except Exception as e:
-                        st.error(t('spectra.clear_error', error=e))
-
-            with clear_col_2:
-                if st.button(t('spectra.clear_mass_button'), key="clear_spectra_search_cache_mass"):
-                    try:
-                        cache_df = spectra_load_search_cache()
-
-                        if not cache_df.empty and "spectrum_type" in cache_df.columns:
-                            work = cache_df.copy()
-                            work["_spectrum_type_norm"] = work["spectrum_type"].apply(
-                                spectra_normalize_spectrum_type
-                            )
-                            cache_df = work[
-                                work["_spectrum_type_norm"] != "Mass"
-                            ].drop(columns=["_spectrum_type_norm"], errors="ignore")
-
-                            spectra_save_search_cache(cache_df)
-
-                        st.success(t('spectra.clear_mass_success'))
-                        st.rerun()
-
-                    except Exception as e:
-                        st.error(t('spectra.clear_error', error=e))
-
-            with clear_col_3:
-                if st.button(t('spectra.clear_all_button'), key="clear_spectra_search_cache_all"):
-                    try:
-                        cache_df = spectra_load_search_cache()
-                        spectra_save_search_cache(pd.DataFrame(columns=cache_df.columns))
-
-                        st.success(t('spectra.clear_all_success'))
-                        st.rerun()
-
-                    except Exception as e:
-                        st.error(t('spectra.clear_error', error=e))
-
-            st.markdown(t('spectra.clear_current_file_title'))
-
-            if st.button(
-                t('spectra.clear_current_file_button'),
-                key="clear_spectra_search_cache_current_file"
-            ):
-                try:
-                    cache_df = spectra_load_search_cache()
-
-                    if cache_df.empty:
-                        st.info(t('spectra.cache_already_empty'))
-                    else:
-                        if "inchikey" not in cache_df.columns:
-                            cache_df["inchikey"] = ""
-
-                        if "spectrum_type" not in cache_df.columns:
-                            cache_df["spectrum_type"] = ""
-
-                        current_inchikeys = set()
-
-                        if (
-                            "compounds_for_search" in locals()
-                            and compounds_for_search is not None
-                            and not compounds_for_search.empty
-                            and "inchikey" in compounds_for_search.columns
-                        ):
-                            current_inchikeys = set(
-                                compounds_for_search["inchikey"]
-                                .astype(str)
-                                .str.strip()
-                                .replace("", np.nan)
-                                .dropna()
-                                .tolist()
-                            )
-
-                        if not current_inchikeys:
-                            st.warning(t('spectra.no_inchikey_warning'))
-                        else:
-                            work_cache = cache_df.copy()
-
-                            work_cache["inchikey"] = (
-                                work_cache["inchikey"]
-                                .astype(str)
-                                .str.strip()
-                            )
-
-                            work_cache["_spectrum_type_norm"] = (
-                                work_cache["spectrum_type"]
-                                .astype(str)
-                                .apply(spectra_normalize_spectrum_type)
-                            )
-
-                            remove_mask = work_cache["inchikey"].isin(current_inchikeys)
-
-                            if (
-                                "selected_spectrum_types" in locals()
-                                and selected_spectrum_types
-                            ):
-                                selected_types_norm = [
-                                    spectra_normalize_spectrum_type(x)
-                                    for x in selected_spectrum_types
-                                ]
-
-                                remove_mask = remove_mask & work_cache[
-                                    "_spectrum_type_norm"
-                                ].isin(selected_types_norm)
-
-                            removed_count = int(remove_mask.sum())
-
-                            new_cache_df = work_cache.loc[~remove_mask].copy()
-                            new_cache_df = new_cache_df.drop(
-                                columns=["_spectrum_type_norm"],
-                                errors="ignore"
-                            )
-
-                            spectra_save_search_cache(new_cache_df)
-
-                            st.success(t('spectra.clear_current_file_success',
-                                removed=removed_count,
-                                remaining=len(new_cache_df)
-                            ))
-
-                            add_log(t('spectra.clear_current_file_log', removed=removed_count))
-
+                            st.success(t('spectra.clear_ir_success'))
                             st.rerun()
 
-                except Exception as e:
-                    st.error(t('spectra.clear_current_file_error', error=e))
+                        except Exception as e:
+                            st.error(t('spectra.clear_error', error=e))
 
-    only_missing = st.checkbox(
-        t('spectra.only_missing_checkbox'),
-        value=True,
-        key="spectra_only_missing"
-    )
+                with clear_col_2:
+                    if st.button(t('spectra.clear_mass_button'), key="clear_spectra_search_cache_mass"):
+                        try:
+                            cache_df = spectra_load_search_cache()
 
-    search_cache_mode = st.radio(
-        t('spectra.cache_mode_radio'),
-        [
-            t('spectra.cache_mode_use'),
-            t('spectra.cache_mode_ignore'),
-            t('spectra.cache_mode_not_use')
-        ],
-        index=0,
-        key="spectra_search_cache_mode",
-        horizontal=False
-    )
+                            if not cache_df.empty and "spectrum_type" in cache_df.columns:
+                                work = cache_df.copy()
+                                work["_spectrum_type_norm"] = work["spectrum_type"].apply(
+                                    spectra_normalize_spectrum_type
+                                )
+                                cache_df = work[
+                                    work["_spectrum_type_norm"] != "Mass"
+                                ].drop(columns=["_spectrum_type_norm"], errors="ignore")
 
-    use_search_cache = search_cache_mode == t('spectra.cache_mode_use')
-    ignore_search_cache = search_cache_mode == t('spectra.cache_mode_ignore')
+                                spectra_save_search_cache(cache_df)
 
-    if search_cache_mode == t('spectra.cache_mode_use'):
-        st.caption(t('spectra.cache_mode_use_caption'))
-    elif search_cache_mode == t('spectra.cache_mode_ignore'):
-        st.caption(t('spectra.cache_mode_ignore_caption'))
-    else:
-        st.caption(t('spectra.cache_mode_not_use_caption'))
+                            st.success(t('spectra.clear_mass_success'))
+                            st.rerun()
 
-    total_compounds_for_spectra = len(compounds_for_search)
+                        except Exception as e:
+                            st.error(t('spectra.clear_error', error=e))
 
-    if selected_spectrum_types == ["IR"]:
-        missing_spectra_count = int((compounds_for_search["IR_status"] == t('spectra.status_no_ir')).sum())
-    elif selected_spectrum_types == ["Mass"]:
-        missing_spectra_count = int((compounds_for_search["Mass_status"] == t('spectra.status_no_mass')).sum())
-    else:
-        missing_spectra_count = int(
-            (
-                (compounds_for_search["IR_status"] == t('spectra.status_no_ir')) |
-                (compounds_for_search["Mass_status"] == t('spectra.status_no_mass'))
-            ).sum()
+                with clear_col_3:
+                    if st.button(t('spectra.clear_all_button'), key="clear_spectra_search_cache_all"):
+                        try:
+                            cache_df = spectra_load_search_cache()
+                            spectra_save_search_cache(pd.DataFrame(columns=cache_df.columns))
+
+                            st.success(t('spectra.clear_all_success'))
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(t('spectra.clear_error', error=e))
+
+                st.markdown(t('spectra.clear_current_file_title'))
+
+                if st.button(
+                    t('spectra.clear_current_file_button'),
+                    key="clear_spectra_search_cache_current_file"
+                ):
+                    try:
+                        cache_df = spectra_load_search_cache()
+
+                        if cache_df.empty:
+                            st.info(t('spectra.cache_already_empty'))
+                        else:
+                            if "inchikey" not in cache_df.columns:
+                                cache_df["inchikey"] = ""
+
+                            if "spectrum_type" not in cache_df.columns:
+                                cache_df["spectrum_type"] = ""
+
+                            current_inchikeys = set()
+
+                            if (
+                                "compounds_for_search" in locals()
+                                and compounds_for_search is not None
+                                and not compounds_for_search.empty
+                                and "inchikey" in compounds_for_search.columns
+                            ):
+                                current_inchikeys = set(
+                                    compounds_for_search["inchikey"]
+                                    .astype(str)
+                                    .str.strip()
+                                    .replace("", np.nan)
+                                    .dropna()
+                                    .tolist()
+                                )
+
+                            if not current_inchikeys:
+                                st.warning(t('spectra.no_inchikey_warning'))
+                            else:
+                                work_cache = cache_df.copy()
+
+                                work_cache["inchikey"] = (
+                                    work_cache["inchikey"]
+                                    .astype(str)
+                                    .str.strip()
+                                )
+
+                                work_cache["_spectrum_type_norm"] = (
+                                    work_cache["spectrum_type"]
+                                    .astype(str)
+                                    .apply(spectra_normalize_spectrum_type)
+                                )
+
+                                remove_mask = work_cache["inchikey"].isin(current_inchikeys)
+
+                                if (
+                                    "selected_spectrum_types" in locals()
+                                    and selected_spectrum_types
+                                ):
+                                    selected_types_norm = [
+                                        spectra_normalize_spectrum_type(x)
+                                        for x in selected_spectrum_types
+                                    ]
+
+                                    remove_mask = remove_mask & work_cache[
+                                        "_spectrum_type_norm"
+                                    ].isin(selected_types_norm)
+
+                                removed_count = int(remove_mask.sum())
+
+                                new_cache_df = work_cache.loc[~remove_mask].copy()
+                                new_cache_df = new_cache_df.drop(
+                                    columns=["_spectrum_type_norm"],
+                                    errors="ignore"
+                                )
+
+                                spectra_save_search_cache(new_cache_df)
+
+                                st.success(t('spectra.clear_current_file_success',
+                                    removed=removed_count,
+                                    remaining=len(new_cache_df)
+                                ))
+
+                                add_log(t('spectra.clear_current_file_log', removed=removed_count))
+
+                                st.rerun()
+
+                    except Exception as e:
+                        st.error(t('spectra.clear_current_file_error', error=e))
+
+
+    if is_admin():
+        only_missing = st.checkbox(
+            t('spectra.only_missing_checkbox'),
+            value=True,
+            key="spectra_only_missing"
         )
 
-    default_search_count = total_compounds_for_spectra
-    default_search_count = max(1, default_search_count)
+        search_cache_mode = st.radio(
+            t('spectra.cache_mode_radio'),
+            [
+                t('spectra.cache_mode_use'),
+                t('spectra.cache_mode_ignore'),
+                t('spectra.cache_mode_not_use')
+            ],
+            index=0,
+            key="spectra_search_cache_mode",
+            horizontal=False
+        )
 
-    max_to_search = st.number_input(
-        t('spectra.max_to_search'),
-        min_value=1,
-        max_value=max(total_compounds_for_spectra, 1),
-        value=default_search_count,
-        step=1,
-        key="spectra_max_to_search"
-    )
+        use_search_cache = search_cache_mode == t('spectra.cache_mode_use')
+        ignore_search_cache = search_cache_mode == t('spectra.cache_mode_ignore')
 
-    delay_seconds = st.number_input(
-        t('spectra.delay_seconds'),
-        min_value=0.0,
-        max_value=10.0,
-        value=1.0,
-        step=0.5,
-        key="spectra_delay_seconds"
-    )
+        if search_cache_mode == t('spectra.cache_mode_use'):
+            st.caption(t('spectra.cache_mode_use_caption'))
+        elif search_cache_mode == t('spectra.cache_mode_ignore'):
+            st.caption(t('spectra.cache_mode_ignore_caption'))
+        else:
+            st.caption(t('spectra.cache_mode_not_use_caption'))
 
-    if st.button(t('spectra.stop_search_button'), key="stop_spectra_search"):
-        st.session_state.stop_spectra_search_requested = True
-        st.session_state.spectra_search_status = "stopped_by_user"
-        spectra_request_stop()
+        total_compounds_for_spectra = len(compounds_for_search)
 
-        stop_msg_placeholder = st.empty()
-
-        stop_msg_placeholder.warning(t('spectra.stop_search_warning'))
-
-        time.sleep(5)
-        stop_msg_placeholder.empty()
-
-    spectra_results_rendered_this_run = False
-
-    if st.button(t('spectra.search_button'), type="primary", key="run_spectra_search"):
-        st.session_state.stop_spectra_search_requested = False
-        st.session_state.spectra_search_status = "running"
-        spectra_clear_stop()
-
-        if not selected_sources:
-            st.error(t('spectra.error_no_source'))
-            st.stop()
-
-        if not selected_spectrum_types:
-            st.error(t('spectra.error_no_type'))
-            st.stop()
-
-        search_df = compounds_for_search.copy()
-
-        # Лимит применяется к веществам, а не к задачам.
-        # Если выбраны IR + Mass, 116 веществ должны дать до 232 задач.
-        search_df = search_df.head(int(max_to_search)).copy()
-
-        # ------------------------------------------------------------
-        # Нормальная очередь поиска:
-        # одна задача = одна структура + один тип спектра.
-        #
-        # Это защищает от ошибок вида:
-        # - IR уже есть, но при выборе IR+Mass снова запускается IR;
-        # - вещество уже проверялось и не найдено, но снова уходит в поиск;
-        # - одинаковый InChIKey несколько раз скачивается в одном запуске.
-
-        bank_by_inchikey = {}
-        bank_by_smiles = {}
-
-        try:
-            bank_index_df = spectra_load_index()
-        except Exception:
-            bank_index_df = pd.DataFrame()
-
-        if bank_index_df is not None and not bank_index_df.empty:
-            bank_work = bank_index_df.copy()
-
-            for col in [
-                "inchikey",
-                "canonical_smiles",
-                "spectrum_type",
-                "active",
-                "source",
-                "source_database",
-                "spectrum_id",
-                "raw_file",
-                "processed_file",
-            ]:
-                if col not in bank_work.columns:
-                    bank_work[col] = ""
-
-            bank_work["inchikey"] = bank_work["inchikey"].astype(str).str.strip()
-            bank_work["canonical_smiles"] = bank_work["canonical_smiles"].astype(str).str.strip()
-            bank_work["_spectrum_type_norm"] = bank_work["spectrum_type"].astype(str).apply(
-                spectra_normalize_spectrum_type
+        if selected_spectrum_types == ["IR"]:
+            missing_spectra_count = int((compounds_for_search["IR_status"] == t('spectra.status_no_ir')).sum())
+        elif selected_spectrum_types == ["Mass"]:
+            missing_spectra_count = int((compounds_for_search["Mass_status"] == t('spectra.status_no_mass')).sum())
+        else:
+            missing_spectra_count = int(
+                (
+                    (compounds_for_search["IR_status"] == t('spectra.status_no_ir')) |
+                    (compounds_for_search["Mass_status"] == t('spectra.status_no_mass'))
+                ).sum()
             )
 
-            active_values = ["true", "1", "yes", "y", "да", "active", ""]
-            bank_work["_active_norm"] = (
-                bank_work["active"]
-                .astype(str)
-                .str.strip()
-                .str.lower()
-                .isin(active_values)
-            )
+        default_search_count = total_compounds_for_spectra
+        default_search_count = max(1, default_search_count)
 
-            bank_work = bank_work[bank_work["_active_norm"]].copy()
+        max_to_search = st.number_input(
+            t('spectra.max_to_search'),
+            min_value=1,
+            max_value=max(total_compounds_for_spectra, 1),
+            value=default_search_count,
+            step=1,
+            key="spectra_max_to_search"
+        )
 
-            for _, bank_row in bank_work.iterrows():
-                row_dict = bank_row.to_dict()
-                bank_type = str(row_dict.get("_spectrum_type_norm", "")).strip()
-                bank_inchikey = str(row_dict.get("inchikey", "")).strip()
-                bank_smiles = str(row_dict.get("canonical_smiles", "")).strip()
+        delay_seconds = st.number_input(
+            t('spectra.delay_seconds'),
+            min_value=0.0,
+            max_value=10.0,
+            value=1.0,
+            step=0.5,
+            key="spectra_delay_seconds"
+        )
 
-                if bank_inchikey and bank_type:
-                    bank_by_inchikey[(bank_inchikey, bank_type)] = row_dict
+        if st.button(t('spectra.stop_search_button'), key="stop_spectra_search"):
+            st.session_state.stop_spectra_search_requested = True
+            st.session_state.spectra_search_status = "stopped_by_user"
+            spectra_request_stop()
 
-                if bank_smiles and bank_type:
-                    bank_by_smiles[(bank_smiles, bank_type)] = row_dict
+            stop_msg_placeholder = st.empty()
 
-        cache_by_inchikey = {}
-        cache_by_smiles = {}
+            stop_msg_placeholder.warning(t('spectra.stop_search_warning'))
 
-        if use_search_cache and not ignore_search_cache:
+            time.sleep(5)
+            stop_msg_placeholder.empty()
+
+        spectra_results_rendered_this_run = False
+
+        if st.button(t('spectra.search_button'), type="primary", key="run_spectra_search"):
+            st.session_state.stop_spectra_search_requested = False
+            st.session_state.spectra_search_status = "running"
+            spectra_clear_stop()
+
+            if not selected_sources:
+                st.error(t('spectra.error_no_source'))
+                st.stop()
+
+            if not selected_spectrum_types:
+                st.error(t('spectra.error_no_type'))
+                st.stop()
+
+            search_df = compounds_for_search.copy()
+
+            # Лимит применяется к веществам, а не к задачам.
+            # Если выбраны IR + Mass, 116 веществ должны дать до 232 задач.
+            search_df = search_df.head(int(max_to_search)).copy()
+
+            # ------------------------------------------------------------
+            # Нормальная очередь поиска:
+            # одна задача = одна структура + один тип спектра.
+            #
+            # Это защищает от ошибок вида:
+            # - IR уже есть, но при выборе IR+Mass снова запускается IR;
+            # - вещество уже проверялось и не найдено, но снова уходит в поиск;
+            # - одинаковый InChIKey несколько раз скачивается в одном запуске.
+
+            bank_by_inchikey = {}
+            bank_by_smiles = {}
+
             try:
-                cache_df = spectra_load_search_cache()
+                bank_index_df = spectra_load_index()
             except Exception:
-                cache_df = pd.DataFrame()
+                bank_index_df = pd.DataFrame()
 
-            if cache_df is not None and not cache_df.empty:
-                cache_work = cache_df.copy()
+            if bank_index_df is not None and not bank_index_df.empty:
+                bank_work = bank_index_df.copy()
 
                 for col in [
                     "inchikey",
                     "canonical_smiles",
                     "spectrum_type",
-                    "final_status",
-                    "selected_sources_key",
-                    "selected_sources",
-                    "selected_source",
-                    "candidate_count",
+                    "active",
+                    "source",
+                    "source_database",
                     "spectrum_id",
                     "raw_file",
                     "processed_file",
-                    "message",
-                    "date_checked",
                 ]:
-                    if col not in cache_work.columns:
-                        cache_work[col] = ""
+                    if col not in bank_work.columns:
+                        bank_work[col] = ""
 
-                cache_work["inchikey"] = cache_work["inchikey"].astype(str).str.strip()
-                cache_work["canonical_smiles"] = cache_work["canonical_smiles"].astype(str).str.strip()
-                cache_work["_spectrum_type_norm"] = cache_work["spectrum_type"].astype(str).apply(
+                bank_work["inchikey"] = bank_work["inchikey"].astype(str).str.strip()
+                bank_work["canonical_smiles"] = bank_work["canonical_smiles"].astype(str).str.strip()
+                bank_work["_spectrum_type_norm"] = bank_work["spectrum_type"].astype(str).apply(
                     spectra_normalize_spectrum_type
                 )
 
-                for _, cache_row in cache_work.iterrows():
-                    row_dict = cache_row.to_dict()
-                    cache_type = str(row_dict.get("_spectrum_type_norm", "")).strip()
-                    cache_inchikey = str(row_dict.get("inchikey", "")).strip()
-                    cache_smiles = str(row_dict.get("canonical_smiles", "")).strip()
-                    
-                    if not str(row_dict.get("selected_sources_key", "")).strip():
-                        row_dict["selected_sources_key"] = (
-                            str(row_dict.get("selected_sources", ""))
-                            .replace(" | ", "|")
-                            .strip()
-                        )
-                    
-                    if cache_inchikey and cache_type:
-                        cache_by_inchikey[(cache_inchikey, cache_type)] = row_dict
+                active_values = ["true", "1", "yes", "y", "да", "active", ""]
+                bank_work["_active_norm"] = (
+                    bank_work["active"]
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                    .isin(active_values)
+                )
 
-                    if cache_smiles and cache_type:
-                        cache_by_smiles[(cache_smiles, cache_type)] = row_dict
+                bank_work = bank_work[bank_work["_active_norm"]].copy()
 
-        search_results = []
-        skipped_results = []
-        tasks = []
-        queued_task_keys = set()
+                for _, bank_row in bank_work.iterrows():
+                    row_dict = bank_row.to_dict()
+                    bank_type = str(row_dict.get("_spectrum_type_norm", "")).strip()
+                    bank_inchikey = str(row_dict.get("inchikey", "")).strip()
+                    bank_smiles = str(row_dict.get("canonical_smiles", "")).strip()
 
-        for _, compound_row in search_df.iterrows():
-            compound = compound_row.to_dict()
+                    if bank_inchikey and bank_type:
+                        bank_by_inchikey[(bank_inchikey, bank_type)] = row_dict
 
-            inchikey_value = str(compound.get("inchikey", "")).strip()
-            canonical_smiles_value = str(compound.get("canonical_smiles", "")).strip()
-            structure_status_value = str(compound.get("structure_status", "")).strip()
+                    if bank_smiles and bank_type:
+                        bank_by_smiles[(bank_smiles, bank_type)] = row_dict
 
-            for spectrum_type in selected_spectrum_types:
-                spectrum_type_norm = spectra_normalize_spectrum_type(spectrum_type)
+            cache_by_inchikey = {}
+            cache_by_smiles = {}
 
-                base_result = {
-                    "source_line_number": compound.get("source_line_number", compound.get("row_index", "")),
-                    "compound_id": compound.get("compound_id", ""),
-                    "name": compound.get("name", ""),
-                    "cas": compound.get("cas", ""),
-                    "input_smiles": compound.get("input_smiles", ""),
-                    "canonical_smiles": canonical_smiles_value,
-                    "inchikey": inchikey_value,
-                    "structure_status": structure_status_value,
-                    "spectrum_type": spectrum_type_norm,
-                    "spectrum_status": "",
-                    "selected_source": "",
-                    "candidate_count": 0,
-                    "spectrum_id": "",
-                    "raw_file": "",
-                    "processed_file": "",
-                    "message": "",
-                    "_from_real_search": False,
-                }
+            if use_search_cache and not ignore_search_cache:
+                try:
+                    cache_df = spectra_load_search_cache()
+                except Exception:
+                    cache_df = pd.DataFrame()
 
-                if structure_status_value != "ok":
-                    base_result["spectrum_status"] = "invalid_structure"
-                    base_result["message"] = t('spectra.message_invalid_structure')
-                    skipped_results.append(base_result)
-                    continue
+                if cache_df is not None and not cache_df.empty:
+                    cache_work = cache_df.copy()
 
-                bank_record = None
+                    for col in [
+                        "inchikey",
+                        "canonical_smiles",
+                        "spectrum_type",
+                        "final_status",
+                        "selected_sources_key",
+                        "selected_sources",
+                        "selected_source",
+                        "candidate_count",
+                        "spectrum_id",
+                        "raw_file",
+                        "processed_file",
+                        "message",
+                        "date_checked",
+                    ]:
+                        if col not in cache_work.columns:
+                            cache_work[col] = ""
 
-                if inchikey_value:
-                    bank_record = bank_by_inchikey.get(
-                        (inchikey_value, spectrum_type_norm)
+                    cache_work["inchikey"] = cache_work["inchikey"].astype(str).str.strip()
+                    cache_work["canonical_smiles"] = cache_work["canonical_smiles"].astype(str).str.strip()
+                    cache_work["_spectrum_type_norm"] = cache_work["spectrum_type"].astype(str).apply(
+                        spectra_normalize_spectrum_type
                     )
 
-                if bank_record is None and canonical_smiles_value:
-                    bank_record = bank_by_smiles.get(
-                        (canonical_smiles_value, spectrum_type_norm)
-                    )
+                    for _, cache_row in cache_work.iterrows():
+                        row_dict = cache_row.to_dict()
+                        cache_type = str(row_dict.get("_spectrum_type_norm", "")).strip()
+                        cache_inchikey = str(row_dict.get("inchikey", "")).strip()
+                        cache_smiles = str(row_dict.get("canonical_smiles", "")).strip()
+                        
+                        if not str(row_dict.get("selected_sources_key", "")).strip():
+                            row_dict["selected_sources_key"] = (
+                                str(row_dict.get("selected_sources", ""))
+                                .replace(" | ", "|")
+                                .strip()
+                            )
+                        
+                        if cache_inchikey and cache_type:
+                            cache_by_inchikey[(cache_inchikey, cache_type)] = row_dict
 
-                if bank_record is not None:
-                    selected_source_value = (
-                        bank_record.get("source_database", "")
-                        or bank_record.get("source", "")
-                        or "local_bank"
-                    )
+                        if cache_smiles and cache_type:
+                            cache_by_smiles[(cache_smiles, cache_type)] = row_dict
 
-                    base_result.update({
-                        "spectrum_status": "already_in_bank",
-                        "selected_source": selected_source_value,
-                        "candidate_count": 1,
-                        "spectrum_id": bank_record.get("spectrum_id", ""),
-                        "raw_file": bank_record.get("raw_file", ""),
-                        "processed_file": bank_record.get("processed_file", ""),
-                        "message": t('spectra.message_skipped_in_bank', spectrum_type=spectrum_type_norm),
-                    })
-                    skipped_results.append(base_result)
-                    continue
+            search_results = []
+            skipped_results = []
+            tasks = []
+            queued_task_keys = set()
 
-                cache_record = None
+            for _, compound_row in search_df.iterrows():
+                compound = compound_row.to_dict()
 
-                if use_search_cache and not ignore_search_cache:
+                inchikey_value = str(compound.get("inchikey", "")).strip()
+                canonical_smiles_value = str(compound.get("canonical_smiles", "")).strip()
+                structure_status_value = str(compound.get("structure_status", "")).strip()
+
+                for spectrum_type in selected_spectrum_types:
+                    spectrum_type_norm = spectra_normalize_spectrum_type(spectrum_type)
+
+                    base_result = {
+                        "source_line_number": compound.get("source_line_number", compound.get("row_index", "")),
+                        "compound_id": compound.get("compound_id", ""),
+                        "name": compound.get("name", ""),
+                        "cas": compound.get("cas", ""),
+                        "input_smiles": compound.get("input_smiles", ""),
+                        "canonical_smiles": canonical_smiles_value,
+                        "inchikey": inchikey_value,
+                        "structure_status": structure_status_value,
+                        "spectrum_type": spectrum_type_norm,
+                        "spectrum_status": "",
+                        "selected_source": "",
+                        "candidate_count": 0,
+                        "spectrum_id": "",
+                        "raw_file": "",
+                        "processed_file": "",
+                        "message": "",
+                        "_from_real_search": False,
+                    }
+
+                    if structure_status_value != "ok":
+                        base_result["spectrum_status"] = "invalid_structure"
+                        base_result["message"] = t('spectra.message_invalid_structure')
+                        skipped_results.append(base_result)
+                        continue
+
+                    bank_record = None
+
                     if inchikey_value:
-                        cache_record = cache_by_inchikey.get(
+                        bank_record = bank_by_inchikey.get(
                             (inchikey_value, spectrum_type_norm)
                         )
 
-                    if cache_record is None and canonical_smiles_value:
-                        cache_record = cache_by_smiles.get(
+                    if bank_record is None and canonical_smiles_value:
+                        bank_record = bank_by_smiles.get(
                             (canonical_smiles_value, spectrum_type_norm)
                         )
 
-                if cache_record is not None:
-                    cached_final_status = (
-                        cache_record.get("final_status", "")
-                        or cache_record.get("spectrum_status", "")
-                        or "already_checked"
-                    )
-
-                    cached_final_status_norm = str(cached_final_status).strip()
-                    current_sources_key = spectra_make_sources_key(selected_sources)
-                    cached_sources_key = str(
-                        cache_record.get("selected_sources_key", "")
-                    ).strip()
-
-                    if not cached_sources_key:
-                        cached_sources_key = (
-                            str(cache_record.get("selected_sources", ""))
-                            .replace(" | ", "|")
-                            .strip()
+                    if bank_record is not None:
+                        selected_source_value = (
+                            bank_record.get("source_database", "")
+                            or bank_record.get("source", "")
+                            or "local_bank"
                         )
 
-                    # Найденные спектры можно безопасно брать из журнала/банка.
-                    # Отрицательные и ошибочные результаты для Mass/MoNA не должны
-                    # блокировать повторный поиск: MoNA обновляется, а старый баг
-                    # HTTP-функции мог уже записать ложный not_found_in_all_sources.
-                    cache_success_statuses = {
-                        "found_downloaded",
-                        "already_in_bank",
-                    }
-                    retryable_cache_statuses = {
-                        "not_found_in_all_sources",
-                        "candidate_link_found",
-                        "parse_error",
-                        "download_error",
-                        "no_numeric_spectrum",
-                        "search_error",
-                        "mona_records_found_but_not_parsed",
-                    }
-
-                    should_skip_by_cache = cached_final_status_norm in cache_success_statuses
-
-                    if not should_skip_by_cache:
-                        same_sources = cached_sources_key == current_sources_key
-                        is_mona_mass_retry = False
-
-                        should_skip_by_cache = same_sources and not is_mona_mass_retry
-
-                    if should_skip_by_cache:
-                        extra_msg = cache_record.get('message', '')
                         base_result.update({
-                            "spectrum_status": "skipped_already_checked",
-                            "selected_source": cache_record.get("selected_source", ""),
-                            "candidate_count": cache_record.get("candidate_count", 0),
-                            "spectrum_id": cache_record.get("spectrum_id", ""),
-                            "raw_file": cache_record.get("raw_file", ""),
-                            "processed_file": cache_record.get("processed_file", ""),
-                            "message": t('spectra.message_skipped_by_cache',
-                                status=cached_final_status,
-                                extra_message=extra_msg
-                            ),
+                            "spectrum_status": "already_in_bank",
+                            "selected_source": selected_source_value,
+                            "candidate_count": 1,
+                            "spectrum_id": bank_record.get("spectrum_id", ""),
+                            "raw_file": bank_record.get("raw_file", ""),
+                            "processed_file": bank_record.get("processed_file", ""),
+                            "message": t('spectra.message_skipped_in_bank', spectrum_type=spectrum_type_norm),
                         })
                         skipped_results.append(base_result)
                         continue
 
-                structure_key = inchikey_value or canonical_smiles_value
+                    cache_record = None
 
-                if not structure_key:
-                    structure_key = str(compound.get("row_index", ""))
+                    if use_search_cache and not ignore_search_cache:
+                        if inchikey_value:
+                            cache_record = cache_by_inchikey.get(
+                                (inchikey_value, spectrum_type_norm)
+                            )
 
-                queue_key = (
-                    str(structure_key).strip(),
-                    str(spectrum_type_norm).strip()
-                )
+                        if cache_record is None and canonical_smiles_value:
+                            cache_record = cache_by_smiles.get(
+                                (canonical_smiles_value, spectrum_type_norm)
+                            )
 
-                if queue_key in queued_task_keys:
-                    base_result.update({
-                        "spectrum_status": "skipped_duplicate_in_current_queue",
-                        "selected_source": "current_queue",
-                        "message": t('spectra.message_skipped_duplicate'),
-                    })
-                    skipped_results.append(base_result)
-                    continue
-
-                queued_task_keys.add(queue_key)
-                tasks.append((compound, spectrum_type_norm))
-
-        skipped_df = pd.DataFrame(skipped_results)
-
-        n_skipped_bank = 0
-        n_skipped_cache = 0
-        n_skipped_duplicates = 0
-        n_skipped_invalid = 0
-
-        if not skipped_df.empty and "spectrum_status" in skipped_df.columns:
-            n_skipped_bank = int((skipped_df["spectrum_status"] == "already_in_bank").sum())
-            n_skipped_cache = int((skipped_df["spectrum_status"] == "skipped_already_checked").sum())
-            n_skipped_duplicates = int((skipped_df["spectrum_status"] == "skipped_duplicate_in_current_queue").sum())
-            n_skipped_invalid = int((skipped_df["spectrum_status"] == "invalid_structure").sum())
-
-        st.success(t('spectra.success_tasks_sent', tasks=len(tasks)))
-
-        with st.expander(t('spectra.expander_skipped_before_search'), expanded=False):
-            n_skipped_total = (
-                n_skipped_bank
-                + n_skipped_cache
-                + n_skipped_duplicates
-                + n_skipped_invalid
-            )
-
-            col_skip_0, col_skip_1, col_skip_2, col_skip_3, col_skip_4 = st.columns(5)
-
-            with col_skip_0:
-                st.metric(t('spectra.metric_total_skipped'), n_skipped_total)
-
-            with col_skip_1:
-                st.metric(t('spectra.metric_skipped_in_bank'), n_skipped_bank)
-
-            with col_skip_2:
-                st.metric(t('spectra.metric_skipped_in_cache'), n_skipped_cache)
-
-            with col_skip_3:
-                st.metric(t('spectra.metric_skipped_duplicates'), n_skipped_duplicates)
-
-            with col_skip_4:
-                st.metric(t('spectra.metric_skipped_invalid'), n_skipped_invalid)
-
-            if not skipped_df.empty:
-                show_skip_cols = [
-                    "source_line_number",
-                    "name",
-                    "canonical_smiles",
-                    "inchikey",
-                    "spectrum_type",
-                    "spectrum_status",
-                    "message",
-                ]
-
-                show_skip_cols = [
-                    c for c in show_skip_cols
-                    if c in skipped_df.columns
-                ]
-
-                st.dataframe(
-                    skipped_df[show_skip_cols].head(300),
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-        if not tasks:
-            result_df = pd.DataFrame(skipped_results)
-            result_df = result_df.drop(columns=["_from_real_search"], errors="ignore")
-            st.session_state.spectra_search_results = result_df
-            st.session_state.spectra_search_status = "completed"
-            st.session_state.spectra_search_total_tasks = len(result_df)
-
-            no_tasks_msg_placeholder = st.empty()
-
-            no_tasks_msg_placeholder.success(t('spectra.no_tasks_message'))
-
-            time.sleep(5)
-            no_tasks_msg_placeholder.empty()
-
-        if tasks:
-            preview_rows = []
-
-            for compound, spectrum_type in tasks:
-                row = dict(compound)
-                row[t('spectra.col_what_to_search')] = spectrum_type
-                preview_rows.append(row)
-
-            preview_df = pd.DataFrame(preview_rows)
-
-            with st.expander(t('spectra.expander_check_queue'), expanded=False):
-                preview_cols = [
-                    t('spectra.col_what_to_search'),
-                    "source_line_number",
-                    "cas",
-                    "name",
-                    "input_smiles",
-                    "canonical_smiles",
-                    "inchikey",
-                    "IR_status",
-                    "Mass_status",
-                ]
-
-                preview_cols = [
-                    c for c in preview_cols
-                    if c in preview_df.columns
-                ]
-
-                st.dataframe(
-                    preview_df[preview_cols].head(100),
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-            progress = st.progress(0)
-            col_status_ir, col_status_ms = st.columns(2)
-
-            with col_status_ir:
-                status_box_ir = st.empty()
-
-            with col_status_ms:
-                status_box_ms = st.empty()
-
-            def _normalize_search_result(compound, spectrum_type_norm, result):
-                normalized = {
-                    "source_line_number": compound.get("source_line_number", compound.get("row_index", "")),
-                    "compound_id": compound.get("compound_id", ""),
-                    "name": compound.get("name", ""),
-                    "cas": compound.get("cas", ""),
-                    "input_smiles": compound.get("input_smiles", ""),
-                    "canonical_smiles": compound.get("canonical_smiles", ""),
-                    "inchikey": compound.get("inchikey", ""),
-                    "structure_status": compound.get("structure_status", ""),
-                    "spectrum_type": spectrum_type_norm,
-                    "spectrum_status": "",
-                    "selected_source": "",
-                    "candidate_count": 0,
-                    "spectrum_id": "",
-                    "raw_file": "",
-                    "processed_file": "",
-                    "candidate_url": "",
-                    "message": "",
-                    "_from_real_search": True,
-                }
-
-                if not isinstance(result, dict):
-                    normalized["spectrum_status"] = "search_error"
-                    normalized["message"] = t('spectra.search_error_result')
-                    return normalized
-
-                normalized["spectrum_status"] = (
-                    result.get("spectrum_status", "")
-                    or result.get("status", "")
-                    or result.get("final_status", "")
-                )
-
-                normalized["message"] = (
-                    result.get("message", "")
-                    or result.get("status_message", "")
-                    or result.get("error", "")
-                )
-
-                normalized["selected_source"] = (
-                    result.get("selected_source", "")
-                    or result.get("source_database", "")
-                    or result.get("source", "")
-                )
-
-                normalized["candidate_count"] = (
-                    result.get("candidate_count", 0)
-                    or result.get("n_candidates", 0)
-                    or result.get("candidates_count", 0)
-                )
-
-                normalized["spectrum_id"] = result.get("spectrum_id", "") or result.get("id", "")
-                normalized["raw_file"] = (
-                    result.get("raw_file", "")
-                    or result.get("raw_path", "")
-                    or result.get("raw_jdx_path", "")
-                    or result.get("downloaded_file", "")
-                    or result.get("file_path", "")
-                )
-                normalized["processed_file"] = (
-                    result.get("processed_file", "")
-                    or result.get("processed_path", "")
-                    or result.get("processed_csv", "")
-                )
-                normalized["candidate_url"] = result.get("candidate_url", "")
-
-                for record_key in ["record", "spectrum_record", "index_record", "saved_record"]:
-                    record = result.get(record_key, None)
-
-                    if isinstance(record, dict):
-                        normalized["selected_source"] = (
-                            normalized["selected_source"]
-                            or record.get("selected_source", "")
-                            or record.get("source_database", "")
-                            or record.get("source", "")
-                        )
-                        normalized["spectrum_id"] = (
-                            normalized["spectrum_id"]
-                            or record.get("spectrum_id", "")
-                            or record.get("id", "")
-                        )
-                        normalized["raw_file"] = (
-                            normalized["raw_file"]
-                            or record.get("raw_file", "")
-                            or record.get("raw_path", "")
-                            or record.get("raw_jdx_path", "")
-                            or record.get("downloaded_file", "")
-                            or record.get("file_path", "")
-                        )
-                        normalized["processed_file"] = (
-                            normalized["processed_file"]
-                            or record.get("processed_file", "")
-                            or record.get("processed_path", "")
-                            or record.get("processed_csv", "")
+                    if cache_record is not None:
+                        cached_final_status = (
+                            cache_record.get("final_status", "")
+                            or cache_record.get("spectrum_status", "")
+                            or "already_checked"
                         )
 
-                return normalized
+                        cached_final_status_norm = str(cached_final_status).strip()
+                        current_sources_key = spectra_make_sources_key(selected_sources)
+                        cached_sources_key = str(
+                            cache_record.get("selected_sources_key", "")
+                        ).strip()
 
-            def _spectra_search_task(compound, spectrum_type_norm):
-                try:
-                    result = spectra_search_one_compound(
-                        compound=compound,
-                        spectrum_type=spectrum_type_norm,
-                        selected_sources=selected_sources,
-                        delay_seconds=delay_seconds
+                        if not cached_sources_key:
+                            cached_sources_key = (
+                                str(cache_record.get("selected_sources", ""))
+                                .replace(" | ", "|")
+                                .strip()
+                            )
+
+                        # Найденные спектры можно безопасно брать из журнала/банка.
+                        # Отрицательные и ошибочные результаты для Mass/MoNA не должны
+                        # блокировать повторный поиск: MoNA обновляется, а старый баг
+                        # HTTP-функции мог уже записать ложный not_found_in_all_sources.
+                        cache_success_statuses = {
+                            "found_downloaded",
+                            "already_in_bank",
+                        }
+                        retryable_cache_statuses = {
+                            "not_found_in_all_sources",
+                            "candidate_link_found",
+                            "parse_error",
+                            "download_error",
+                            "no_numeric_spectrum",
+                            "search_error",
+                            "mona_records_found_but_not_parsed",
+                        }
+
+                        should_skip_by_cache = cached_final_status_norm in cache_success_statuses
+
+                        if not should_skip_by_cache:
+                            same_sources = cached_sources_key == current_sources_key
+                            is_mona_mass_retry = False
+
+                            should_skip_by_cache = same_sources and not is_mona_mass_retry
+
+                        if should_skip_by_cache:
+                            extra_msg = cache_record.get('message', '')
+                            base_result.update({
+                                "spectrum_status": "skipped_already_checked",
+                                "selected_source": cache_record.get("selected_source", ""),
+                                "candidate_count": cache_record.get("candidate_count", 0),
+                                "spectrum_id": cache_record.get("spectrum_id", ""),
+                                "raw_file": cache_record.get("raw_file", ""),
+                                "processed_file": cache_record.get("processed_file", ""),
+                                "message": t('spectra.message_skipped_by_cache',
+                                    status=cached_final_status,
+                                    extra_message=extra_msg
+                                ),
+                            })
+                            skipped_results.append(base_result)
+                            continue
+
+                    structure_key = inchikey_value or canonical_smiles_value
+
+                    if not structure_key:
+                        structure_key = str(compound.get("row_index", ""))
+
+                    queue_key = (
+                        str(structure_key).strip(),
+                        str(spectrum_type_norm).strip()
                     )
 
-                    return _normalize_search_result(compound, spectrum_type_norm, result)
+                    if queue_key in queued_task_keys:
+                        base_result.update({
+                            "spectrum_status": "skipped_duplicate_in_current_queue",
+                            "selected_source": "current_queue",
+                            "message": t('spectra.message_skipped_duplicate'),
+                        })
+                        skipped_results.append(base_result)
+                        continue
 
-                except Exception as e:
-                    return {
+                    queued_task_keys.add(queue_key)
+                    tasks.append((compound, spectrum_type_norm))
+
+            skipped_df = pd.DataFrame(skipped_results)
+
+            n_skipped_bank = 0
+            n_skipped_cache = 0
+            n_skipped_duplicates = 0
+            n_skipped_invalid = 0
+
+            if not skipped_df.empty and "spectrum_status" in skipped_df.columns:
+                n_skipped_bank = int((skipped_df["spectrum_status"] == "already_in_bank").sum())
+                n_skipped_cache = int((skipped_df["spectrum_status"] == "skipped_already_checked").sum())
+                n_skipped_duplicates = int((skipped_df["spectrum_status"] == "skipped_duplicate_in_current_queue").sum())
+                n_skipped_invalid = int((skipped_df["spectrum_status"] == "invalid_structure").sum())
+
+            st.success(t('spectra.success_tasks_sent', tasks=len(tasks)))
+
+            with st.expander(t('spectra.expander_skipped_before_search'), expanded=False):
+                n_skipped_total = (
+                    n_skipped_bank
+                    + n_skipped_cache
+                    + n_skipped_duplicates
+                    + n_skipped_invalid
+                )
+
+                col_skip_0, col_skip_1, col_skip_2, col_skip_3, col_skip_4 = st.columns(5)
+
+                with col_skip_0:
+                    st.metric(t('spectra.metric_total_skipped'), n_skipped_total)
+
+                with col_skip_1:
+                    st.metric(t('spectra.metric_skipped_in_bank'), n_skipped_bank)
+
+                with col_skip_2:
+                    st.metric(t('spectra.metric_skipped_in_cache'), n_skipped_cache)
+
+                with col_skip_3:
+                    st.metric(t('spectra.metric_skipped_duplicates'), n_skipped_duplicates)
+
+                with col_skip_4:
+                    st.metric(t('spectra.metric_skipped_invalid'), n_skipped_invalid)
+
+                if not skipped_df.empty:
+                    show_skip_cols = [
+                        "source_line_number",
+                        "name",
+                        "canonical_smiles",
+                        "inchikey",
+                        "spectrum_type",
+                        "spectrum_status",
+                        "message",
+                    ]
+
+                    show_skip_cols = [
+                        c for c in show_skip_cols
+                        if c in skipped_df.columns
+                    ]
+
+                    st.dataframe(
+                        skipped_df[show_skip_cols].head(300),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+            if not tasks:
+                result_df = pd.DataFrame(skipped_results)
+                result_df = result_df.drop(columns=["_from_real_search"], errors="ignore")
+                st.session_state.spectra_search_results = result_df
+                st.session_state.spectra_search_status = "completed"
+                st.session_state.spectra_search_total_tasks = len(result_df)
+
+                no_tasks_msg_placeholder = st.empty()
+
+                no_tasks_msg_placeholder.success(t('spectra.no_tasks_message'))
+
+                time.sleep(5)
+                no_tasks_msg_placeholder.empty()
+
+            if tasks:
+                preview_rows = []
+
+                for compound, spectrum_type in tasks:
+                    row = dict(compound)
+                    row[t('spectra.col_what_to_search')] = spectrum_type
+                    preview_rows.append(row)
+
+                preview_df = pd.DataFrame(preview_rows)
+
+                with st.expander(t('spectra.expander_check_queue'), expanded=False):
+                    preview_cols = [
+                        t('spectra.col_what_to_search'),
+                        "source_line_number",
+                        "cas",
+                        "name",
+                        "input_smiles",
+                        "canonical_smiles",
+                        "inchikey",
+                        "IR_status",
+                        "Mass_status",
+                    ]
+
+                    preview_cols = [
+                        c for c in preview_cols
+                        if c in preview_df.columns
+                    ]
+
+                    st.dataframe(
+                        preview_df[preview_cols].head(100),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                progress = st.progress(0)
+                col_status_ir, col_status_ms = st.columns(2)
+
+                with col_status_ir:
+                    status_box_ir = st.empty()
+
+                with col_status_ms:
+                    status_box_ms = st.empty()
+
+                def _normalize_search_result(compound, spectrum_type_norm, result):
+                    normalized = {
                         "source_line_number": compound.get("source_line_number", compound.get("row_index", "")),
                         "compound_id": compound.get("compound_id", ""),
                         "name": compound.get("name", ""),
@@ -9926,482 +9922,595 @@ with st.expander(
                         "inchikey": compound.get("inchikey", ""),
                         "structure_status": compound.get("structure_status", ""),
                         "spectrum_type": spectrum_type_norm,
-                        "spectrum_status": "search_error",
+                        "spectrum_status": "",
                         "selected_source": "",
                         "candidate_count": 0,
                         "spectrum_id": "",
                         "raw_file": "",
                         "processed_file": "",
-                        "message": str(e),
+                        "candidate_url": "",
+                        "message": "",
                         "_from_real_search": True,
                     }
 
-            parallel_search_enabled = (
-                len(selected_spectrum_types) > 1
-                and "IR" in selected_spectrum_types
-                and "Mass" in selected_spectrum_types
-            )
+                    if not isinstance(result, dict):
+                        normalized["spectrum_status"] = "search_error"
+                        normalized["message"] = t('spectra.search_error_result')
+                        return normalized
 
-            max_workers = 2 if parallel_search_enabled else 1
+                    normalized["spectrum_status"] = (
+                        result.get("spectrum_status", "")
+                        or result.get("status", "")
+                        or result.get("final_status", "")
+                    )
 
-            ir_total_tasks = sum(1 for _, spectrum_type in tasks if spectrum_type == "IR")
-            ms_total_tasks = sum(1 for _, spectrum_type in tasks if spectrum_type == "Mass")
+                    normalized["message"] = (
+                        result.get("message", "")
+                        or result.get("status_message", "")
+                        or result.get("error", "")
+                    )
 
-            ir_done_tasks = 0
-            ms_done_tasks = 0
-            done_tasks = 0
-            total_tasks = len(tasks)
-            st.session_state.spectra_search_total_tasks = len(skipped_results) + total_tasks
+                    normalized["selected_source"] = (
+                        result.get("selected_source", "")
+                        or result.get("source_database", "")
+                        or result.get("source", "")
+                    )
 
-            if ir_total_tasks > 0:
-                status_box_ir.info(t('spectra.ir_search_started', total=ir_total_tasks))
-            else:
-                status_box_ir.info(t('spectra.ir_search_not_selected'))
+                    normalized["candidate_count"] = (
+                        result.get("candidate_count", 0)
+                        or result.get("n_candidates", 0)
+                        or result.get("candidates_count", 0)
+                    )
 
-            if ms_total_tasks > 0:
-                status_box_ms.info(t('spectra.mass_search_started', total=ms_total_tasks))
-            else:
-                status_box_ms.info(t('spectra.mass_search_not_selected'))
+                    normalized["spectrum_id"] = result.get("spectrum_id", "") or result.get("id", "")
+                    normalized["raw_file"] = (
+                        result.get("raw_file", "")
+                        or result.get("raw_path", "")
+                        or result.get("raw_jdx_path", "")
+                        or result.get("downloaded_file", "")
+                        or result.get("file_path", "")
+                    )
+                    normalized["processed_file"] = (
+                        result.get("processed_file", "")
+                        or result.get("processed_path", "")
+                        or result.get("processed_csv", "")
+                    )
+                    normalized["candidate_url"] = result.get("candidate_url", "")
 
-            stop_requested = False
+                    for record_key in ["record", "spectrum_record", "index_record", "saved_record"]:
+                        record = result.get(record_key, None)
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                task_iter = iter(tasks)
-                future_to_task = {}
+                        if isinstance(record, dict):
+                            normalized["selected_source"] = (
+                                normalized["selected_source"]
+                                or record.get("selected_source", "")
+                                or record.get("source_database", "")
+                                or record.get("source", "")
+                            )
+                            normalized["spectrum_id"] = (
+                                normalized["spectrum_id"]
+                                or record.get("spectrum_id", "")
+                                or record.get("id", "")
+                            )
+                            normalized["raw_file"] = (
+                                normalized["raw_file"]
+                                or record.get("raw_file", "")
+                                or record.get("raw_path", "")
+                                or record.get("raw_jdx_path", "")
+                                or record.get("downloaded_file", "")
+                                or record.get("file_path", "")
+                            )
+                            normalized["processed_file"] = (
+                                normalized["processed_file"]
+                                or record.get("processed_file", "")
+                                or record.get("processed_path", "")
+                                or record.get("processed_csv", "")
+                            )
 
-                def submit_next_task():
-                    if (
-                        st.session_state.get("stop_spectra_search_requested", False)
-                        or spectra_is_stop_requested()
-                    ):
-                        return False
+                    return normalized
 
+                def _spectra_search_task(compound, spectrum_type_norm):
                     try:
-                        compound_next, spectrum_type_next = next(task_iter)
-                    except StopIteration:
-                        return False
+                        result = spectra_search_one_compound(
+                            compound=compound,
+                            spectrum_type=spectrum_type_norm,
+                            selected_sources=selected_sources,
+                            delay_seconds=delay_seconds
+                        )
 
-                    future = executor.submit(
-                        _spectra_search_task,
-                        compound_next,
-                        spectrum_type_next
-                    )
+                        return _normalize_search_result(compound, spectrum_type_norm, result)
 
-                    future_to_task[future] = (
-                        compound_next,
-                        spectrum_type_next
-                    )
+                    except Exception as e:
+                        return {
+                            "source_line_number": compound.get("source_line_number", compound.get("row_index", "")),
+                            "compound_id": compound.get("compound_id", ""),
+                            "name": compound.get("name", ""),
+                            "cas": compound.get("cas", ""),
+                            "input_smiles": compound.get("input_smiles", ""),
+                            "canonical_smiles": compound.get("canonical_smiles", ""),
+                            "inchikey": compound.get("inchikey", ""),
+                            "structure_status": compound.get("structure_status", ""),
+                            "spectrum_type": spectrum_type_norm,
+                            "spectrum_status": "search_error",
+                            "selected_source": "",
+                            "candidate_count": 0,
+                            "spectrum_id": "",
+                            "raw_file": "",
+                            "processed_file": "",
+                            "message": str(e),
+                            "_from_real_search": True,
+                        }
 
-                    return True
+                parallel_search_enabled = (
+                    len(selected_spectrum_types) > 1
+                    and "IR" in selected_spectrum_types
+                    and "Mass" in selected_spectrum_types
+                )
 
-                # Стартуем только max_workers задач, а не всю очередь сразу.
-                for _ in range(max_workers):
-                    if (
-                        st.session_state.get("stop_spectra_search_requested", False)
-                        or spectra_is_stop_requested()
-                    ):
-                        stop_requested = True
-                        break
+                max_workers = 2 if parallel_search_enabled else 1
 
-                    submitted = submit_next_task()
+                ir_total_tasks = sum(1 for _, spectrum_type in tasks if spectrum_type == "IR")
+                ms_total_tasks = sum(1 for _, spectrum_type in tasks if spectrum_type == "Mass")
 
-                    if not submitted:
-                        break
+                ir_done_tasks = 0
+                ms_done_tasks = 0
+                done_tasks = 0
+                total_tasks = len(tasks)
+                st.session_state.spectra_search_total_tasks = len(skipped_results) + total_tasks
 
-                while future_to_task:
-                    for future in as_completed(list(future_to_task.keys())):
-                        compound, spectrum_type = future_to_task.pop(future)
+                if ir_total_tasks > 0:
+                    status_box_ir.info(t('spectra.ir_search_started', total=ir_total_tasks))
+                else:
+                    status_box_ir.info(t('spectra.ir_search_not_selected'))
+
+                if ms_total_tasks > 0:
+                    status_box_ms.info(t('spectra.mass_search_started', total=ms_total_tasks))
+                else:
+                    status_box_ms.info(t('spectra.mass_search_not_selected'))
+
+                stop_requested = False
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    task_iter = iter(tasks)
+                    future_to_task = {}
+
+                    def submit_next_task():
+                        if (
+                            st.session_state.get("stop_spectra_search_requested", False)
+                            or spectra_is_stop_requested()
+                        ):
+                            return False
 
                         try:
-                            result_row = future.result()
-                        except Exception as e:
-                            result_row = {
-                                "source_line_number": compound.get("source_line_number", compound.get("row_index", "")),
-                                "compound_id": compound.get("compound_id", ""),
-                                "name": compound.get("name", ""),
-                                "cas": compound.get("cas", ""),
-                                "input_smiles": compound.get("input_smiles", ""),
-                                "canonical_smiles": compound.get("canonical_smiles", ""),
-                                "inchikey": compound.get("inchikey", ""),
-                                "structure_status": compound.get("structure_status", ""),
-                                "spectrum_type": spectrum_type,
-                                "spectrum_status": "search_error",
-                                "selected_source": "",
-                                "candidate_count": 0,
-                                "spectrum_id": "",
-                                "raw_file": "",
-                                "processed_file": "",
-                                "message": str(e),
-                                "_from_real_search": True,
-                            }
+                            compound_next, spectrum_type_next = next(task_iter)
+                        except StopIteration:
+                            return False
 
-                        search_results.append(result_row)
-                        partial_results = []
-                        if skipped_results:
-                            partial_results.extend(skipped_results)
-                        partial_results.extend(search_results)
-                        partial_df = pd.DataFrame(partial_results).drop(
-                            columns=["_from_real_search"],
-                            errors="ignore",
+                        future = executor.submit(
+                            _spectra_search_task,
+                            compound_next,
+                            spectrum_type_next
                         )
-                        st.session_state.spectra_search_results = partial_df
-                        st.session_state.spectra_search_status = "running"
 
-                        # ------------------------------------------------------------
-                        # Сразу пишем результат реального поиска в spectra_search_cache.
-                        # Это важно: если поиск остановлен или Streamlit перезапустился,
-                        # уже проверенные not_found_in_all_sources не должны потеряться.
+                        future_to_task[future] = (
+                            compound_next,
+                            spectrum_type_next
+                        )
 
-                        result_status = str(result_row.get("spectrum_status", "")).strip()
-                        result_message = str(result_row.get("message", "")).strip()
-                        from_real_search = bool(result_row.get("_from_real_search", False))
+                        return True
 
-                        if from_real_search:
-                            should_cache_result = result_status in [
-                                "found_downloaded",
-                                "not_found_in_all_sources",
-                                "candidate_link_found",
-                                "already_in_bank",
-                                "parse_error",
-                                "download_error",
-                                "no_numeric_spectrum",
-                            ]
-
-                            if result_status == "search_error":
-                                if (
-                                    "is not defined" not in result_message
-                                    and "NameError" not in result_message
-                                ):
-                                    should_cache_result = True
-
-                            if result_status == "stopped_by_user":
-                                should_cache_result = False
-
-                            if should_cache_result:
-                                try:
-                                    spectra_add_to_search_cache(
-                                        result_row,
-                                        selected_sources
-                                    )
-                                except Exception as cache_error:
-                                    result_row["message"] = (
-                                        str(result_row.get("message", ""))
-                                        + t('spectra.cache_write_error', error=cache_error)
-                                    )
-
-                        done_tasks += 1
-
-                        if spectrum_type == "IR":
-                            ir_done_tasks += 1
-                        elif spectrum_type == "Mass":
-                            ms_done_tasks += 1
-
-                        progress.progress(done_tasks / total_tasks)
-
-                        compound_name = str(result_row.get("name", "")).strip() or t('spectra.unnamed')
-                        compound_smiles = str(result_row.get("canonical_smiles", "")).strip()
-
-                        if not compound_smiles:
-                            compound_smiles = str(result_row.get("input_smiles", "")).strip()
-
-                        compound_inchikey = str(result_row.get("inchikey", "")).strip()
-                        compound_line = result_row.get("source_line_number", "")
-                        compound_status = str(result_row.get("spectrum_status", "")).strip()
-                        compound_source = str(result_row.get("selected_source", "")).strip() or "—"
-                        compound_message = str(result_row.get("message", "")).strip() or "—"
-                        compound_raw_file = str(result_row.get("raw_file", "")).strip() or "—"
-                        compound_processed_file = str(result_row.get("processed_file", "")).strip() or "—"
-
-                        details_lines = [
-                            t('spectra.detail_last_compound') + f" {compound_name}",
-                            t('spectra.detail_line') + f" {compound_line}",
-                            t('spectra.detail_smiles') + f" `{compound_smiles}`",
-                            t('spectra.detail_inchikey') + f" `{compound_inchikey}`",
-                            t('spectra.detail_source') + f" {compound_source}",
-                            t('spectra.detail_status') + f" {compound_status}",
-                            t('spectra.detail_message') + f" {compound_message}",
-                            t('spectra.detail_raw_file') + f" `{compound_raw_file}`",
-                            t('spectra.detail_processed_file') + f" `{compound_processed_file}`"
-                        ]
-                        details = "\n\n".join(details_lines)
-
-                        if spectrum_type == "IR":
-                            status_box_ir.info(t('spectra.ir_search_progress', done=ir_done_tasks, total=ir_total_tasks) + "\n\n" + details)
-
-                        elif spectrum_type == "Mass":
-                            status_box_ms.info(t('spectra.mass_search_progress', done=ms_done_tasks, total=ms_total_tasks) + "\n\n" + details)
-
-                        # После завершения задачи проверяем флаг остановки.
-                        # Если остановка запрошена — новые задачи не ставим.
+                    # Стартуем только max_workers задач, а не всю очередь сразу.
+                    for _ in range(max_workers):
                         if (
                             st.session_state.get("stop_spectra_search_requested", False)
                             or spectra_is_stop_requested()
                         ):
                             stop_requested = True
-                        else:
-                            submit_next_task()
+                            break
 
-                        break
+                        submitted = submit_next_task()
 
-            all_results = []
+                        if not submitted:
+                            break
 
-            if skipped_results:
-                all_results.extend(skipped_results)
+                    while future_to_task:
+                        for future in as_completed(list(future_to_task.keys())):
+                            compound, spectrum_type = future_to_task.pop(future)
 
-            if search_results:
-                all_results.extend(search_results)
+                            try:
+                                result_row = future.result()
+                            except Exception as e:
+                                result_row = {
+                                    "source_line_number": compound.get("source_line_number", compound.get("row_index", "")),
+                                    "compound_id": compound.get("compound_id", ""),
+                                    "name": compound.get("name", ""),
+                                    "cas": compound.get("cas", ""),
+                                    "input_smiles": compound.get("input_smiles", ""),
+                                    "canonical_smiles": compound.get("canonical_smiles", ""),
+                                    "inchikey": compound.get("inchikey", ""),
+                                    "structure_status": compound.get("structure_status", ""),
+                                    "spectrum_type": spectrum_type,
+                                    "spectrum_status": "search_error",
+                                    "selected_source": "",
+                                    "candidate_count": 0,
+                                    "spectrum_id": "",
+                                    "raw_file": "",
+                                    "processed_file": "",
+                                    "message": str(e),
+                                    "_from_real_search": True,
+                                }
 
-            result_df = pd.DataFrame(all_results)
+                            search_results.append(result_row)
+                            partial_results = []
+                            if skipped_results:
+                                partial_results.extend(skipped_results)
+                            partial_results.extend(search_results)
+                            partial_df = pd.DataFrame(partial_results).drop(
+                                columns=["_from_real_search"],
+                                errors="ignore",
+                            )
+                            st.session_state.spectra_search_results = partial_df
+                            st.session_state.spectra_search_status = "running"
 
-            result_df = result_df.drop(columns=["_from_real_search"], errors="ignore")
-            st.session_state.spectra_search_results = result_df
+                            # ------------------------------------------------------------
+                            # Сразу пишем результат реального поиска в spectra_search_cache.
+                            # Это важно: если поиск остановлен или Streamlit перезапустился,
+                            # уже проверенные not_found_in_all_sources не должны потеряться.
 
-            if stop_requested:
-                st.session_state.spectra_search_status = "stopped_by_user"
-                st.warning(t('spectra.stop_warning'))
-            else:
-                st.session_state.spectra_search_status = "completed"
-                st.success(t('spectra.search_completed'))
+                            result_status = str(result_row.get("spectrum_status", "")).strip()
+                            result_message = str(result_row.get("message", "")).strip()
+                            from_real_search = bool(result_row.get("_from_real_search", False))
 
-            if "spectra_search_results" in st.session_state:
-                st.subheader(t('spectra.results_subheader'))
+                            if from_real_search:
+                                should_cache_result = result_status in [
+                                    "found_downloaded",
+                                    "not_found_in_all_sources",
+                                    "candidate_link_found",
+                                    "already_in_bank",
+                                    "parse_error",
+                                    "download_error",
+                                    "no_numeric_spectrum",
+                                ]
 
-                if st.button(t('spectra.clear_results_button'), key="clear_spectra_search_results"):
-                    del st.session_state.spectra_search_results
-                    st.rerun()
+                                if result_status == "search_error":
+                                    if (
+                                        "is not defined" not in result_message
+                                        and "NameError" not in result_message
+                                    ):
+                                        should_cache_result = True
 
-                search_results_df = st.session_state.spectra_search_results.copy()
+                                if result_status == "stopped_by_user":
+                                    should_cache_result = False
 
-                if search_results_df.empty:
-                    st.info(t('spectra.no_results_yet'))
-                elif "spectrum_status" not in search_results_df.columns:
-                    st.warning(t('spectra.old_or_invalid_result'))
-                    st.dataframe(search_results_df, use_container_width=True)
+                                if should_cache_result:
+                                    try:
+                                        spectra_add_to_search_cache(
+                                            result_row,
+                                            selected_sources
+                                        )
+                                    except Exception as cache_error:
+                                        result_row["message"] = (
+                                            str(result_row.get("message", ""))
+                                            + t('spectra.cache_write_error', error=cache_error)
+                                        )
+
+                            done_tasks += 1
+
+                            if spectrum_type == "IR":
+                                ir_done_tasks += 1
+                            elif spectrum_type == "Mass":
+                                ms_done_tasks += 1
+
+                            progress.progress(done_tasks / total_tasks)
+
+                            compound_name = str(result_row.get("name", "")).strip() or t('spectra.unnamed')
+                            compound_smiles = str(result_row.get("canonical_smiles", "")).strip()
+
+                            if not compound_smiles:
+                                compound_smiles = str(result_row.get("input_smiles", "")).strip()
+
+                            compound_inchikey = str(result_row.get("inchikey", "")).strip()
+                            compound_line = result_row.get("source_line_number", "")
+                            compound_status = str(result_row.get("spectrum_status", "")).strip()
+                            compound_source = str(result_row.get("selected_source", "")).strip() or "—"
+                            compound_message = str(result_row.get("message", "")).strip() or "—"
+                            compound_raw_file = str(result_row.get("raw_file", "")).strip() or "—"
+                            compound_processed_file = str(result_row.get("processed_file", "")).strip() or "—"
+
+                            details_lines = [
+                                t('spectra.detail_last_compound') + f" {compound_name}",
+                                t('spectra.detail_line') + f" {compound_line}",
+                                t('spectra.detail_smiles') + f" `{compound_smiles}`",
+                                t('spectra.detail_inchikey') + f" `{compound_inchikey}`",
+                                t('spectra.detail_source') + f" {compound_source}",
+                                t('spectra.detail_status') + f" {compound_status}",
+                                t('spectra.detail_message') + f" {compound_message}",
+                                t('spectra.detail_raw_file') + f" `{compound_raw_file}`",
+                                t('spectra.detail_processed_file') + f" `{compound_processed_file}`"
+                            ]
+                            details = "\n\n".join(details_lines)
+
+                            if spectrum_type == "IR":
+                                status_box_ir.info(t('spectra.ir_search_progress', done=ir_done_tasks, total=ir_total_tasks) + "\n\n" + details)
+
+                            elif spectrum_type == "Mass":
+                                status_box_ms.info(t('spectra.mass_search_progress', done=ms_done_tasks, total=ms_total_tasks) + "\n\n" + details)
+
+                            # После завершения задачи проверяем флаг остановки.
+                            # Если остановка запрошена — новые задачи не ставим.
+                            if (
+                                st.session_state.get("stop_spectra_search_requested", False)
+                                or spectra_is_stop_requested()
+                            ):
+                                stop_requested = True
+                            else:
+                                submit_next_task()
+
+                            break
+
+                all_results = []
+
+                if skipped_results:
+                    all_results.extend(skipped_results)
+
+                if search_results:
+                    all_results.extend(search_results)
+
+                result_df = pd.DataFrame(all_results)
+
+                result_df = result_df.drop(columns=["_from_real_search"], errors="ignore")
+                st.session_state.spectra_search_results = result_df
+
+                if stop_requested:
+                    st.session_state.spectra_search_status = "stopped_by_user"
+                    st.warning(t('spectra.stop_warning'))
                 else:
-                    total_checked = len(search_results_df)
-        
+                    st.session_state.spectra_search_status = "completed"
+                    st.success(t('spectra.search_completed'))
 
-            for col in [
-                "spectrum_status",
-                "spectrum_type",
-                "inchikey",
-                "canonical_smiles",
-            ]:
-                if col not in search_results_df.columns:
-                    search_results_df[col] = ""
+                if "spectra_search_results" in st.session_state:
+                    st.subheader(t('spectra.results_subheader'))
 
-            search_results_df["_spectrum_status_norm"] = (
-                search_results_df["spectrum_status"]
-                .astype(str)
-                .str.strip()
-                .str.lower()
-            )
+                    if st.button(t('spectra.clear_results_button'), key="clear_spectra_search_results"):
+                        del st.session_state.spectra_search_results
+                        st.rerun()
 
-            search_results_df["_spectrum_type_norm"] = (
-                search_results_df["spectrum_type"]
-                .astype(str)
-                .str.strip()
-                .apply(spectra_normalize_spectrum_type)
-            )
+                    search_results_df = st.session_state.spectra_search_results.copy()
 
-            search_results_df["_compound_key"] = (
-                search_results_df["inchikey"]
-                .astype(str)
-                .str.strip()
-            )
+                    if search_results_df.empty:
+                        st.info(t('spectra.no_results_yet'))
+                    elif "spectrum_status" not in search_results_df.columns:
+                        st.warning(t('spectra.old_or_invalid_result'))
+                        st.dataframe(search_results_df, use_container_width=True)
+                    else:
+                        total_checked = len(search_results_df)
+            
 
-            empty_key_mask = search_results_df["_compound_key"] == ""
+                for col in [
+                    "spectrum_status",
+                    "spectrum_type",
+                    "inchikey",
+                    "canonical_smiles",
+                ]:
+                    if col not in search_results_df.columns:
+                        search_results_df[col] = ""
 
-            search_results_df.loc[empty_key_mask, "_compound_key"] = (
-                search_results_df.loc[empty_key_mask, "canonical_smiles"]
-                .astype(str)
-                .str.strip()
-            )
+                search_results_df["_spectrum_status_norm"] = (
+                    search_results_df["spectrum_status"]
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                )
 
-            found_statuses = [
-                "found_downloaded",
-                "already_in_bank",
-            ]
+                search_results_df["_spectrum_type_norm"] = (
+                    search_results_df["spectrum_type"]
+                    .astype(str)
+                    .str.strip()
+                    .apply(spectra_normalize_spectrum_type)
+                )
 
-            found_rows_df = search_results_df[
-                search_results_df["_spectrum_status_norm"].isin(found_statuses)
-            ].copy()
+                search_results_df["_compound_key"] = (
+                    search_results_df["inchikey"]
+                    .astype(str)
+                    .str.strip()
+                )
 
-            found_ir_rows = found_rows_df[
-                found_rows_df["_spectrum_type_norm"] == "IR"
-            ].copy()
+                empty_key_mask = search_results_df["_compound_key"] == ""
 
-            found_mass_rows = found_rows_df[
-                found_rows_df["_spectrum_type_norm"] == "Mass"
-            ].copy()
+                search_results_df.loc[empty_key_mask, "_compound_key"] = (
+                    search_results_df.loc[empty_key_mask, "canonical_smiles"]
+                    .astype(str)
+                    .str.strip()
+                )
 
-            found_ir_spectra = int(len(found_ir_rows))
-            found_mass_spectra = int(len(found_mass_rows))
-
-            found_ir_keys = set(
-                found_ir_rows["_compound_key"]
-                .astype(str)
-                .str.strip()
-                .replace("", np.nan)
-                .dropna()
-            )
-
-            found_mass_keys = set(
-                found_mass_rows["_compound_key"]
-                .astype(str)
-                .str.strip()
-                .replace("", np.nan)
-                .dropna()
-            )
-
-            found_both_keys = found_ir_keys & found_mass_keys
-            found_any_keys = found_ir_keys | found_mass_keys
-
-            found_downloaded = int(
-                (search_results_df["_spectrum_status_norm"] == "found_downloaded").sum()
-            )
-
-            already_in_bank = int(
-                (search_results_df["_spectrum_status_norm"] == "already_in_bank").sum()
-            )
-
-            not_found = int(
-                (search_results_df["_spectrum_status_norm"] == "not_found_in_all_sources").sum()
-            )
-
-            skipped_checked = int(
-                (search_results_df["_spectrum_status_norm"] == "skipped_already_checked").sum()
-            )
-
-            candidate_links = int(
-                (search_results_df["_spectrum_status_norm"] == "candidate_link_found").sum()
-            )
-
-            parse_errors = int(
-                (search_results_df["_spectrum_status_norm"] == "parse_error").sum()
-            )
-
-            download_errors = int(
-                (search_results_df["_spectrum_status_norm"] == "download_error").sum()
-            )
-
-            invalid_structures = int(
-                (search_results_df["_spectrum_status_norm"] == "invalid_structure").sum()
-            )
-
-            no_numeric_spectrum = int(
-                (search_results_df["_spectrum_status_norm"] == "no_numeric_spectrum").sum()
-            )
-
-            summary_cards = pd.DataFrame({
-                t('spectra.summary_indicator'): [
-                    t('spectra.summary_checked_rows'),
-                    t('spectra.summary_downloaded_total'),
-                    t('spectra.summary_downloaded_ir'),
-                    t('spectra.summary_downloaded_mass'),
-                    t('spectra.summary_compounds_both'),
-                    t('spectra.summary_compounds_any'),
-                    t('spectra.summary_compounds_ir_only'),
-                    t('spectra.summary_compounds_mass_only'),
-                    t('spectra.summary_already_in_bank'),
-                    t('spectra.summary_candidate_links'),
-                    t('spectra.summary_not_found'),
-                    t('spectra.summary_no_numeric'),
-                    t('spectra.summary_parse_errors'),
-                    t('spectra.summary_download_errors'),
-                    t('spectra.summary_invalid_structures'),
-                    t('spectra.summary_skipped_checked'),
-                ],
-                t('spectra.summary_value'): [
-                    total_checked,
-                    found_downloaded,
-                    found_ir_spectra,
-                    found_mass_spectra,
-                    len(found_both_keys),
-                    len(found_any_keys),
-                    len(found_ir_keys - found_mass_keys),
-                    len(found_mass_keys - found_ir_keys),
-                    already_in_bank,
-                    candidate_links,
-                    not_found,
-                    no_numeric_spectrum,
-                    parse_errors,
-                    download_errors,
-                    invalid_structures,
-                    skipped_checked,
+                found_statuses = [
+                    "found_downloaded",
+                    "already_in_bank",
                 ]
-            })
 
-            card_cols = st.columns(4)
+                found_rows_df = search_results_df[
+                    search_results_df["_spectrum_status_norm"].isin(found_statuses)
+                ].copy()
 
-            for i, row in summary_cards.iterrows():
-                with card_cols[i % 4]:
-                    st.markdown(
-                        f"""
-                        <div style="
-                            border: 1px solid rgba(128,128,128,0.35);
-                            border-radius: 10px;
-                            padding: 12px 14px;
-                            margin-bottom: 10px;
-                            min-height: 82px;
-                            background: rgba(255,255,255,0.03);
-                        ">
-                            <div style="font-size: 13px; opacity: 0.78; min-height: 32px;">
-                                {row[t('spectra.summary_indicator')]}
+                found_ir_rows = found_rows_df[
+                    found_rows_df["_spectrum_type_norm"] == "IR"
+                ].copy()
+
+                found_mass_rows = found_rows_df[
+                    found_rows_df["_spectrum_type_norm"] == "Mass"
+                ].copy()
+
+                found_ir_spectra = int(len(found_ir_rows))
+                found_mass_spectra = int(len(found_mass_rows))
+
+                found_ir_keys = set(
+                    found_ir_rows["_compound_key"]
+                    .astype(str)
+                    .str.strip()
+                    .replace("", np.nan)
+                    .dropna()
+                )
+
+                found_mass_keys = set(
+                    found_mass_rows["_compound_key"]
+                    .astype(str)
+                    .str.strip()
+                    .replace("", np.nan)
+                    .dropna()
+                )
+
+                found_both_keys = found_ir_keys & found_mass_keys
+                found_any_keys = found_ir_keys | found_mass_keys
+
+                found_downloaded = int(
+                    (search_results_df["_spectrum_status_norm"] == "found_downloaded").sum()
+                )
+
+                already_in_bank = int(
+                    (search_results_df["_spectrum_status_norm"] == "already_in_bank").sum()
+                )
+
+                not_found = int(
+                    (search_results_df["_spectrum_status_norm"] == "not_found_in_all_sources").sum()
+                )
+
+                skipped_checked = int(
+                    (search_results_df["_spectrum_status_norm"] == "skipped_already_checked").sum()
+                )
+
+                candidate_links = int(
+                    (search_results_df["_spectrum_status_norm"] == "candidate_link_found").sum()
+                )
+
+                parse_errors = int(
+                    (search_results_df["_spectrum_status_norm"] == "parse_error").sum()
+                )
+
+                download_errors = int(
+                    (search_results_df["_spectrum_status_norm"] == "download_error").sum()
+                )
+
+                invalid_structures = int(
+                    (search_results_df["_spectrum_status_norm"] == "invalid_structure").sum()
+                )
+
+                no_numeric_spectrum = int(
+                    (search_results_df["_spectrum_status_norm"] == "no_numeric_spectrum").sum()
+                )
+
+                summary_cards = pd.DataFrame({
+                    t('spectra.summary_indicator'): [
+                        t('spectra.summary_checked_rows'),
+                        t('spectra.summary_downloaded_total'),
+                        t('spectra.summary_downloaded_ir'),
+                        t('spectra.summary_downloaded_mass'),
+                        t('spectra.summary_compounds_both'),
+                        t('spectra.summary_compounds_any'),
+                        t('spectra.summary_compounds_ir_only'),
+                        t('spectra.summary_compounds_mass_only'),
+                        t('spectra.summary_already_in_bank'),
+                        t('spectra.summary_candidate_links'),
+                        t('spectra.summary_not_found'),
+                        t('spectra.summary_no_numeric'),
+                        t('spectra.summary_parse_errors'),
+                        t('spectra.summary_download_errors'),
+                        t('spectra.summary_invalid_structures'),
+                        t('spectra.summary_skipped_checked'),
+                    ],
+                    t('spectra.summary_value'): [
+                        total_checked,
+                        found_downloaded,
+                        found_ir_spectra,
+                        found_mass_spectra,
+                        len(found_both_keys),
+                        len(found_any_keys),
+                        len(found_ir_keys - found_mass_keys),
+                        len(found_mass_keys - found_ir_keys),
+                        already_in_bank,
+                        candidate_links,
+                        not_found,
+                        no_numeric_spectrum,
+                        parse_errors,
+                        download_errors,
+                        invalid_structures,
+                        skipped_checked,
+                    ]
+                })
+
+                card_cols = st.columns(4)
+
+                for i, row in summary_cards.iterrows():
+                    with card_cols[i % 4]:
+                        st.markdown(
+                            f"""
+                            <div style="
+                                border: 1px solid rgba(128,128,128,0.35);
+                                border-radius: 10px;
+                                padding: 12px 14px;
+                                margin-bottom: 10px;
+                                min-height: 82px;
+                                background: rgba(255,255,255,0.03);
+                            ">
+                                <div style="font-size: 13px; opacity: 0.78; min-height: 32px;">
+                                    {row[t('spectra.summary_indicator')]}
+                                </div>
+                                <div style="font-size: 28px; font-weight: 700; margin-top: 4px;">
+                                    {row[t('spectra.summary_value')]}
+                                </div>
                             </div>
-                            <div style="font-size: 28px; font-weight: 700; margin-top: 4px;">
-                                {row[t('spectra.summary_value')]}
-                            </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+                            """,
+                            unsafe_allow_html=True
+                        )
 
-            st.subheader(t('spectra.status_summary_subheader'))
+                st.subheader(t('spectra.status_summary_subheader'))
 
-            status_summary = (
-                search_results_df
-                .groupby("spectrum_status")
-                .size()
-                .reset_index(name=t('spectra.status_count'))
-                .rename(columns={"spectrum_status": t('spectra.status_label')})
-                .sort_values(t('spectra.status_count'), ascending=False)
-            )
-
-            st.dataframe(status_summary, use_container_width=True, hide_index=True)
-
-            if "spectrum_type" in search_results_df.columns:
-                st.subheader(t('spectra.type_summary_subheader'))
-                type_summary = (
+                status_summary = (
                     search_results_df
-                    .groupby(["spectrum_type", "spectrum_status"])
+                    .groupby("spectrum_status")
                     .size()
                     .reset_index(name=t('spectra.status_count'))
-                    .sort_values(["spectrum_type", t('spectra.status_count')], ascending=[True, False])
+                    .rename(columns={"spectrum_status": t('spectra.status_label')})
+                    .sort_values(t('spectra.status_count'), ascending=False)
                 )
-                st.dataframe(type_summary, use_container_width=True, hide_index=True)
 
-            with st.expander(t('spectra.show_full_table_expander')):
-                st.dataframe(search_results_df, use_container_width=True, hide_index=True)
+                st.dataframe(status_summary, use_container_width=True, hide_index=True)
 
-            csv_search = search_results_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                t('spectra.download_search_results'),
-                csv_search,
-                "spectra_search_results.csv",
-                "text/csv"
-            )
+                if "spectrum_type" in search_results_df.columns:
+                    st.subheader(t('spectra.type_summary_subheader'))
+                    type_summary = (
+                        search_results_df
+                        .groupby(["spectrum_type", "spectrum_status"])
+                        .size()
+                        .reset_index(name=t('spectra.status_count'))
+                        .sort_values(["spectrum_type", t('spectra.status_count')], ascending=[True, False])
+                    )
+                    st.dataframe(type_summary, use_container_width=True, hide_index=True)
 
-            if st.button(t('spectra.refresh_spectra_bank_button'), key="refresh_spectra_status_after_search"):
-                st.rerun()
+                with st.expander(t('spectra.show_full_table_expander')):
+                    st.dataframe(search_results_df, use_container_width=True, hide_index=True)
 
-            spectra_results_rendered_this_run = True
+                csv_search = search_results_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    t('spectra.download_search_results'),
+                    csv_search,
+                    "spectra_search_results.csv",
+                    "text/csv"
+                )
 
-    if not spectra_results_rendered_this_run:
-        render_spectra_search_results_if_available()
+                if st.button(t('spectra.refresh_spectra_bank_button'), key="refresh_spectra_status_after_search"):
+                    st.rerun()
 
-    st.divider()
+                spectra_results_rendered_this_run = True
 
+        if not spectra_results_rendered_this_run:
+            render_spectra_search_results_if_available()
+
+        st.divider()
+
+
+
+    else:
+        st.info('Онлайн-поиск, скачивание новых спектров, управление cache и очистка результатов доступны только администратору.')
 
     st.subheader(t('spectra_desc.subheader'))
 
@@ -13318,3 +13427,7 @@ qspr_show_prognostic_training_section(
 # Report
 
 render_report_section({**globals(), **locals()})
+
+
+
+
