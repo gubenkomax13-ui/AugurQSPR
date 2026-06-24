@@ -279,6 +279,10 @@ except Exception as e:
 RESULTS_DIR = "results"
 DATA_BANK_FILE = "data_bank.csv"
 HELP_DIR = "help"
+SPECTRA_BANK_ONLINE_URL = (
+    "https://drive.google.com/drive/folders/"
+    "1OsxFY_Rs2K55tPVqoo1QhyB0hxwZPoKd?usp=drive_link"
+)
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(HELP_DIR, exist_ok=True)
@@ -8353,7 +8357,10 @@ with st.expander(
                
 
     else:
-        st.info('Спектральная база Augur подключается из подготовленной базы. Импорт, переиндексация и обновление спектров доступны только администратору.')
+        st.info(
+            "Спектральная база Augur опубликована как подготовленная онлайн-директория. "
+            "Импорт, переиндексация и ручное пополнение базы из Streamlit сейчас не используются."
+        )
 
     spectra_index = spectra_load_index()
 
@@ -8430,12 +8437,13 @@ with st.expander(
         if not is_admin():
             st.subheader("Спектральная база Augur")
             status_text = "подключена" if len(idx_active) > 0 else "не подключена"
-            st.info(
+            st.markdown(
                 "Доступно спектров: "
-                f"{len(idx_active)}\n\n"
-                "Источник: подготовленная база Augur / Google Drive\n\n"
-                f"Статус: {status_text}\n\n"
-                "Онлайн-поиск и скачивание новых спектров доступны только администратору."
+                f"**{len(idx_active)}**\n\n"
+                f"Источник: [подготовленная база Augur / Google Drive]({SPECTRA_BANK_ONLINE_URL})\n\n"
+                f"Статус: **{status_text}**\n\n"
+                "Онлайн-поиск, ручное скачивание новых спектров и служебное пополнение базы "
+                "в Streamlit сейчас не используются."
             )
 
         # ------------------------------------------------------------
@@ -10510,7 +10518,12 @@ with st.expander(
 
 
     else:
-        st.info('Онлайн-поиск, скачивание новых спектров, управление cache и очистка результатов доступны только администратору.')
+        st.info(
+            "Используется подготовленная спектральная база Augur. "
+            f"Онлайн-директория базы: {SPECTRA_BANK_ONLINE_URL}. "
+            "Поиск во внешних источниках, управление cache и очистка служебных результатов "
+            "скрыты в обычном режиме."
+        )
 
     st.subheader(t('spectra_desc.subheader'))
 

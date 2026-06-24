@@ -72,6 +72,9 @@ Python dependencies are installed from `requirements.txt`. System packages are i
 
 The application requires NumPy 1.x (`numpy<2`). If Streamlit Cloud previously installed NumPy 2.x, push the updated `requirements.txt` and reboot or redeploy the app from Streamlit Cloud.
 
+The prepared Augur spectral bank is published as an online Google Drive directory:
+[Augur spectral bank](https://drive.google.com/drive/folders/1OsxFY_Rs2K55tPVqoo1QhyB0hxwZPoKd?usp=drive_link).
+
 Admin mode is enabled only through Streamlit secrets. In Streamlit Community Cloud, open the app settings and add:
 
 ```toml
