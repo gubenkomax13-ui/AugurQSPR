@@ -1,0 +1,68 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.cache/
+.pytest_cache/
+*.log
+*.tmp
+
+# Local virtual environments
+.venv/
+venv/
+env/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Local data, reports, and generated exports
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*.docx
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.zip
+
+# Keep curated public examples if they are added later.
+!examples/
+!examples/*.csv
+
+# Private or generated model packages
+*.joblib
+*.pkl
+*.pickle
+
+# Runtime output folders
+results/
+catboost_info/
+descriptor_bank/
+spectra_bank/
+prognostic_models/
+
+# Local scratch folders
+файлы для проб/
+конт/
+
+# Local command stubs and scratch scripts
+python
+streamlit
+where
+запуск.txt
+ewq.py
+
+# Historical module snapshots kept locally
+modules/*++.py
+modules/*-.py
+modules/* 2106.py
+help/model_encyclopedia*.json
+!help/model_encyclopedia.json
+help/*.txt
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*

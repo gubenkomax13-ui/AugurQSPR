@@ -1,0 +1,64 @@
+{
+  "ru": {
+    "intro": "Для построения модели использовали выборку из {n_compounds} соединений с известными значениями свойства «{target_col}».",
+    "data_description": "Распределение свойства: среднее = {mean:.2f}, стандартное отклонение = {std:.2f}, диапазон = {min:.2f} – {max:.2f}.",
+    "descriptors": {
+      "rdkit": "Молекулярные дескрипторы рассчитывали с использованием библиотеки RDKit ({n_rdkit} шт.).",
+      "mordred": "Дополнительно рассчитаны дескрипторы Mordred ({n_mordred} шт.).",
+      "padel": "Для расширения химического пространства использованы дескрипторы PaDEL ({n_padel} шт.).",
+      "selection": "Перед моделированием удаляли константные ({n_const}) и сильно коррелирующие (|r|>{corr_threshold}) признаки. Финальный отбор выполнен методом «{method}» до {n_final} наиболее информативных дескрипторов.",
+      "no_selection": "Отбор дескрипторов не применялся; использованы все {n_total} рассчитанных признаков."
+    },
+    "model": {
+      "intro": "Модель регрессии построена методом {model_name}.",
+      "params": "Параметры модели: {params}.",
+      "optimized": "Гиперпараметры оптимизированы с помощью {search_method} по {cv}-кратной кросс-валидации. Лучшие параметры: {best_params}."
+    },
+    "validation": {
+      "kfold": "Качество модели оценивали с помощью {k}-кратной кросс-валидации (R² = {r2:.3f}, RMSE = {rmse:.2f}, MAE = {mae:.2f}).",
+      "holdout": "На тестовой выборке (доля {test_size:.0%}) получены следующие метрики: R² = {r2:.3f}, RMSE = {rmse:.2f}, MAE = {mae:.2f}.",
+      "loo": "Методом Leave-One-Out получены: Q² = {q2:.3f}, RMSE = {rmse:.2f}.",
+      "bootstrap": "Bootstrap-валидация ({n_iter} итераций) показала средний R² OOB = {r2_mean:.3f} ± {r2_std:.3f}.",
+      "external": "External Validation (наиболее удалённые вещества, доля {fraction:.0%}) дала R² = {r2_mean:.3f} ± {r2_std:.3f}."
+    },
+    "ad": "Применимую область модели оценивали по рычаговому расстоянию (leverage). Порог h* = {threshold:.4f}. Выявлено {n_out} веществ ({pct:.1f}%) вне применимой области.",
+    "conclusion": {
+      "excellent": "Модель демонстрирует высокую предсказательную способность и может быть рекомендована для прогнозирования целевого свойства новых соединений в рамках применимой области.",
+      "good": "Модель показывает хорошую предсказательную способность и может использоваться для ориентировочных оценок.",
+      "moderate": "Модель обладает умеренной предсказательной способностью. Для повышения точности рекомендуется увеличить выборку или рассмотреть альтернативные методы.",
+      "poor": "Модель показывает низкую предсказательную способность. Это может быть связано с недостаточным объёмом данных, нелинейностью зависимости или неинформативностью дескрипторов. Рекомендуется расширить выборку, использовать другие дескрипторы или более сложные алгоритмы.",
+      "default": "Качество модели следует оценивать по совокупности метрик и области применимости."
+    }
+  },
+  "en": {
+    "intro": "A dataset of {n_compounds} compounds with known values of {target_col} was used for modeling.",
+    "data_description": "Property distribution: mean = {mean:.2f}, std = {std:.2f}, range = {min:.2f} – {max:.2f}.",
+    "descriptors": {
+      "rdkit": "Molecular descriptors were calculated using RDKit ({n_rdkit} features).",
+      "mordred": "Mordred descriptors were additionally calculated ({n_mordred} features).",
+      "padel": "PaDEL descriptors were used to expand chemical space ({n_padel} features).",
+      "selection": "Constant ({n_const}) and highly correlated (|r|>{corr_threshold}) descriptors were removed. Final selection was performed by {method} to retain {n_final} most informative features.",
+      "no_selection": "No descriptor selection was applied; all {n_total} calculated features were used."
+    },
+    "model": {
+      "intro": "A {model_name} regression model was built.",
+      "params": "Model parameters: {params}.",
+      "optimized": "Hyperparameters were optimized using {search_method} with {cv}-fold cross-validation. Best parameters: {best_params}."
+    },
+    "validation": {
+      "kfold": "Model performance was assessed using {k}-fold cross-validation (R² = {r2:.3f}, RMSE = {rmse:.2f}, MAE = {mae:.2f}).",
+      "holdout": "On the test set ({test_size:.0%} fraction), the following metrics were obtained: R² = {r2:.3f}, RMSE = {rmse:.2f}, MAE = {mae:.2f}.",
+      "loo": "Leave-One-Out cross-validation gave Q² = {q2:.3f}, RMSE = {rmse:.2f}.",
+      "bootstrap": "Bootstrap validation ({n_iter} iterations) showed mean OOB R² = {r2_mean:.3f} ± {r2_std:.3f}.",
+      "external": "External validation (on the most distant compounds, fraction {fraction:.0%}) gave R² = {r2_mean:.3f} ± {r2_std:.3f}."
+    },
+    "ad": "Applicability domain was estimated using leverage. The threshold h* = {threshold:.4f}. {n_out} compounds ({pct:.1f}%) were found outside the domain.",
+    "conclusion": {
+      "excellent": "The model shows high predictive power and can be recommended for predicting the target property of new compounds within the applicability domain.",
+      "good": "The model shows good predictive performance and can be used for approximate estimations.",
+      "moderate": "The model has moderate predictive ability. To improve accuracy, consider increasing the dataset or trying alternative methods.",
+      "poor": "The model exhibits low predictive ability. This may be due to insufficient data, non-linearity, or uninformative descriptors. Consider expanding the dataset, using other descriptors, or more complex algorithms.",
+      "default": "The model quality should be assessed based on the overall metrics and applicability domain."
+    }
+  }
+}
