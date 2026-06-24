@@ -244,6 +244,20 @@ if translation_key_issues:
 # Подключение модулей GenQSPR
 
 try:
+    for _secret_key in [
+        "AUGUR_SPECTRA_INDEX_URL",
+        "AUGUR_SPECTRA_INDEX_FILE_ID",
+        "AUGUR_SPECTRA_MANIFEST_URL",
+        "AUGUR_SPECTRA_MANIFEST_FILE_ID",
+    ]:
+        try:
+            _secret_value = st.secrets.get(_secret_key, "")
+        except Exception:
+            _secret_value = ""
+
+        if _secret_value:
+            os.environ.setdefault(_secret_key, str(_secret_value))
+
     from modules.spectra_core import *
     from modules.qspr_core import *
     from modules.saod2_core import *

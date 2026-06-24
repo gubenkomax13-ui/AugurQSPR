@@ -56,6 +56,15 @@ SPECTRA_SEARCH_CACHE_FILE = os.path.join(
     "spectra_search_cache.csv"
 )
 
+SPECTRA_REMOTE_INDEX_URL = os.environ.get("AUGUR_SPECTRA_INDEX_URL", "").strip()
+SPECTRA_REMOTE_INDEX_FILE_ID = os.environ.get("AUGUR_SPECTRA_INDEX_FILE_ID", "").strip()
+SPECTRA_REMOTE_MANIFEST_URL = os.environ.get("AUGUR_SPECTRA_MANIFEST_URL", "").strip()
+SPECTRA_REMOTE_MANIFEST_FILE_ID = os.environ.get("AUGUR_SPECTRA_MANIFEST_FILE_ID", "").strip()
+SPECTRA_REMOTE_MANIFEST_FILE = os.path.join(
+    SPECTRA_BANK_DIR,
+    "spectra_manifest.csv"
+)
+
 SPECTRA_IR_DIR = os.path.join(SPECTRA_BANK_DIR, "IR")
 SPECTRA_MASS_DIR = os.path.join(SPECTRA_BANK_DIR, "Mass")
 
@@ -102,6 +111,390 @@ for _d in [
     SPECTRA_MASS_LOG_DIR,
 ]:
     os.makedirs(_d, exist_ok=True)
+
+
+def spectra_google_drive_download_url(file_id):
+    """
+    Формирует прямой download URL для публичного файла Google Drive.
+    """
+    file_id = str(file_id or "").strip()
+
+    if not file_id:
+        return ""
+
+    return (
+        "https://drive.google.com/uc?"
+        + urllib.parse.urlencode({"export": "download", "id": file_id})
+    )
+
+
+def spectra_google_drive_file_id_from_url(url):
+    """
+    Достаёт file_id из обычной ссылки Google Drive на файл.
+    """
+    url = str(url or "").strip()
+
+    if not url or "drive.google.com" not in url:
+        return ""
+
+    parsed = urllib.parse.urlparse(url)
+    query = urllib.parse.parse_qs(parsed.query)
+
+    if query.get("id"):
+        return str(query["id"][0]).strip()
+
+    parts = [p for p in parsed.path.split("/") if p]
+
+    if "d" in parts:
+        d_idx = parts.index("d")
+
+        if d_idx + 1 < len(parts):
+            return parts[d_idx + 1].strip()
+
+    return ""
+
+
+def spectra_normalize_download_url(url):
+    """
+    Превращает обычную Drive file-ссылку в прямую download-ссылку.
+    """
+    url = str(url or "").strip()
+
+    if not url:
+        return ""
+
+    file_id = spectra_google_drive_file_id_from_url(url)
+
+    if file_id:
+        return spectra_google_drive_download_url(file_id)
+
+    return url
+
+
+def spectra_download_public_file(url, filepath, timeout=60):
+    """
+    Скачивает небольшой публичный файл в локальный runtime cache.
+    """
+    url = spectra_normalize_download_url(url)
+
+    if not url:
+        return False
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 Augur-QSPR-SpectraBank/1.0",
+        "Accept": "text/csv,application/json,text/plain,application/octet-stream,*/*",
+        "Accept-Encoding": "identity",
+        "Connection": "close",
+    }
+
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+    response = requests.get(
+        url,
+        headers=headers,
+        timeout=timeout,
+        allow_redirects=True,
+    )
+
+    response.raise_for_status()
+
+    with open(filepath, "wb") as f:
+        f.write(response.content)
+
+    return os.path.exists(filepath) and os.path.getsize(filepath) > 0
+
+
+def spectra_download_public_drive_file(file_id, filepath, timeout=60):
+    """
+    Скачивает публичный файл Google Drive по file_id.
+    """
+    url = spectra_google_drive_download_url(file_id)
+
+    if not url:
+        return False
+
+    return spectra_download_public_file(url, filepath, timeout=timeout)
+
+
+def spectra_ensure_remote_index():
+    """
+    Подтягивает только spectra_index.csv, если локального индекса ещё нет.
+    """
+    if os.path.exists(SPECTRA_INDEX_FILE) and os.path.getsize(SPECTRA_INDEX_FILE) > 0:
+        return True
+
+    try:
+        if SPECTRA_REMOTE_INDEX_URL:
+            return spectra_download_public_file(
+                SPECTRA_REMOTE_INDEX_URL,
+                SPECTRA_INDEX_FILE,
+                timeout=60
+            )
+
+        if SPECTRA_REMOTE_INDEX_FILE_ID:
+            return spectra_download_public_drive_file(
+                SPECTRA_REMOTE_INDEX_FILE_ID,
+                SPECTRA_INDEX_FILE,
+                timeout=60
+            )
+    except Exception:
+        return False
+
+    return False
+
+
+def spectra_ensure_remote_manifest():
+    """
+    Подтягивает маленький manifest path -> file_id для ленивой загрузки спектров.
+
+    Ожидаемые колонки:
+    - path / relative_path / processed_file / raw_file
+    - file_id / drive_file_id / google_drive_file_id
+    Дополнительно можно использовать download_url / url.
+    """
+    if (
+        os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE)
+        and os.path.getsize(SPECTRA_REMOTE_MANIFEST_FILE) > 0
+    ):
+        return True
+
+    try:
+        if SPECTRA_REMOTE_MANIFEST_URL:
+            return spectra_download_public_file(
+                SPECTRA_REMOTE_MANIFEST_URL,
+                SPECTRA_REMOTE_MANIFEST_FILE,
+                timeout=60
+            )
+
+        if SPECTRA_REMOTE_MANIFEST_FILE_ID:
+            return spectra_download_public_drive_file(
+                SPECTRA_REMOTE_MANIFEST_FILE_ID,
+                SPECTRA_REMOTE_MANIFEST_FILE,
+                timeout=60
+            )
+    except Exception:
+        return False
+
+    return False
+
+
+def spectra_normalize_bank_relative_path(path):
+    """
+    Приводит путь к виду относительно spectra_bank с прямыми слэшами.
+    """
+    value = str(path or "").strip().strip('"').strip("'")
+
+    if not value:
+        return ""
+
+    value = value.replace("\\", "/")
+    bank_root = os.path.abspath(SPECTRA_BANK_DIR).replace("\\", "/")
+
+    try:
+        abs_value = os.path.abspath(value).replace("\\", "/")
+
+        if abs_value.startswith(bank_root + "/"):
+            value = abs_value[len(bank_root) + 1:]
+        else:
+            marker = "/spectra_bank/"
+            marker_idx = value.lower().find(marker)
+
+            if marker_idx >= 0:
+                value = value[marker_idx + len(marker):]
+    except Exception:
+        pass
+
+    value = value.lstrip("./")
+
+    if value.lower().startswith("spectra_bank/"):
+        value = value[len("spectra_bank/"):]
+
+    return value
+
+
+def spectra_load_remote_manifest():
+    """
+    Загружает manifest удалённой Google Drive-базы.
+    """
+    if not spectra_ensure_remote_manifest():
+        return pd.DataFrame()
+
+    try:
+        manifest = pd.read_csv(SPECTRA_REMOTE_MANIFEST_FILE)
+    except Exception:
+        return pd.DataFrame()
+
+    if manifest.empty:
+        return pd.DataFrame()
+
+    return manifest
+
+
+def spectra_find_remote_manifest_record(local_or_relative_path, spectrum_record=None):
+    """
+    Находит строку manifest для локального/относительного пути.
+    """
+    requested_rel = spectra_normalize_bank_relative_path(local_or_relative_path)
+    requested_base = os.path.basename(str(local_or_relative_path or ""))
+
+    if spectrum_record is not None:
+        direct_file_id = (
+            spectrum_record.get("drive_file_id", "")
+            or spectrum_record.get("google_drive_file_id", "")
+            or spectrum_record.get("file_id", "")
+        )
+
+        direct_url = (
+            spectrum_record.get("download_url", "")
+            or spectrum_record.get("remote_url", "")
+        )
+
+        if direct_file_id or direct_url:
+            return {
+                "file_id": direct_file_id,
+                "download_url": direct_url,
+                "path": requested_rel,
+            }
+
+    manifest = spectra_load_remote_manifest()
+
+    if manifest.empty:
+        return None
+
+    path_cols = [
+        "path",
+        "relative_path",
+        "bank_path",
+        "processed_file",
+        "raw_file",
+        "filename",
+        "name",
+    ]
+
+    id_cols = [
+        "file_id",
+        "drive_file_id",
+        "google_drive_file_id",
+        "id",
+    ]
+
+    url_cols = [
+        "download_url",
+        "url",
+        "remote_url",
+    ]
+
+    for col in path_cols + id_cols + url_cols:
+        if col not in manifest.columns:
+            manifest[col] = ""
+
+    manifest["_bank_rel_path"] = ""
+
+    for col in path_cols:
+        col_paths = manifest[col].astype(str).apply(spectra_normalize_bank_relative_path)
+        manifest["_bank_rel_path"] = manifest["_bank_rel_path"].where(
+            manifest["_bank_rel_path"].astype(str).str.strip() != "",
+            col_paths
+        )
+
+    manifest["_bank_base_name"] = manifest["_bank_rel_path"].astype(str).apply(os.path.basename)
+
+    found = manifest[manifest["_bank_rel_path"] == requested_rel].copy()
+
+    if found.empty and requested_base:
+        found = manifest[manifest["_bank_base_name"] == requested_base].copy()
+
+    if found.empty:
+        return None
+
+    row = found.iloc[0].to_dict()
+
+    file_id = ""
+    download_url = ""
+
+    for col in id_cols:
+        file_id = str(row.get(col, "")).strip()
+
+        if file_id:
+            break
+
+    for col in url_cols:
+        download_url = str(row.get(col, "")).strip()
+
+        if download_url:
+            break
+
+    if not file_id and not download_url:
+        return None
+
+    return {
+        "file_id": file_id,
+        "download_url": download_url,
+        "path": row.get("_bank_rel_path", requested_rel),
+    }
+
+
+def spectra_local_path_for_bank_relative(relative_path):
+    """
+    Возвращает безопасный локальный путь внутри spectra_bank для relative_path.
+    """
+    relative_path = spectra_normalize_bank_relative_path(relative_path)
+
+    if not relative_path:
+        return ""
+
+    local_path = os.path.abspath(os.path.join(SPECTRA_BANK_DIR, relative_path))
+    bank_root = os.path.abspath(SPECTRA_BANK_DIR)
+
+    if not (local_path == bank_root or local_path.startswith(bank_root + os.sep)):
+        return ""
+
+    return local_path
+
+
+def spectra_materialize_remote_bank_file(local_or_relative_path, spectrum_record=None):
+    """
+    Если файла нет локально, скачивает только этот файл из Google Drive.
+    """
+    remote_record = spectra_find_remote_manifest_record(
+        local_or_relative_path,
+        spectrum_record=spectrum_record
+    )
+
+    if remote_record is None:
+        return ""
+
+    target_rel = remote_record.get("path", "") or spectra_normalize_bank_relative_path(
+        local_or_relative_path
+    )
+    target_path = spectra_local_path_for_bank_relative(target_rel)
+
+    if not target_path:
+        base_name = os.path.basename(str(local_or_relative_path or ""))
+
+        if not base_name:
+            return ""
+
+        target_path = os.path.join(SPECTRA_BANK_DIR, "remote_cache", base_name)
+
+    if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+        return target_path
+
+    try:
+        download_url = str(remote_record.get("download_url", "")).strip()
+        file_id = str(remote_record.get("file_id", "")).strip()
+
+        if download_url:
+            ok = spectra_download_public_file(download_url, target_path, timeout=90)
+        else:
+            ok = spectra_download_public_drive_file(file_id, target_path, timeout=90)
+
+        if ok:
+            return target_path
+    except Exception:
+        return ""
+
+    return ""
 
 # Защита CSV-файлов от одновременной записи при параллельном IR/Mass-поиске.
 SPECTRA_INDEX_LOCK = threading.RLock()
@@ -310,6 +703,8 @@ def spectra_load_index():
     """
     Загружает spectra_index.csv.
     """
+    spectra_ensure_remote_index()
+
     if os.path.exists(SPECTRA_INDEX_FILE):
         try:
             return pd.read_csv(SPECTRA_INDEX_FILE)
@@ -5028,7 +5423,54 @@ def spectra_search_one_compound(compound, spectrum_type="IR", selected_sources=N
 # ------------------------------------------------------------------
 # Спектральные дескрипторы
 
-def spectral_load_processed_spectrum(processed_file):
+def spectral_resolve_processed_spectrum_path(processed_file, spectrum_record=None, allow_remote=True):
+    """
+    Находит processed CSV локально; при необходимости лениво скачивает из remote bank.
+    """
+    if processed_file is None:
+        return ""
+
+    processed_file = str(processed_file).strip()
+
+    if not processed_file:
+        return ""
+
+    possible_paths = []
+
+    possible_paths.append(processed_file)
+    possible_paths.append(os.path.join(os.getcwd(), processed_file))
+
+    bank_relative_path = spectra_normalize_bank_relative_path(processed_file)
+
+    if bank_relative_path:
+        bank_local_path = spectra_local_path_for_bank_relative(bank_relative_path)
+
+        if bank_local_path:
+            possible_paths.append(bank_local_path)
+
+    base_name = os.path.basename(processed_file)
+
+    possible_paths.append(os.path.join(SPECTRA_IR_PROCESSED_DIR, base_name))
+    possible_paths.append(os.path.join(SPECTRA_MASS_PROCESSED_DIR, base_name))
+    possible_paths.append(os.path.join(SPECTRA_BANK_DIR, "processed", base_name))
+
+    for p in possible_paths:
+        if p and os.path.exists(p):
+            return p
+
+    if allow_remote:
+        remote_path = spectra_materialize_remote_bank_file(
+            processed_file,
+            spectrum_record=spectrum_record
+        )
+
+        if remote_path and os.path.exists(remote_path):
+            return remote_path
+
+    return ""
+
+
+def spectral_load_processed_spectrum(processed_file, spectrum_record=None):
     """
     Загружает processed CSV спектра.
     Ожидаются колонки:
@@ -5042,25 +5484,13 @@ def spectral_load_processed_spectrum(processed_file):
 
     processed_file = str(processed_file).strip()
 
-    possible_paths = []
+    real_path = spectral_resolve_processed_spectrum_path(
+        processed_file,
+        spectrum_record=spectrum_record,
+        allow_remote=True
+    )
 
-    possible_paths.append(processed_file)
-    possible_paths.append(os.path.join(os.getcwd(), processed_file))
-
-    base_name = os.path.basename(processed_file)
-
-    possible_paths.append(os.path.join(SPECTRA_IR_PROCESSED_DIR, base_name))
-    possible_paths.append(os.path.join(SPECTRA_MASS_PROCESSED_DIR, base_name))
-    possible_paths.append(os.path.join(SPECTRA_BANK_DIR, "processed", base_name))
-
-    real_path = None
-
-    for p in possible_paths:
-        if p and os.path.exists(p):
-            real_path = p
-            break
-
-    if real_path is None:
+    if not real_path:
         return pd.DataFrame()
 
     try:
@@ -5619,14 +6049,19 @@ def spectral_get_best_spectrum_for_compound(
         processed_file = str(row.get("processed_file", "")).strip()
 
         if processed_file:
-            possible_paths = [
-                processed_file,
-                os.path.join(os.getcwd(), processed_file),
-                os.path.join(SPECTRA_IR_PROCESSED_DIR, os.path.basename(processed_file)),
-                os.path.join(SPECTRA_MASS_PROCESSED_DIR, os.path.basename(processed_file)),
-            ]
+            exists = bool(
+                spectral_resolve_processed_spectrum_path(
+                    processed_file,
+                    spectrum_record=row.to_dict(),
+                    allow_remote=False
+                )
+            )
 
-            exists = any(os.path.exists(p) for p in possible_paths)
+            if not exists:
+                exists = spectra_find_remote_manifest_record(
+                    processed_file,
+                    spectrum_record=row.to_dict()
+                ) is not None
 
             if exists:
                 work.loc[idx, "_processed_exists_priority"] = 0
@@ -5738,7 +6173,10 @@ def spectral_build_descriptors_for_dataset(
 
         processed_file = spectrum_record.get("processed_file", "")
 
-        spectrum_df = spectral_load_processed_spectrum(processed_file)
+        spectrum_df = spectral_load_processed_spectrum(
+            processed_file,
+            spectrum_record=spectrum_record
+        )
 
         if spectrum_df.empty:
             report["parse_errors"] += 1

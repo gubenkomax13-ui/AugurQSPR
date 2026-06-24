@@ -75,6 +75,36 @@ The application requires NumPy 1.x (`numpy<2`). If Streamlit Cloud previously in
 The prepared Augur spectral bank is published as an online Google Drive directory:
 [Augur spectral bank](https://drive.google.com/drive/folders/1OsxFY_Rs2K55tPVqoo1QhyB0hxwZPoKd?usp=drive_link).
 
+For Streamlit Cloud the spectral bank can be used lazily: the app downloads only
+`spectra_index.csv` first, then downloads only the matched processed spectra.
+The Google Drive folder should keep the same structure as the local bank:
+
+```text
+spectra_bank/
+  spectra_index.csv
+  spectra_manifest.csv
+  IR/processed/...
+  Mass/processed/...
+```
+
+`spectra_manifest.csv` maps the same relative paths to Google Drive file IDs:
+
+```text
+path,file_id
+IR/processed/IR_NIST_gas_XXXX_001_processed.csv,GOOGLE_DRIVE_FILE_ID
+Mass/processed/Mass_MASSBANK_gas_XXXX_001_processed.csv,GOOGLE_DRIVE_FILE_ID
+```
+
+In Streamlit secrets add either direct URLs or file IDs for the two small files:
+
+```toml
+AUGUR_SPECTRA_INDEX_FILE_ID = "..."
+AUGUR_SPECTRA_MANIFEST_FILE_ID = "..."
+```
+
+The individual spectra are not listed in secrets; they are resolved through
+`spectra_manifest.csv` and downloaded on demand.
+
 Admin mode is enabled only through Streamlit secrets. In Streamlit Community Cloud, open the app settings and add:
 
 ```toml
