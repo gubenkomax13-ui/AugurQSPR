@@ -103,6 +103,16 @@ AUGUR_SPECTRA_MANIFEST_FILE_ID = "..."
 AUGUR_SPECTRA_SEARCH_CACHE_FILE_ID = "..." # optional
 ```
 
+Alternatively, the app can build `spectra_manifest.csv` automatically by walking
+the public Google Drive folder metadata. This does not download all spectra; it
+only reads file names and file IDs:
+
+```toml
+AUGUR_SPECTRA_INDEX_FILE_ID = "..."
+AUGUR_SPECTRA_BANK_FOLDER_ID = "1OsxFY_Rs2K55tPVqoo1QhyB0hxwZPoKd"
+AUGUR_GOOGLE_DRIVE_API_KEY = "..."
+```
+
 The individual spectra are not listed in secrets; they are resolved through
 `spectra_manifest.csv` and downloaded on demand. `spectra_search_cache.csv`
 is optional and stores service search history/statuses; it does not replace

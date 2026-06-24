@@ -62,6 +62,9 @@ SPECTRA_REMOTE_MANIFEST_URL = os.environ.get("AUGUR_SPECTRA_MANIFEST_URL", "").s
 SPECTRA_REMOTE_MANIFEST_FILE_ID = os.environ.get("AUGUR_SPECTRA_MANIFEST_FILE_ID", "").strip()
 SPECTRA_REMOTE_SEARCH_CACHE_URL = os.environ.get("AUGUR_SPECTRA_SEARCH_CACHE_URL", "").strip()
 SPECTRA_REMOTE_SEARCH_CACHE_FILE_ID = os.environ.get("AUGUR_SPECTRA_SEARCH_CACHE_FILE_ID", "").strip()
+SPECTRA_REMOTE_BANK_FOLDER_URL = os.environ.get("AUGUR_SPECTRA_BANK_FOLDER_URL", "").strip()
+SPECTRA_REMOTE_BANK_FOLDER_ID = os.environ.get("AUGUR_SPECTRA_BANK_FOLDER_ID", "").strip()
+SPECTRA_GOOGLE_DRIVE_API_KEY = os.environ.get("AUGUR_GOOGLE_DRIVE_API_KEY", "").strip()
 SPECTRA_REMOTE_MANIFEST_FILE = os.path.join(
     SPECTRA_BANK_DIR,
     "spectra_manifest.csv"
@@ -156,6 +159,32 @@ def spectra_google_drive_file_id_from_url(url):
     return ""
 
 
+def spectra_google_drive_folder_id_from_url(url):
+    """
+    Достаёт folder_id из ссылки Google Drive на папку.
+    """
+    url = str(url or "").strip()
+
+    if not url or "drive.google.com" not in url:
+        return ""
+
+    parsed = urllib.parse.urlparse(url)
+    query = urllib.parse.parse_qs(parsed.query)
+
+    if query.get("id"):
+        return str(query["id"][0]).strip()
+
+    parts = [p for p in parsed.path.split("/") if p]
+
+    if "folders" in parts:
+        folder_idx = parts.index("folders")
+
+        if folder_idx + 1 < len(parts):
+            return parts[folder_idx + 1].strip()
+
+    return ""
+
+
 def spectra_normalize_download_url(url):
     """
     Превращает обычную Drive file-ссылку в прямую download-ссылку.
@@ -218,6 +247,172 @@ def spectra_download_public_drive_file(file_id, filepath, timeout=60):
     return spectra_download_public_file(url, filepath, timeout=timeout)
 
 
+def spectra_get_remote_bank_folder_id():
+    """
+    Возвращает ID корневой Google Drive-папки spectra_bank.
+    """
+    folder_id = str(SPECTRA_REMOTE_BANK_FOLDER_ID or "").strip()
+
+    if folder_id:
+        return folder_id
+
+    return spectra_google_drive_folder_id_from_url(SPECTRA_REMOTE_BANK_FOLDER_URL)
+
+
+def spectra_drive_api_list_children(folder_id):
+    """
+    Возвращает список прямых детей Google Drive-папки через Drive API.
+    Требуется публичная папка и AUGUR_GOOGLE_DRIVE_API_KEY.
+    """
+    folder_id = str(folder_id or "").strip()
+
+    if not folder_id or not SPECTRA_GOOGLE_DRIVE_API_KEY:
+        return []
+
+    files = []
+    page_token = ""
+
+    while True:
+        params = {
+            "key": SPECTRA_GOOGLE_DRIVE_API_KEY,
+            "q": f"'{folder_id}' in parents and trashed = false",
+            "fields": "nextPageToken, files(id, name, mimeType, size, modifiedTime)",
+            "pageSize": 1000,
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        }
+
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = requests.get(
+            "https://www.googleapis.com/drive/v3/files",
+            params=params,
+            timeout=60,
+        )
+
+        response.raise_for_status()
+        payload = response.json()
+        files.extend(payload.get("files", []))
+
+        page_token = payload.get("nextPageToken", "")
+
+        if not page_token:
+            break
+
+    return files
+
+
+def spectra_build_manifest_from_drive_folder():
+    """
+    Обходит Google Drive-папку и строит manifest path -> file_id.
+    Спектры не скачиваются, читаются только метаданные файлов.
+    """
+    root_folder_id = spectra_get_remote_bank_folder_id()
+
+    if not root_folder_id or not SPECTRA_GOOGLE_DRIVE_API_KEY:
+        return pd.DataFrame()
+
+    folder_mime = "application/vnd.google-apps.folder"
+    rows = []
+    stack = [(root_folder_id, "")]
+
+    while stack:
+        folder_id, rel_prefix = stack.pop()
+
+        try:
+            children = spectra_drive_api_list_children(folder_id)
+        except Exception:
+            continue
+
+        for item in children:
+            name = str(item.get("name", "")).strip()
+            file_id = str(item.get("id", "")).strip()
+            mime_type = str(item.get("mimeType", "")).strip()
+
+            if not name or not file_id:
+                continue
+
+            child_rel = f"{rel_prefix}/{name}".strip("/")
+            child_rel = spectra_normalize_bank_relative_path(child_rel)
+
+            if mime_type == folder_mime:
+                stack.append((file_id, child_rel))
+                continue
+
+            rows.append({
+                "path": child_rel,
+                "file_id": file_id,
+                "name": name,
+                "mime_type": mime_type,
+                "size": item.get("size", ""),
+                "modified_time": item.get("modifiedTime", ""),
+            })
+
+    manifest = pd.DataFrame(rows)
+
+    if manifest.empty:
+        return manifest
+
+    manifest = manifest.drop_duplicates(subset=["path"], keep="last")
+    manifest = manifest.sort_values("path").reset_index(drop=True)
+
+    return manifest
+
+
+def spectra_save_remote_manifest(manifest_df):
+    """
+    Сохраняет сгенерированный manifest в runtime spectra_bank.
+    """
+    if manifest_df is None or manifest_df.empty:
+        return False
+
+    os.makedirs(SPECTRA_BANK_DIR, exist_ok=True)
+    manifest_df.to_csv(SPECTRA_REMOTE_MANIFEST_FILE, index=False, encoding="utf-8-sig")
+
+    return True
+
+
+def spectra_manifest_needs_drive_rebuild():
+    """
+    Проверяет, похоже ли, что manifest не содержит файлов спектров.
+    """
+    if not os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE):
+        return True
+
+    try:
+        manifest = pd.read_csv(SPECTRA_REMOTE_MANIFEST_FILE)
+    except Exception:
+        return True
+
+    if manifest.empty:
+        return True
+
+    if len(manifest) < 10:
+        return True
+
+    path_cols = [
+        c for c in ["path", "relative_path", "bank_path", "processed_file"]
+        if c in manifest.columns
+    ]
+
+    if not path_cols:
+        return True
+
+    path_series = pd.Series("", index=manifest.index, dtype=str)
+
+    for col in path_cols:
+        normalized = manifest[col].astype(str).apply(spectra_normalize_bank_relative_path)
+        path_series = path_series.where(path_series.astype(str).str.strip() != "", normalized)
+
+    processed_mask = (
+        path_series.str.contains("/processed/", case=False, regex=False)
+        & path_series.str.lower().str.endswith(".csv")
+    )
+
+    return int(processed_mask.sum()) == 0
+
+
 def spectra_ensure_remote_index():
     """
     Подтягивает только spectra_index.csv, если локального индекса ещё нет.
@@ -254,21 +449,32 @@ def spectra_ensure_remote_manifest():
     - file_id / drive_file_id / google_drive_file_id
     Дополнительно можно использовать download_url / url.
     """
+    drive_folder_configured = bool(
+        spectra_get_remote_bank_folder_id() and SPECTRA_GOOGLE_DRIVE_API_KEY
+    )
+
     if (
         os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE)
         and os.path.getsize(SPECTRA_REMOTE_MANIFEST_FILE) > 0
+        and not (drive_folder_configured and spectra_manifest_needs_drive_rebuild())
     ):
         return True
 
     try:
-        if SPECTRA_REMOTE_MANIFEST_URL:
+        if drive_folder_configured:
+            manifest = spectra_build_manifest_from_drive_folder()
+
+            if spectra_save_remote_manifest(manifest):
+                return True
+
+        if SPECTRA_REMOTE_MANIFEST_URL and not os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE):
             return spectra_download_public_file(
                 SPECTRA_REMOTE_MANIFEST_URL,
                 SPECTRA_REMOTE_MANIFEST_FILE,
                 timeout=60
             )
 
-        if SPECTRA_REMOTE_MANIFEST_FILE_ID:
+        if SPECTRA_REMOTE_MANIFEST_FILE_ID and not os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE):
             return spectra_download_public_drive_file(
                 SPECTRA_REMOTE_MANIFEST_FILE_ID,
                 SPECTRA_REMOTE_MANIFEST_FILE,
@@ -376,9 +582,12 @@ def spectra_remote_bank_status():
         "manifest_file": SPECTRA_REMOTE_MANIFEST_FILE,
         "manifest_exists": os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE),
         "manifest_rows": 0,
+        "manifest_processed_rows": 0,
         "search_cache_file": SPECTRA_SEARCH_CACHE_FILE,
         "search_cache_exists": os.path.exists(SPECTRA_SEARCH_CACHE_FILE),
         "search_cache_rows": 0,
+        "remote_bank_folder_configured": bool(spectra_get_remote_bank_folder_id()),
+        "google_drive_api_key_configured": bool(SPECTRA_GOOGLE_DRIVE_API_KEY),
         "remote_index_configured": bool(SPECTRA_REMOTE_INDEX_URL or SPECTRA_REMOTE_INDEX_FILE_ID),
         "remote_manifest_configured": bool(SPECTRA_REMOTE_MANIFEST_URL or SPECTRA_REMOTE_MANIFEST_FILE_ID),
         "remote_search_cache_configured": bool(
@@ -417,6 +626,29 @@ def spectra_remote_bank_status():
         if status["manifest_exists"]:
             manifest_df = pd.read_csv(SPECTRA_REMOTE_MANIFEST_FILE)
             status["manifest_rows"] = int(len(manifest_df))
+
+            manifest_path_cols = [
+                c for c in ["path", "relative_path", "bank_path", "processed_file"]
+                if c in manifest_df.columns
+            ]
+
+            if manifest_path_cols:
+                path_series = pd.Series("", index=manifest_df.index, dtype=str)
+
+                for col in manifest_path_cols:
+                    normalized = manifest_df[col].astype(str).apply(
+                        spectra_normalize_bank_relative_path
+                    )
+                    path_series = path_series.where(
+                        path_series.astype(str).str.strip() != "",
+                        normalized
+                    )
+
+                processed_mask = (
+                    path_series.str.contains("/processed/", case=False, regex=False)
+                    & path_series.str.lower().str.endswith(".csv")
+                )
+                status["manifest_processed_rows"] = int(processed_mask.sum())
     except Exception as e:
         status["manifest_error"] = str(e)
 

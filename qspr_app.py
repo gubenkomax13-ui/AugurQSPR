@@ -251,6 +251,9 @@ try:
         "AUGUR_SPECTRA_MANIFEST_FILE_ID",
         "AUGUR_SPECTRA_SEARCH_CACHE_URL",
         "AUGUR_SPECTRA_SEARCH_CACHE_FILE_ID",
+        "AUGUR_SPECTRA_BANK_FOLDER_URL",
+        "AUGUR_SPECTRA_BANK_FOLDER_ID",
+        "AUGUR_GOOGLE_DRIVE_API_KEY",
     ]:
         try:
             _secret_value = st.secrets.get(_secret_key, "")
@@ -11190,6 +11193,10 @@ with st.expander(
                         "Значение": bank_status.get("manifest_rows", 0),
                     },
                     {
+                        "Параметр": "Processed-файлов в manifest",
+                        "Значение": bank_status.get("manifest_processed_rows", 0),
+                    },
+                    {
                         "Параметр": "spectra_search_cache.csv найден",
                         "Значение": "да" if bank_status.get("search_cache_exists") else "нет",
                     },
@@ -11208,6 +11215,14 @@ with st.expander(
                     {
                         "Параметр": "AUGUR_SPECTRA_SEARCH_CACHE_* настроен",
                         "Значение": "да" if bank_status.get("remote_search_cache_configured") else "нет",
+                    },
+                    {
+                        "Параметр": "AUGUR_SPECTRA_BANK_FOLDER_* настроен",
+                        "Значение": "да" if bank_status.get("remote_bank_folder_configured") else "нет",
+                    },
+                    {
+                        "Параметр": "AUGUR_GOOGLE_DRIVE_API_KEY настроен",
+                        "Значение": "да" if bank_status.get("google_drive_api_key_configured") else "нет",
                     },
                     {
                         "Параметр": "Локальных IR processed CSV",
@@ -11236,6 +11251,14 @@ with st.expander(
                         "Индекс найден, но нет `spectra_manifest.csv`. "
                         "Без manifest приложение видит записи спектров, но не знает, "
                         "какой файл Google Drive скачать для конкретного спектра."
+                    )
+                elif int(bank_status.get("manifest_processed_rows", 0) or 0) == 0:
+                    st.info(
+                        "`spectra_manifest.csv` найден, но в нём нет processed-файлов спектров. "
+                        "Добавьте в Secrets `AUGUR_SPECTRA_BANK_FOLDER_ID` и "
+                        "`AUGUR_GOOGLE_DRIVE_API_KEY`, чтобы приложение само обошло "
+                        "Google Drive-папку и построило manifest по файлам `IR/processed` "
+                        "и `Mass/processed`."
                     )
                 else:
                     st.info(
