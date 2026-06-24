@@ -11152,6 +11152,83 @@ with st.expander(
 
         with col_rep3:
             st.metric(t('spectra_report.without_spectrum'), rep.get("without_spectrum", 0))
+
+        bank_status = rep.get("spectra_bank_status", {})
+
+        if isinstance(bank_status, dict) and rep.get("with_spectrum", 0) == 0:
+            st.warning(
+                "Спектральные дескрипторы не созданы, потому что для текущих веществ "
+                "не удалось получить подходящие активные спектры из базы."
+            )
+
+            with st.expander("Диагностика подключения спектральной базы", expanded=True):
+                diagnostic_rows = [
+                    {
+                        "Параметр": "spectra_index.csv найден",
+                        "Значение": "да" if bank_status.get("index_exists") else "нет",
+                    },
+                    {
+                        "Параметр": "Строк в spectra_index.csv",
+                        "Значение": bank_status.get("index_rows", 0),
+                    },
+                    {
+                        "Параметр": "IR-записей в индексе",
+                        "Значение": bank_status.get("index_ir_rows", 0),
+                    },
+                    {
+                        "Параметр": "Mass-записей в индексе",
+                        "Значение": bank_status.get("index_mass_rows", 0),
+                    },
+                    {
+                        "Параметр": "spectra_manifest.csv найден",
+                        "Значение": "да" if bank_status.get("manifest_exists") else "нет",
+                    },
+                    {
+                        "Параметр": "Строк в spectra_manifest.csv",
+                        "Значение": bank_status.get("manifest_rows", 0),
+                    },
+                    {
+                        "Параметр": "AUGUR_SPECTRA_INDEX_* настроен",
+                        "Значение": "да" if bank_status.get("remote_index_configured") else "нет",
+                    },
+                    {
+                        "Параметр": "AUGUR_SPECTRA_MANIFEST_* настроен",
+                        "Значение": "да" if bank_status.get("remote_manifest_configured") else "нет",
+                    },
+                    {
+                        "Параметр": "Локальных IR processed CSV",
+                        "Значение": bank_status.get("local_ir_processed_files", 0),
+                    },
+                    {
+                        "Параметр": "Локальных Mass processed CSV",
+                        "Значение": bank_status.get("local_mass_processed_files", 0),
+                    },
+                ]
+
+                st.dataframe(
+                    pd.DataFrame(diagnostic_rows),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                if not bank_status.get("index_exists") or int(bank_status.get("index_rows", 0) or 0) == 0:
+                    st.info(
+                        "На Streamlit Cloud не найден рабочий `spectra_index.csv`. "
+                        "Добавьте в Secrets `AUGUR_SPECTRA_INDEX_FILE_ID` или "
+                        "`AUGUR_SPECTRA_INDEX_URL` для файла `spectra_index.csv`."
+                    )
+                elif not bank_status.get("manifest_exists") or int(bank_status.get("manifest_rows", 0) or 0) == 0:
+                    st.info(
+                        "Индекс найден, но нет `spectra_manifest.csv`. "
+                        "Без manifest приложение видит записи спектров, но не знает, "
+                        "какой файл Google Drive скачать для конкретного спектра."
+                    )
+                else:
+                    st.info(
+                        "Индекс и manifest найдены. Если совпадений всё равно 0, "
+                        "проверьте выбранный тип спектра, режим фазы, источники, "
+                        "экспериментальность и наличие этих InChIKey/SMILES в индексе."
+                    )
                     
         if rep.get("used_phases"):
             st.markdown(t('spectra_report.used_phases_title'))

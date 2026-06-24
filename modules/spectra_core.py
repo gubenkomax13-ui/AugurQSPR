@@ -330,6 +330,79 @@ def spectra_load_remote_manifest():
     return manifest
 
 
+def spectra_remote_bank_status():
+    """
+    Возвращает диагностическую сводку по локальной/удалённой спектральной базе.
+    """
+    status = {
+        "spectra_bank_dir": SPECTRA_BANK_DIR,
+        "index_file": SPECTRA_INDEX_FILE,
+        "index_exists": os.path.exists(SPECTRA_INDEX_FILE),
+        "index_rows": 0,
+        "index_ir_rows": 0,
+        "index_mass_rows": 0,
+        "manifest_file": SPECTRA_REMOTE_MANIFEST_FILE,
+        "manifest_exists": os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE),
+        "manifest_rows": 0,
+        "remote_index_configured": bool(SPECTRA_REMOTE_INDEX_URL or SPECTRA_REMOTE_INDEX_FILE_ID),
+        "remote_manifest_configured": bool(SPECTRA_REMOTE_MANIFEST_URL or SPECTRA_REMOTE_MANIFEST_FILE_ID),
+        "local_ir_processed_files": 0,
+        "local_mass_processed_files": 0,
+    }
+
+    try:
+        spectra_ensure_remote_index()
+        status["index_exists"] = os.path.exists(SPECTRA_INDEX_FILE)
+
+        if status["index_exists"]:
+            index_df = pd.read_csv(SPECTRA_INDEX_FILE)
+            status["index_rows"] = int(len(index_df))
+
+            if "spectrum_type" in index_df.columns:
+                type_norm = index_df["spectrum_type"].astype(str).apply(
+                    spectra_normalize_spectrum_type
+                )
+                status["index_ir_rows"] = int((type_norm == "IR").sum())
+                status["index_mass_rows"] = int((type_norm == "Mass").sum())
+    except Exception as e:
+        status["index_error"] = str(e)
+
+    try:
+        if (
+            status["remote_manifest_configured"]
+            or os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE)
+        ):
+            spectra_ensure_remote_manifest()
+
+        status["manifest_exists"] = os.path.exists(SPECTRA_REMOTE_MANIFEST_FILE)
+
+        if status["manifest_exists"]:
+            manifest_df = pd.read_csv(SPECTRA_REMOTE_MANIFEST_FILE)
+            status["manifest_rows"] = int(len(manifest_df))
+    except Exception as e:
+        status["manifest_error"] = str(e)
+
+    try:
+        if os.path.isdir(SPECTRA_IR_PROCESSED_DIR):
+            status["local_ir_processed_files"] = len([
+                name for name in os.listdir(SPECTRA_IR_PROCESSED_DIR)
+                if name.lower().endswith(".csv")
+            ])
+    except Exception:
+        pass
+
+    try:
+        if os.path.isdir(SPECTRA_MASS_PROCESSED_DIR):
+            status["local_mass_processed_files"] = len([
+                name for name in os.listdir(SPECTRA_MASS_PROCESSED_DIR)
+                if name.lower().endswith(".csv")
+            ])
+    except Exception:
+        pass
+
+    return status
+
+
 def spectra_find_remote_manifest_record(local_or_relative_path, spectrum_record=None):
     """
     Находит строку manifest для локального/относительного пути.
@@ -6149,6 +6222,7 @@ def spectral_build_descriptors_for_dataset(
         "used_spectra": [],
         "used_phases": {},
         "spectrum_selection_reasons": {},
+        "spectra_bank_status": spectra_remote_bank_status(),
     }
 
     for _, compound in compounds.iterrows():
