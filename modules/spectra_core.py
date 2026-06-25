@@ -6521,13 +6521,29 @@ def spectral_make_descriptor_row_metadata(compound, spectrum_record, processed_f
     }
 
 
-def spectral_descriptor_columns_from_row(row, spectrum_type="IR"):
+def spectral_descriptor_columns_from_row(
+    row,
+    spectrum_type="IR",
+    use_grid=True,
+    use_binary_fp=True,
+    use_binned_numeric=True,
+):
     prefix = spectra_normalize_spectrum_type(spectrum_type)
-    descriptor_prefixes = (
-        f"{prefix}_GRID_",
-        f"{prefix}_BIN_",
-        f"{prefix}_BAND_",
-    )
+    descriptor_prefixes = []
+
+    if use_grid:
+        descriptor_prefixes.append(f"{prefix}_GRID_")
+
+    if use_binary_fp:
+        descriptor_prefixes.append(f"{prefix}_BIN_")
+
+    if use_binned_numeric:
+        descriptor_prefixes.append(f"{prefix}_BAND_")
+
+    descriptor_prefixes = tuple(descriptor_prefixes)
+
+    if not descriptor_prefixes:
+        return []
 
     return [
         c for c in row.keys()
@@ -6535,7 +6551,15 @@ def spectral_descriptor_columns_from_row(row, spectrum_type="IR"):
     ]
 
 
-def spectral_prepare_cached_descriptor_row(cached_row, compound, spectrum_record, processed_file):
+def spectral_prepare_cached_descriptor_row(
+    cached_row,
+    compound,
+    spectrum_record,
+    processed_file,
+    use_grid=True,
+    use_binary_fp=True,
+    use_binned_numeric=True,
+):
     """
     Converts a cached per-spectrum descriptor row to the current dataset row.
     """
@@ -6553,7 +6577,13 @@ def spectral_prepare_cached_descriptor_row(cached_row, compound, spectrum_record
 
     desc = dict(metadata)
 
-    for col in spectral_descriptor_columns_from_row(cached_row, spectrum_type=spectrum_type):
+    for col in spectral_descriptor_columns_from_row(
+        cached_row,
+        spectrum_type=spectrum_type,
+        use_grid=use_grid,
+        use_binary_fp=use_binary_fp,
+        use_binned_numeric=use_binned_numeric,
+    ):
         value = cached_row.get(col, np.nan)
         desc[col] = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
 
@@ -6948,6 +6978,14 @@ def spectral_build_descriptors_from_ready_cache_for_dataset(
         binary_threshold=binary_threshold,
         numeric_window=numeric_window,
     )
+    ready_descriptor_settings = dict(descriptor_settings)
+
+    for option_col in [
+        "descriptor_use_grid",
+        "descriptor_use_binary_fp",
+        "descriptor_use_binned_numeric",
+    ]:
+        ready_descriptor_settings.pop(option_col, None)
 
     target_inchikeys = []
 
@@ -6960,7 +6998,7 @@ def spectral_build_descriptors_from_ready_cache_for_dataset(
     )
     cache_df = spectral_filter_descriptor_cache_by_settings(
         cache_df,
-        descriptor_settings
+        ready_descriptor_settings
     )
     cache_df = spectral_filter_ready_descriptor_candidates(
         cache_df,
@@ -7052,7 +7090,10 @@ def spectral_build_descriptors_from_ready_cache_for_dataset(
             cached_row,
             compound,
             spectrum_record,
-            spectrum_record.get("processed_file", "")
+            spectrum_record.get("processed_file", ""),
+            use_grid=bool(use_grid or use_svd),
+            use_binary_fp=use_binary_fp,
+            use_binned_numeric=use_binned_numeric,
         )
 
         if desc is None:
@@ -7158,6 +7199,30 @@ def spectral_build_descriptors_from_ready_cache_for_dataset(
 
     if descriptors_df.empty:
         return descriptors_df, report
+
+    prefix = spectra_normalize_spectrum_type(spectrum_type)
+    drop_prefixes = []
+
+    if not use_grid:
+        drop_prefixes.append(f"{prefix}_GRID_")
+
+    if not use_binary_fp:
+        drop_prefixes.append(f"{prefix}_BIN_")
+
+    if not use_binned_numeric:
+        drop_prefixes.append(f"{prefix}_BAND_")
+
+    if not use_svd:
+        drop_prefixes.append(f"{prefix}_SVD_")
+
+    if drop_prefixes:
+        drop_cols = [
+            col for col in descriptors_df.columns
+            if any(str(col).startswith(drop_prefix) for drop_prefix in drop_prefixes)
+        ]
+
+        if drop_cols:
+            descriptors_df = descriptors_df.drop(columns=drop_cols)
 
     return descriptors_df.reset_index(drop=True), report
 

@@ -10635,28 +10635,32 @@ with st.expander(
         index=0,
         key="spectral_descriptor_type"
     )
+    spectral_admin_mode = is_admin()
 
     # ------------------------------------------------------------
     # Методический режим
 
-    descriptor_method_mode = st.radio(
-        t('spectra_desc.method_mode_radio'),
-        [
-            t('spectra_desc.mode_vazhev'),
-            t('spectra_desc.mode_compressed'),
-            t('spectra_desc.mode_custom'),
-        ],
-        index=0,
-        key="spectral_descriptor_method_mode",
-        help=t('spectra_desc.method_mode_help')
-    )
+    if spectral_admin_mode:
+        descriptor_method_mode = st.radio(
+            t('spectra_desc.method_mode_radio'),
+            [
+                t('spectra_desc.mode_vazhev'),
+                t('spectra_desc.mode_compressed'),
+                t('spectra_desc.mode_custom'),
+            ],
+            index=0,
+            key="spectral_descriptor_method_mode",
+            help=t('spectra_desc.method_mode_help')
+        )
 
-    if descriptor_method_mode == t('spectra_desc.mode_vazhev'):
-        st.info(t('spectra_desc.info_vazhev'))
-    elif descriptor_method_mode == t('spectra_desc.mode_compressed'):
-        st.info(t('spectra_desc.info_compressed'))
+        if descriptor_method_mode == t('spectra_desc.mode_vazhev'):
+            st.info(t('spectra_desc.info_vazhev'))
+        elif descriptor_method_mode == t('spectra_desc.mode_compressed'):
+            st.info(t('spectra_desc.info_compressed'))
+        else:
+            st.info(t('spectra_desc.info_custom'))
     else:
-        st.info(t('spectra_desc.info_custom'))
+        descriptor_method_mode = t('spectra_desc.mode_vazhev')
 
     # ------------------------------------------------------------
     # Отбор спектров
@@ -10807,38 +10811,42 @@ with st.expander(
     if not available_intensity_types:
         available_intensity_types = ["unknown"]
 
-    with st.expander(t('spectra_desc.extended_filters_expander'), expanded=False):
-        selected_sources_for_desc = st.multiselect(
-            t('spectra_desc.allowed_sources_label'),
-            options=available_spectral_sources,
-            default=available_spectral_sources,
-            key="spectral_selected_sources_for_desc"
-        )
+    if spectral_admin_mode:
+        with st.expander(t('spectra_desc.extended_filters_expander'), expanded=False):
+            selected_sources_for_desc = st.multiselect(
+                t('spectra_desc.allowed_sources_label'),
+                options=available_spectral_sources,
+                default=available_spectral_sources,
+                key="spectral_selected_sources_for_desc"
+            )
 
-        selected_intensity_types_for_desc = st.multiselect(
-            t('spectra_desc.allowed_intensity_types_label'),
-            options=available_intensity_types,
-            default=available_intensity_types,
-            key="spectral_selected_intensity_types_for_desc"
-        )
+            selected_intensity_types_for_desc = st.multiselect(
+                t('spectra_desc.allowed_intensity_types_label'),
+                options=available_intensity_types,
+                default=available_intensity_types,
+                key="spectral_selected_intensity_types_for_desc"
+            )
 
-        experimental_only_for_desc = st.checkbox(
-            t('spectra_desc.experimental_only_checkbox'),
-            value=True,
-            key="spectral_experimental_only_for_desc"
-        )
+            experimental_only_for_desc = st.checkbox(
+                t('spectra_desc.experimental_only_checkbox'),
+                value=True,
+                key="spectral_experimental_only_for_desc"
+            )
 
-        prefer_quantitative_for_desc = st.checkbox(
-            t('spectra_desc.prefer_quantitative_checkbox'),
-            value=False,
-            key="spectral_prefer_quantitative_for_desc",
-            help=t('spectra_desc.prefer_quantitative_help')
-        )
+            prefer_quantitative_for_desc = st.checkbox(
+                t('spectra_desc.prefer_quantitative_checkbox'),
+                value=False,
+                key="spectral_prefer_quantitative_for_desc",
+                help=t('spectra_desc.prefer_quantitative_help')
+            )
+    else:
+        selected_sources_for_desc = available_spectral_sources
+        selected_intensity_types_for_desc = available_intensity_types
+        experimental_only_for_desc = True
+        prefer_quantitative_for_desc = False
         
     # ------------------------------------------------------------
     # Сетка и нормировка
-
-    st.markdown(t('spectra_desc.grid_title'))
 
     if descriptor_spectrum_type == "IR":
         axis_label = t('spectra_desc.axis_label_ir')
@@ -10890,59 +10898,68 @@ with st.expander(
             default_norm = "min-max"
             default_invert = False
 
-    col_grid_1, col_grid_2, col_grid_3 = st.columns(3)
+    if spectral_admin_mode:
+        st.markdown(t('spectra_desc.grid_title'))
 
-    with col_grid_1:
-        wn_min = st.number_input(
-            t('spectra_desc.axis_min', label=axis_label),
-            min_value=min_allowed,
-            max_value=max_allowed,
-            value=default_min,
-            step=1 if descriptor_spectrum_type == "Mass" else 10,
-            key=f"{descriptor_spectrum_type.lower()}_desc_axis_min"
+        col_grid_1, col_grid_2, col_grid_3 = st.columns(3)
+
+        with col_grid_1:
+            wn_min = st.number_input(
+                t('spectra_desc.axis_min', label=axis_label),
+                min_value=min_allowed,
+                max_value=max_allowed,
+                value=default_min,
+                step=1 if descriptor_spectrum_type == "Mass" else 10,
+                key=f"{descriptor_spectrum_type.lower()}_desc_axis_min"
+            )
+
+        with col_grid_2:
+            wn_max = st.number_input(
+                t('spectra_desc.axis_max', label=axis_label),
+                min_value=min_allowed,
+                max_value=max_allowed,
+                value=default_max,
+                step=1 if descriptor_spectrum_type == "Mass" else 10,
+                key=f"{descriptor_spectrum_type.lower()}_desc_axis_max"
+            )
+
+        with col_grid_3:
+            wn_step = st.number_input(
+                t('spectra_desc.axis_step', label=axis_label),
+                min_value=1,
+                max_value=100,
+                value=default_step,
+                step=1,
+                key=f"{descriptor_spectrum_type.lower()}_desc_axis_step"
+            )
+
+        norm_options = ["min-max", "sum", "vector", "none"]
+
+        normalization = st.selectbox(
+            t('spectra_desc.normalization_label'),
+            norm_options,
+            index=norm_options.index(default_norm),
+            key=f"{descriptor_spectrum_type.lower()}_desc_normalization"
         )
 
-    with col_grid_2:
-        wn_max = st.number_input(
-            t('spectra_desc.axis_max', label=axis_label),
-            min_value=min_allowed,
-            max_value=max_allowed,
-            value=default_max,
-            step=1 if descriptor_spectrum_type == "Mass" else 10,
-            key=f"{descriptor_spectrum_type.lower()}_desc_axis_max"
+        invert_signal = st.checkbox(
+            t('spectra_desc.invert_signal_label'),
+            value=default_invert,
+            key=f"{descriptor_spectrum_type.lower()}_desc_invert_signal",
+            help=t('spectra_desc.invert_signal_help')
         )
 
-    with col_grid_3:
-        wn_step = st.number_input(
-            t('spectra_desc.axis_step', label=axis_label),
-            min_value=1,
-            max_value=100,
-            value=default_step,
-            step=1,
-            key=f"{descriptor_spectrum_type.lower()}_desc_axis_step"
+        show_markdown_help(
+            t('spectra_desc.method_help_title'),
+            os.path.join(HELP_DIR, "spectral_descriptor_method_help.md"),
+            expanded=False
         )
-
-    norm_options = ["min-max", "sum", "vector", "none"]
-
-    normalization = st.selectbox(
-        t('spectra_desc.normalization_label'),
-        norm_options,
-        index=norm_options.index(default_norm),
-        key=f"{descriptor_spectrum_type.lower()}_desc_normalization"
-    )
-
-    invert_signal = st.checkbox(
-        t('spectra_desc.invert_signal_label'),
-        value=default_invert,
-        key=f"{descriptor_spectrum_type.lower()}_desc_invert_signal",
-        help=t('spectra_desc.invert_signal_help')
-    )
-
-    show_markdown_help(
-        t('spectra_desc.method_help_title'),
-        os.path.join(HELP_DIR, "spectral_descriptor_method_help.md"),
-        expanded=False
-    )
+    else:
+        wn_min = default_min
+        wn_max = default_max
+        wn_step = default_step
+        normalization = default_norm
+        invert_signal = default_invert
 
     # ------------------------------------------------------------
     # Типы создаваемых дескрипторов
@@ -10996,8 +11013,6 @@ with st.expander(
     if not any([use_grid_desc, use_binary_fp, use_binned_numeric, use_svd_desc]):
         st.warning(t('spectra_desc.warning_select_descriptor'))
 
-    col_param_1, col_param_2, col_param_3 = st.columns(3)
-
     if descriptor_spectrum_type == "IR":
         binary_default_window = 20
         numeric_default_window = 100
@@ -11007,56 +11022,67 @@ with st.expander(
         numeric_default_window = 10
         window_unit = t('spectra_desc.window_unit_mass')
 
-    with col_param_1:
-        binary_window = st.number_input(
-            t('spectra_desc.binary_window_label', unit=window_unit),
+    if spectral_admin_mode:
+        col_param_1, col_param_2, col_param_3 = st.columns(3)
+
+        with col_param_1:
+            binary_window = st.number_input(
+                t('spectra_desc.binary_window_label', unit=window_unit),
+                min_value=1,
+                max_value=500,
+                value=binary_default_window,
+                step=1,
+                key=f"{descriptor_spectrum_type.lower()}_desc_binary_window"
+            )
+
+        with col_param_2:
+            binary_threshold = st.number_input(
+                t('spectra_desc.binary_threshold_label'),
+                min_value=0.01,
+                max_value=1.00,
+                value=0.10,
+                step=0.01,
+                key=f"{descriptor_spectrum_type.lower()}_desc_binary_threshold"
+            )
+
+        with col_param_3:
+            numeric_window = st.number_input(
+                t('spectra_desc.numeric_window_label', unit=window_unit),
+                min_value=1,
+                max_value=1000,
+                value=numeric_default_window,
+                step=1,
+                key=f"{descriptor_spectrum_type.lower()}_desc_numeric_window"
+            )
+
+        svd_components = st.number_input(
+            t('spectra_desc.svd_components_label'),
             min_value=1,
-            max_value=500,
-            value=binary_default_window,
+            max_value=100,
+            value=10 if descriptor_method_mode != t('spectra_desc.mode_vazhev') else 20,
             step=1,
-            key=f"{descriptor_spectrum_type.lower()}_desc_binary_window"
+            key=f"{descriptor_spectrum_type.lower()}_desc_svd_components"
         )
-
-    with col_param_2:
-        binary_threshold = st.number_input(
-            t('spectra_desc.binary_threshold_label'),
-            min_value=0.01,
-            max_value=1.00,
-            value=0.10,
-            step=0.01,
-            key=f"{descriptor_spectrum_type.lower()}_desc_binary_threshold"
-        )
-
-    with col_param_3:
-        numeric_window = st.number_input(
-            t('spectra_desc.numeric_window_label', unit=window_unit),
-            min_value=1,
-            max_value=1000,
-            value=numeric_default_window,
-            step=1,
-            key=f"{descriptor_spectrum_type.lower()}_desc_numeric_window"
-        )
-
-    svd_components = st.number_input(
-        t('spectra_desc.svd_components_label'),
-        min_value=1,
-        max_value=100,
-        value=10 if descriptor_method_mode != t('spectra_desc.mode_vazhev') else 20,
-        step=1,
-        key=f"{descriptor_spectrum_type.lower()}_desc_svd_components"
-    )
+    else:
+        binary_window = binary_default_window
+        binary_threshold = 0.10
+        numeric_window = numeric_default_window
+        svd_components = 20
 
     # ------------------------------------------------------------
     # Спарринг-свойство / контрольные колонки
 
     st.markdown(t('spectra_desc.sparring_title'))
 
-    add_sparring_columns = st.checkbox(
-        t('spectra_desc.sparring_checkbox'),
-        value=True if descriptor_method_mode == t('spectra_desc.mode_vazhev') else False,
-        key=f"{descriptor_spectrum_type.lower()}_desc_add_sparring_columns",
-        help=t('spectra_desc.sparring_help')
-    )
+    if spectral_admin_mode:
+        add_sparring_columns = st.checkbox(
+            t('spectra_desc.sparring_checkbox'),
+            value=True if descriptor_method_mode == t('spectra_desc.mode_vazhev') else False,
+            key=f"{descriptor_spectrum_type.lower()}_desc_add_sparring_columns",
+            help=t('spectra_desc.sparring_help')
+        )
+    else:
+        add_sparring_columns = True
 
     st.caption(t('spectra_desc.sparring_caption'))
 
