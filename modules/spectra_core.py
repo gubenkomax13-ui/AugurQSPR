@@ -90,9 +90,13 @@ SPECTRA_IR_RAW_DIR = os.path.join(SPECTRA_IR_DIR, "raw_jdx")
 SPECTRA_IR_PROCESSED_DIR = os.path.join(SPECTRA_IR_DIR, "processed")
 SPECTRA_IR_DESCRIPTORS_DIR = os.path.join(SPECTRA_IR_DIR, "descriptors")
 SPECTRA_IR_LOG_DIR = os.path.join(SPECTRA_IR_DIR, "search_log")
-SPECTRA_IR_DESCRIPTOR_CACHE_FILE = os.path.join(
+SPECTRA_IR_DESCRIPTOR_CACHE_LEGACY_FILE = os.path.join(
     SPECTRA_IR_DESCRIPTORS_DIR,
     "IR_spectral_descriptor_cache.csv"
+)
+SPECTRA_IR_DESCRIPTOR_CACHE_FILE = os.path.join(
+    PROJECT_ROOT_DIR,
+    "spectral_descriptor_bank_IR.csv"
 )
 
 # Mass
@@ -100,9 +104,13 @@ SPECTRA_MASS_RAW_DIR = os.path.join(SPECTRA_MASS_DIR, "raw_jdx")
 SPECTRA_MASS_PROCESSED_DIR = os.path.join(SPECTRA_MASS_DIR, "processed")
 SPECTRA_MASS_DESCRIPTORS_DIR = os.path.join(SPECTRA_MASS_DIR, "descriptors")
 SPECTRA_MASS_LOG_DIR = os.path.join(SPECTRA_MASS_DIR, "search_log")
-SPECTRA_MASS_DESCRIPTOR_CACHE_FILE = os.path.join(
+SPECTRA_MASS_DESCRIPTOR_CACHE_LEGACY_FILE = os.path.join(
     SPECTRA_MASS_DESCRIPTORS_DIR,
     "Mass_spectral_descriptor_cache.csv"
+)
+SPECTRA_MASS_DESCRIPTOR_CACHE_FILE = os.path.join(
+    PROJECT_ROOT_DIR,
+    "spectral_descriptor_bank_Mass.csv"
 )
 
 # Таблицы неудачных поисков
@@ -723,7 +731,7 @@ def spectra_remote_bank_status():
             status[exists_key] = os.path.exists(cache_file)
 
             if status[exists_key]:
-                cache_df = pd.read_csv(cache_file)
+                cache_df = pd.read_csv(cache_file, low_memory=False)
                 status[rows_key] = int(len(cache_df))
         except Exception:
             pass
@@ -6108,6 +6116,18 @@ def spectral_descriptor_cache_file(spectrum_type="IR"):
     return SPECTRA_IR_DESCRIPTOR_CACHE_FILE
 
 
+def spectral_legacy_descriptor_cache_file(spectrum_type="IR"):
+    """
+    Returns the previous descriptor cache location for backward compatibility.
+    """
+    spectrum_type = spectra_normalize_spectrum_type(spectrum_type)
+
+    if spectrum_type == "Mass":
+        return SPECTRA_MASS_DESCRIPTOR_CACHE_LEGACY_FILE
+
+    return SPECTRA_IR_DESCRIPTOR_CACHE_LEGACY_FILE
+
+
 def spectral_remote_descriptor_cache_url(spectrum_type="IR"):
     """
     Returns a GitHub/raw URL for the ready descriptor cache, if configured.
@@ -6185,6 +6205,12 @@ def spectral_load_descriptor_cache(spectrum_type="IR"):
     cache_file = spectral_descriptor_cache_file(spectrum_type)
 
     if not os.path.exists(cache_file):
+        legacy_cache_file = spectral_legacy_descriptor_cache_file(spectrum_type)
+
+        if os.path.exists(legacy_cache_file):
+            cache_file = legacy_cache_file
+
+    if not os.path.exists(cache_file):
         remote_url = spectral_remote_descriptor_cache_url(spectrum_type)
 
         if remote_url:
@@ -6202,7 +6228,7 @@ def spectral_load_descriptor_cache(spectrum_type="IR"):
 
     if os.path.exists(cache_file):
         try:
-            cache_df = pd.read_csv(cache_file)
+            cache_df = pd.read_csv(cache_file, low_memory=False)
         except Exception:
             cache_df = pd.DataFrame()
     else:
@@ -6985,6 +7011,7 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
     numeric_window=100,
     active_only=True,
     skip_existing_inchikey=True,
+    autosave_every=10,
     progress_callback=None
 ):
     """
@@ -7021,6 +7048,8 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
         "cache_rows_before": 0,
         "cache_rows_added": 0,
         "cache_rows_after": 0,
+        "autosave_every": int(autosave_every or 0),
+        "autosave_count": 0,
         "cache_file": spectral_descriptor_cache_file(spectrum_type_norm),
         "descriptor_settings": descriptor_settings,
     }
@@ -7083,8 +7112,27 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
 
     work = work.reset_index(drop=True)
     report["total_index_rows"] = int(len(work))
-    rows = []
+    pending_rows = []
+    cache_df = existing_cache_df
+    autosave_every = max(int(autosave_every or 0), 1)
     total = len(work)
+
+    def _flush_pending_rows():
+        nonlocal pending_rows, cache_df
+
+        if not pending_rows:
+            return
+
+        cache_df, merge_report = spectral_merge_descriptor_cache_rows(
+            pending_rows,
+            descriptor_settings,
+            spectrum_type=spectrum_type_norm
+        )
+
+        report["cache_rows_added"] += int(merge_report.get("cache_rows_added", 0) or 0)
+        report["cache_rows_after"] = int(merge_report.get("cache_rows_after", len(cache_df)) or 0)
+        report["autosave_count"] += 1
+        pending_rows = []
 
     for pos, (_, spectrum_record_row) in enumerate(work.iterrows(), start=1):
         spectrum_record = spectrum_record_row.to_dict()
@@ -7218,9 +7266,12 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
                 )
             )
 
-        rows.append(desc)
+        pending_rows.append(desc)
         report["processed"] += 1
         report["cached"] += 1
+
+        if spectrum_inchikey:
+            existing_inchikeys.add(spectrum_inchikey)
 
         if progress_callback is not None:
             try:
@@ -7236,12 +7287,28 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
             except Exception:
                 pass
 
-    cache_df, merge_report = spectral_merge_descriptor_cache_rows(
-        rows,
-        descriptor_settings,
-        spectrum_type=spectrum_type_norm
-    )
-    report.update(merge_report)
+        if len(pending_rows) >= autosave_every:
+            _flush_pending_rows()
+
+            if progress_callback is not None:
+                try:
+                    progress_callback(
+                        pos,
+                        total,
+                        "autosaved",
+                        {
+                            "cache_file": report.get("cache_file", ""),
+                            "cache_rows_after": report.get("cache_rows_after", 0),
+                            "autosave_count": report.get("autosave_count", 0),
+                        }
+                    )
+                except Exception:
+                    pass
+
+    _flush_pending_rows()
+
+    if report["cache_rows_after"] == 0:
+        report["cache_rows_after"] = int(len(cache_df))
 
     return cache_df, report
 

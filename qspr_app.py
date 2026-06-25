@@ -11104,6 +11104,15 @@ with st.expander(
                 "чьего InChIKey ещё нет в банке при текущих настройках дескрипторов."
             )
         )
+        admin_autosave_every = st.number_input(
+            "Автосохранять файл-банк каждые N новых спектров",
+            min_value=1,
+            max_value=100,
+            value=10,
+            step=1,
+            key=f"admin_descriptor_cache_autosave_every_{descriptor_spectrum_type.lower()}",
+            help="После каждого такого количества новых рассчитанных спектров CSV в корне проекта будет сразу обновлён."
+        )
         run_admin_cache_all_spectra = st.button(
             f"Рассчитать готовые {descriptor_spectrum_type}-дескрипторы для всех имеющихся спектров",
             key=f"admin_cache_all_spectra_{descriptor_spectrum_type.lower()}",
@@ -11133,6 +11142,8 @@ with st.expander(
                     msg = f"InChIKey уже есть в банке, пропуск: {current}/{total}"
                 elif stage == "done":
                     msg = f"Готовый дескриптор сохранён: {current}/{total}"
+                elif stage == "autosaved":
+                    msg = f"Файл-банк автосохранён: {current}/{total}"
                 else:
                     msg = f"Подготовка кэша спектральных дескрипторов: {current}/{total}"
 
@@ -11157,6 +11168,7 @@ with st.expander(
                     numeric_window=numeric_window,
                     active_only=True,
                     skip_existing_inchikey=admin_skip_existing_inchikey,
+                    autosave_every=admin_autosave_every,
                     progress_callback=update_admin_cache_progress,
                 )
 
@@ -11179,6 +11191,8 @@ with st.expander(
                 {"Показатель": "Строк в банке до расчёта", "Значение": cache_report.get("cache_rows_before", 0)},
                 {"Показатель": "Строк рассчитано сейчас", "Значение": cache_report.get("cache_rows_added", 0)},
                 {"Показатель": "Строк в банке после объединения", "Значение": cache_report.get("cache_rows_after", 0)},
+                {"Показатель": "Автосохранений файла", "Значение": cache_report.get("autosave_count", 0)},
+                {"Показатель": "Интервал автосохранения", "Значение": cache_report.get("autosave_every", 0)},
                 {"Показатель": "Пропущено: InChIKey уже есть", "Значение": cache_report.get("skipped_existing_inchikey", 0)},
                 {"Показатель": "Нет локального processed_file", "Значение": cache_report.get("missing_processed_file", 0)},
                 {"Показатель": "Ошибки чтения/парсинга", "Значение": cache_report.get("parse_errors", 0)},
