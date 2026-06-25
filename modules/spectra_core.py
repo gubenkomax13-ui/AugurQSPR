@@ -6984,6 +6984,7 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
     binary_threshold=0.10,
     numeric_window=100,
     active_only=True,
+    skip_existing_inchikey=True,
     progress_callback=None
 ):
     """
@@ -7016,6 +7017,7 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
         "missing_processed_file": 0,
         "parse_errors": 0,
         "empty_grid": 0,
+        "skipped_existing_inchikey": 0,
         "cache_rows_before": 0,
         "cache_rows_added": 0,
         "cache_rows_after": 0,
@@ -7025,6 +7027,27 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
 
     if index_df.empty:
         return pd.DataFrame(), report
+
+    existing_cache_df = spectral_load_descriptor_cache(spectrum_type_norm)
+    report["cache_rows_before"] = int(len(existing_cache_df))
+
+    existing_inchikeys = set()
+
+    if (
+        skip_existing_inchikey
+        and existing_cache_df is not None
+        and not existing_cache_df.empty
+        and "inchikey" in existing_cache_df.columns
+    ):
+        existing_inchikeys = set(
+            existing_cache_df["inchikey"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .replace("", np.nan)
+            .dropna()
+            .tolist()
+        )
 
     work = index_df.copy()
 
@@ -7066,6 +7089,39 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
     for pos, (_, spectrum_record_row) in enumerate(work.iterrows(), start=1):
         spectrum_record = spectrum_record_row.to_dict()
         processed_file = str(spectrum_record.get("processed_file", "")).strip()
+        spectrum_inchikey = str(spectrum_record.get("inchikey", "")).strip().upper()
+
+        if spectrum_inchikey in ["", "NAN", "NONE", "NULL"]:
+            spectrum_inchikey = ""
+
+        if not spectrum_inchikey and processed_file:
+            filename_inchikey, filename_inchikey_mode = spectra_extract_inchikey_from_filename(
+                processed_file
+            )
+
+            if filename_inchikey_mode == "full":
+                spectrum_inchikey = str(filename_inchikey).strip().upper()
+                spectrum_record["inchikey"] = spectrum_inchikey
+
+        if skip_existing_inchikey and spectrum_inchikey and spectrum_inchikey in existing_inchikeys:
+            report["skipped_existing_inchikey"] += 1
+
+            if progress_callback is not None:
+                try:
+                    progress_callback(
+                        pos,
+                        total,
+                        "skipped_existing_inchikey",
+                        {
+                            "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                            "processed_file": processed_file,
+                            "inchikey": spectrum_inchikey,
+                        }
+                    )
+                except Exception:
+                    pass
+
+            continue
 
         if progress_callback is not None:
             try:

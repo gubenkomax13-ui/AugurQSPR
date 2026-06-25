@@ -11094,6 +11094,16 @@ with st.expander(
             "выбранного типа и сохраняет CSV-кэш в папке проекта. SVD сюда не входит, "
             "потому что SVD зависит от конкретного датасета пользователя."
         )
+        admin_skip_existing_inchikey = st.checkbox(
+            "Пропускать InChIKey, уже имеющиеся в файле-банке дескрипторов",
+            value=True,
+            key=f"admin_skip_existing_inchikey_{descriptor_spectrum_type.lower()}",
+            help=(
+                "Если включено, программа сначала читает существующий CSV-банк "
+                "спектральных дескрипторов и считает только те spectra processed-файлы, "
+                "чьего InChIKey ещё нет в банке при текущих настройках дескрипторов."
+            )
+        )
         run_admin_cache_all_spectra = st.button(
             f"Рассчитать готовые {descriptor_spectrum_type}-дескрипторы для всех имеющихся спектров",
             key=f"admin_cache_all_spectra_{descriptor_spectrum_type.lower()}",
@@ -11119,6 +11129,8 @@ with st.expander(
 
                 if stage == "loading_spectrum":
                     msg = f"Чтение локального processed-спектра: {current + 1}/{total}"
+                elif stage == "skipped_existing_inchikey":
+                    msg = f"InChIKey уже есть в банке, пропуск: {current}/{total}"
                 elif stage == "done":
                     msg = f"Готовый дескриптор сохранён: {current}/{total}"
                 else:
@@ -11144,6 +11156,7 @@ with st.expander(
                     binary_threshold=binary_threshold,
                     numeric_window=numeric_window,
                     active_only=True,
+                    skip_existing_inchikey=admin_skip_existing_inchikey,
                     progress_callback=update_admin_cache_progress,
                 )
 
@@ -11166,6 +11179,7 @@ with st.expander(
                 {"Показатель": "Строк в банке до расчёта", "Значение": cache_report.get("cache_rows_before", 0)},
                 {"Показатель": "Строк рассчитано сейчас", "Значение": cache_report.get("cache_rows_added", 0)},
                 {"Показатель": "Строк в банке после объединения", "Значение": cache_report.get("cache_rows_after", 0)},
+                {"Показатель": "Пропущено: InChIKey уже есть", "Значение": cache_report.get("skipped_existing_inchikey", 0)},
                 {"Показатель": "Нет локального processed_file", "Значение": cache_report.get("missing_processed_file", 0)},
                 {"Показатель": "Ошибки чтения/парсинга", "Значение": cache_report.get("parse_errors", 0)},
                 {"Показатель": "Пустая сетка", "Значение": cache_report.get("empty_grid", 0)},
