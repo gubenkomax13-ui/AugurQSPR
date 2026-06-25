@@ -6411,14 +6411,13 @@ def spectral_find_cached_descriptor_row(spectrum_record, descriptor_settings=Non
         or "IR"
     )
 
-    target_inchikeys = []
-
-    if "inchikey" in compounds.columns:
-        target_inchikeys = compounds["inchikey"].astype(str).str.strip().tolist()
+    spectrum_id = str(spectrum_record.get("spectrum_id", "")).strip()
+    inchikey = str(spectrum_record.get("inchikey", "")).strip()
+    canonical_smiles = str(spectrum_record.get("canonical_smiles", "")).strip()
 
     cache_df = spectral_load_descriptor_cache_for_inchikeys(
         spectrum_type,
-        target_inchikeys
+        [inchikey]
     )
 
     if cache_df.empty:
@@ -6432,10 +6431,6 @@ def spectral_find_cached_descriptor_row(spectrum_record, descriptor_settings=Non
 
         if cache_df.empty:
             return None
-
-    spectrum_id = str(spectrum_record.get("spectrum_id", "")).strip()
-    inchikey = str(spectrum_record.get("inchikey", "")).strip()
-    canonical_smiles = str(spectrum_record.get("canonical_smiles", "")).strip()
 
     found = pd.DataFrame()
 
@@ -6909,7 +6904,15 @@ def spectral_build_descriptors_from_ready_cache_for_dataset(
         numeric_window=numeric_window,
     )
 
-    cache_df = spectral_load_descriptor_cache(spectrum_type)
+    target_inchikeys = []
+
+    if "inchikey" in compounds.columns:
+        target_inchikeys = compounds["inchikey"].astype(str).str.strip().tolist()
+
+    cache_df = spectral_load_descriptor_cache_for_inchikeys(
+        spectrum_type,
+        target_inchikeys
+    )
     cache_df = spectral_filter_descriptor_cache_by_settings(
         cache_df,
         descriptor_settings
