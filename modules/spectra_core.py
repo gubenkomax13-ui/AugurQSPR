@@ -6408,17 +6408,17 @@ def spectral_values_norm_from_descriptor_row(desc, spectrum_type="IR"):
     return np.asarray([p[1] for p in pairs], dtype=float)
 
 
-def spectral_update_descriptor_cache(row, descriptor_settings, spectrum_type="IR"):
+def spectral_prepare_descriptor_cache_row(row, descriptor_settings, spectrum_type="IR"):
     """
-    Adds or replaces one ready descriptor row in the per-spectrum cache.
+    Prepares one row for the per-spectrum descriptor cache.
     """
     if row is None or not isinstance(row, dict):
-        return
+        return None
 
     descriptor_cols = spectral_descriptor_columns_from_row(row, spectrum_type=spectrum_type)
 
     if not descriptor_cols:
-        return
+        return None
 
     cache_row = dict(row)
     cache_row.update(descriptor_settings or {})
@@ -6429,15 +6429,11 @@ def spectral_update_descriptor_cache(row, descriptor_settings, spectrum_type="IR
     for col in drop_cols:
         cache_row.pop(col, None)
 
-    cache_df = spectral_load_descriptor_cache(spectrum_type)
-    cache_row_df = pd.DataFrame([cache_row])
+    return cache_row
 
-    if cache_df.empty:
-        cache_df = cache_row_df
-    else:
-        cache_df = pd.concat([cache_df, cache_row_df], ignore_index=True)
 
-    dedupe_cols = [
+def spectral_descriptor_cache_dedupe_columns(cache_df):
+    return [
         c for c in [
             "spectrum_id",
             "inchikey",
@@ -6457,10 +6453,69 @@ def spectral_update_descriptor_cache(row, descriptor_settings, spectrum_type="IR
         if c in cache_df.columns
     ]
 
+
+def spectral_merge_descriptor_cache_rows(rows, descriptor_settings, spectrum_type="IR"):
+    """
+    Merges ready descriptor rows into the existing cache and saves it immediately.
+    """
+    if rows is None:
+        rows = []
+
+    prepared_rows = []
+
+    for row in rows:
+        prepared = spectral_prepare_descriptor_cache_row(
+            row,
+            descriptor_settings,
+            spectrum_type=spectrum_type
+        )
+
+        if prepared is not None:
+            prepared_rows.append(prepared)
+
+    cache_df = spectral_load_descriptor_cache(spectrum_type)
+
+    before_rows = int(len(cache_df))
+
+    if not prepared_rows:
+        return cache_df, {
+            "cache_rows_before": before_rows,
+            "cache_rows_added": 0,
+            "cache_rows_after": before_rows,
+        }
+
+    cache_row_df = pd.DataFrame(prepared_rows)
+
+    if cache_df.empty:
+        cache_df = cache_row_df
+    else:
+        cache_df = pd.concat([cache_df, cache_row_df], ignore_index=True)
+
+    dedupe_cols = spectral_descriptor_cache_dedupe_columns(cache_df)
+
     if dedupe_cols:
         cache_df = cache_df.drop_duplicates(subset=dedupe_cols, keep="last")
 
     spectral_save_descriptor_cache(cache_df, spectrum_type=spectrum_type)
+
+    after_rows = int(len(cache_df))
+
+    return cache_df, {
+        "cache_rows_before": before_rows,
+        "cache_rows_added": len(prepared_rows),
+        "cache_rows_after": after_rows,
+    }
+
+
+def spectral_update_descriptor_cache(row, descriptor_settings, spectrum_type="IR"):
+    """
+    Adds or replaces one ready descriptor row in the per-spectrum cache.
+    """
+    spectral_merge_descriptor_cache_rows(
+        [row],
+        descriptor_settings,
+        spectrum_type=spectrum_type
+    )
 
 
 def spectral_spectrum_record_from_cached_descriptor_row(cached_row, spectrum_type="IR"):
@@ -6961,6 +7016,9 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
         "missing_processed_file": 0,
         "parse_errors": 0,
         "empty_grid": 0,
+        "cache_rows_before": 0,
+        "cache_rows_added": 0,
+        "cache_rows_after": 0,
         "cache_file": spectral_descriptor_cache_file(spectrum_type_norm),
         "descriptor_settings": descriptor_settings,
     }
@@ -7104,12 +7162,6 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
                 )
             )
 
-        spectral_update_descriptor_cache(
-            desc,
-            descriptor_settings,
-            spectrum_type=spectrum_type_norm
-        )
-
         rows.append(desc)
         report["processed"] += 1
         report["cached"] += 1
@@ -7128,7 +7180,14 @@ def spectral_build_descriptor_cache_for_all_indexed_spectra(
             except Exception:
                 pass
 
-    return pd.DataFrame(rows), report
+    cache_df, merge_report = spectral_merge_descriptor_cache_rows(
+        rows,
+        descriptor_settings,
+        spectrum_type=spectrum_type_norm
+    )
+    report.update(merge_report)
+
+    return cache_df, report
 
 
 def spectral_get_active_spectrum_for_compound(inchikey, canonical_smiles="", spectrum_type="IR"):

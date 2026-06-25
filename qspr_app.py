@@ -11153,13 +11153,19 @@ with st.expander(
             st.session_state.spectral_admin_cache_report = cache_report
 
             st.success(
-                f"Сохранено строк в кэш: {cache_report.get('cached', 0)}. "
+                f"Файл-банк спектральных дескрипторов обновлён сразу. "
+                f"Было строк: {cache_report.get('cache_rows_before', 0)}; "
+                f"рассчитано сейчас: {cache_report.get('cache_rows_added', 0)}; "
+                f"стало строк после объединения: {cache_report.get('cache_rows_after', 0)}. "
                 f"Файл: {cache_report.get('cache_file', '')}"
             )
 
             summary_rows = [
                 {"Показатель": "Строк в индексе выбранного типа", "Значение": cache_report.get("total_index_rows", 0)},
                 {"Показатель": "Успешно рассчитано", "Значение": cache_report.get("processed", 0)},
+                {"Показатель": "Строк в банке до расчёта", "Значение": cache_report.get("cache_rows_before", 0)},
+                {"Показатель": "Строк рассчитано сейчас", "Значение": cache_report.get("cache_rows_added", 0)},
+                {"Показатель": "Строк в банке после объединения", "Значение": cache_report.get("cache_rows_after", 0)},
                 {"Показатель": "Нет локального processed_file", "Значение": cache_report.get("missing_processed_file", 0)},
                 {"Показатель": "Ошибки чтения/парсинга", "Значение": cache_report.get("parse_errors", 0)},
                 {"Показатель": "Пустая сетка", "Значение": cache_report.get("empty_grid", 0)},
