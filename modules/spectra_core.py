@@ -6812,11 +6812,6 @@ def spectral_filter_ready_descriptor_candidates(
         work["spectrum_is_experimental"].astype(str).str.strip() != "",
         work["is_experimental"]
     )
-    quantitative_values = work["spectrum_is_quantitative"].where(
-        work["spectrum_is_quantitative"].astype(str).str.strip() != "",
-        work["is_quantitative"]
-    )
-
     work["_phase_norm"] = phase_values.apply(spectral_normalize_phase_value)
     work["_phase_priority"] = work["_phase_norm"].apply(spectral_phase_priority_score)
     work["_source_norm"] = source_values.apply(spectral_normalize_source_value)
@@ -6887,6 +6882,10 @@ def spectral_filter_ready_descriptor_candidates(
     else:
         work["_confidence_priority"] = 50
 
+    quantitative_values = work["spectrum_is_quantitative"].where(
+        work["spectrum_is_quantitative"].astype(str).str.strip() != "",
+        work["is_quantitative"]
+    )
     quant_norm = quantitative_values.astype(str).str.lower().str.strip()
     work["_quant_priority"] = np.where(
         quant_norm.isin(["true", "1", "yes", "y", "РґР°"]),
