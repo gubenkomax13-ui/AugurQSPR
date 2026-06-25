@@ -11456,6 +11456,10 @@ with st.expander(
                         "Значение": "да" if bank_status.get("remote_descriptor_cache_configured") else "нет",
                     },
                     {
+                        "Параметр": "GitHub/raw spectral_descriptor_shards доступен",
+                        "Значение": "да" if bank_status.get("remote_descriptor_shards_configured") else "нет",
+                    },
+                    {
                         "Параметр": "AUGUR_SPECTRA_BANK_FOLDER_* настроен",
                         "Значение": "да" if bank_status.get("remote_bank_folder_configured") else "нет",
                     },
@@ -11476,8 +11480,24 @@ with st.expander(
                         "Значение": bank_status.get("local_ir_descriptor_cache_rows", 0),
                     },
                     {
+                        "Параметр": "IR shard-файлов дескрипторов",
+                        "Значение": bank_status.get("local_ir_descriptor_shard_files", 0),
+                    },
+                    {
+                        "Параметр": "Строк в IR descriptor shards",
+                        "Значение": bank_status.get("local_ir_descriptor_shard_rows", 0),
+                    },
+                    {
                         "Параметр": "Строк в Mass descriptor cache",
                         "Значение": bank_status.get("local_mass_descriptor_cache_rows", 0),
+                    },
+                    {
+                        "Параметр": "Mass shard-файлов дескрипторов",
+                        "Значение": bank_status.get("local_mass_descriptor_shard_files", 0),
+                    },
+                    {
+                        "Параметр": "Строк в Mass descriptor shards",
+                        "Значение": bank_status.get("local_mass_descriptor_shard_rows", 0),
                     },
                 ]
 

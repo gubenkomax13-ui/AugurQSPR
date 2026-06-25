@@ -78,6 +78,10 @@ SPECTRA_REMOTE_DESCRIPTOR_SHARDS_BASE_URL = os.environ.get(
     "AUGUR_SPECTRA_DESCRIPTOR_SHARDS_BASE_URL",
     ""
 ).strip()
+SPECTRA_DEFAULT_DESCRIPTOR_SHARDS_BASE_URL = (
+    "https://raw.githubusercontent.com/gubenkomax13-ui/"
+    "AugurQSPR/main/spectral_descriptor_shards"
+)
 SPECTRA_REMOTE_BANK_FOLDER_URL = os.environ.get("AUGUR_SPECTRA_BANK_FOLDER_URL", "").strip()
 SPECTRA_REMOTE_BANK_FOLDER_ID = os.environ.get("AUGUR_SPECTRA_BANK_FOLDER_ID", "").strip()
 SPECTRA_GOOGLE_DRIVE_API_KEY = os.environ.get("AUGUR_GOOGLE_DRIVE_API_KEY", "").strip()
@@ -634,6 +638,15 @@ def spectra_remote_bank_status():
             or SPECTRA_REMOTE_MASS_DESCRIPTOR_CACHE_URL
             or SPECTRA_REMOTE_DESCRIPTOR_CACHE_URL
         ),
+        "remote_descriptor_shards_configured": bool(
+            SPECTRA_REMOTE_DESCRIPTOR_SHARDS_BASE_URL
+            or SPECTRA_DEFAULT_DESCRIPTOR_SHARDS_BASE_URL
+        ),
+        "descriptor_shards_dir": SPECTRA_DESCRIPTOR_SHARDS_DIR,
+        "local_ir_descriptor_shard_files": 0,
+        "local_mass_descriptor_shard_files": 0,
+        "local_ir_descriptor_shard_rows": 0,
+        "local_mass_descriptor_shard_rows": 0,
         "local_ir_processed_files": 0,
         "local_mass_processed_files": 0,
         "local_ir_descriptor_cache_exists": os.path.exists(SPECTRA_IR_DESCRIPTOR_CACHE_FILE),
@@ -741,6 +754,35 @@ def spectra_remote_bank_status():
             if status[exists_key]:
                 cache_df = pd.read_csv(cache_file, low_memory=False)
                 status[rows_key] = int(len(cache_df))
+        except Exception:
+            pass
+
+    for spectrum_type, files_key, rows_key in [
+        ("IR", "local_ir_descriptor_shard_files", "local_ir_descriptor_shard_rows"),
+        ("Mass", "local_mass_descriptor_shard_files", "local_mass_descriptor_shard_rows"),
+    ]:
+        try:
+            shard_dir = os.path.join(SPECTRA_DESCRIPTOR_SHARDS_DIR, spectrum_type)
+
+            if os.path.isdir(shard_dir):
+                status[files_key] = len([
+                    name for name in os.listdir(shard_dir)
+                    if name.lower().endswith(".csv")
+                ])
+
+            manifest_file = os.path.join(
+                SPECTRA_DESCRIPTOR_SHARDS_DIR,
+                f"spectral_descriptor_manifest_{spectrum_type}.csv"
+            )
+
+            if os.path.exists(manifest_file):
+                manifest_df = pd.read_csv(manifest_file)
+
+                if "rows" in manifest_df.columns:
+                    status[rows_key] = int(pd.to_numeric(
+                        manifest_df["rows"],
+                        errors="coerce"
+                    ).fillna(0).sum())
         except Exception:
             pass
 
@@ -6180,7 +6222,11 @@ def spectral_descriptor_shard_file(spectrum_type="IR", shard_key=""):
 
 
 def spectral_remote_descriptor_shard_url(spectrum_type="IR", shard_key=""):
-    base_url = str(SPECTRA_REMOTE_DESCRIPTOR_SHARDS_BASE_URL or "").strip().rstrip("/")
+    base_url = str(
+        SPECTRA_REMOTE_DESCRIPTOR_SHARDS_BASE_URL
+        or SPECTRA_DEFAULT_DESCRIPTOR_SHARDS_BASE_URL
+        or ""
+    ).strip().rstrip("/")
     shard_key = str(shard_key or "").strip().upper()
 
     if not base_url or not shard_key:
