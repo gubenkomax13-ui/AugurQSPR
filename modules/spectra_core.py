@@ -74,12 +74,20 @@ SPECTRA_REMOTE_DESCRIPTOR_CACHE_URL = os.environ.get(
     "AUGUR_SPECTRA_DESCRIPTOR_CACHE_URL",
     ""
 ).strip()
+SPECTRA_REMOTE_DESCRIPTOR_SHARDS_BASE_URL = os.environ.get(
+    "AUGUR_SPECTRA_DESCRIPTOR_SHARDS_BASE_URL",
+    ""
+).strip()
 SPECTRA_REMOTE_BANK_FOLDER_URL = os.environ.get("AUGUR_SPECTRA_BANK_FOLDER_URL", "").strip()
 SPECTRA_REMOTE_BANK_FOLDER_ID = os.environ.get("AUGUR_SPECTRA_BANK_FOLDER_ID", "").strip()
 SPECTRA_GOOGLE_DRIVE_API_KEY = os.environ.get("AUGUR_GOOGLE_DRIVE_API_KEY", "").strip()
 SPECTRA_REMOTE_MANIFEST_FILE = os.path.join(
     SPECTRA_BANK_DIR,
     "spectra_manifest.csv"
+)
+SPECTRA_DESCRIPTOR_SHARDS_DIR = os.path.join(
+    PROJECT_ROOT_DIR,
+    "spectral_descriptor_shards"
 )
 
 SPECTRA_IR_DIR = os.path.join(SPECTRA_BANK_DIR, "IR")
@@ -6140,6 +6148,49 @@ def spectral_remote_descriptor_cache_url(spectrum_type="IR"):
     return SPECTRA_REMOTE_IR_DESCRIPTOR_CACHE_URL or SPECTRA_REMOTE_DESCRIPTOR_CACHE_URL
 
 
+def spectral_descriptor_shard_type_dir(spectrum_type="IR"):
+    spectrum_type = spectra_normalize_spectrum_type(spectrum_type)
+    return os.path.join(SPECTRA_DESCRIPTOR_SHARDS_DIR, spectrum_type)
+
+
+def spectral_descriptor_shard_key(inchikey):
+    value = str(inchikey or "").strip().upper()
+
+    if value in ["", "NAN", "NONE", "NULL"]:
+        return ""
+
+    value = re.sub(r"[^A-Z0-9]+", "", value)
+
+    if len(value) < 2:
+        return ""
+
+    return value[:2]
+
+
+def spectral_descriptor_shard_file(spectrum_type="IR", shard_key=""):
+    shard_key = str(shard_key or "").strip().upper()
+
+    if not shard_key:
+        return ""
+
+    return os.path.join(
+        spectral_descriptor_shard_type_dir(spectrum_type),
+        f"{shard_key}.csv"
+    )
+
+
+def spectral_remote_descriptor_shard_url(spectrum_type="IR", shard_key=""):
+    base_url = str(SPECTRA_REMOTE_DESCRIPTOR_SHARDS_BASE_URL or "").strip().rstrip("/")
+    shard_key = str(shard_key or "").strip().upper()
+
+    if not base_url or not shard_key:
+        return ""
+
+    spectrum_type = spectra_normalize_spectrum_type(spectrum_type)
+
+    return f"{base_url}/{spectrum_type}/{shard_key}.csv"
+
+
 def spectral_descriptor_cache_settings(
     spectrum_type="IR",
     wn_min=550,
@@ -6241,6 +6292,65 @@ def spectral_load_descriptor_cache(spectrum_type="IR"):
     return cache_df
 
 
+def spectral_load_descriptor_cache_for_inchikeys(spectrum_type="IR", inchikeys=None):
+    """
+    Loads only descriptor shards needed for a set of InChIKey values.
+    Falls back to the full descriptor cache if no local/remote shards are found.
+    """
+    inchikeys = list(inchikeys or [])
+    shard_keys = sorted({
+        spectral_descriptor_shard_key(x)
+        for x in inchikeys
+        if spectral_descriptor_shard_key(x)
+    })
+
+    if not shard_keys:
+        return pd.DataFrame()
+
+    frames = []
+    attempted_shards = 0
+
+    for shard_key in shard_keys:
+        shard_file = spectral_descriptor_shard_file(spectrum_type, shard_key)
+        attempted_shards += 1
+
+        if not os.path.exists(shard_file):
+            shard_url = spectral_remote_descriptor_shard_url(spectrum_type, shard_key)
+
+            if shard_url:
+                try:
+                    spectra_download_public_file(shard_url, shard_file, timeout=90)
+                except Exception:
+                    pass
+
+        if not os.path.exists(shard_file):
+            continue
+
+        try:
+            shard_df = pd.read_csv(shard_file, low_memory=False)
+        except Exception:
+            continue
+
+        if shard_df.empty:
+            continue
+
+        frames.append(shard_df)
+
+    if frames:
+        cache_df = pd.concat(frames, ignore_index=True)
+
+        for col in spectral_descriptor_cache_required_cols():
+            if col not in cache_df.columns:
+                cache_df[col] = ""
+
+        return cache_df
+
+    if attempted_shards > 0:
+        return spectral_load_descriptor_cache(spectrum_type)
+
+    return pd.DataFrame()
+
+
 def spectral_save_descriptor_cache(cache_df, spectrum_type="IR"):
     """
     Saves the per-spectrum descriptor cache.
@@ -6301,7 +6411,15 @@ def spectral_find_cached_descriptor_row(spectrum_record, descriptor_settings=Non
         or "IR"
     )
 
-    cache_df = spectral_load_descriptor_cache(spectrum_type)
+    target_inchikeys = []
+
+    if "inchikey" in compounds.columns:
+        target_inchikeys = compounds["inchikey"].astype(str).str.strip().tolist()
+
+    cache_df = spectral_load_descriptor_cache_for_inchikeys(
+        spectrum_type,
+        target_inchikeys
+    )
 
     if cache_df.empty:
         return None
