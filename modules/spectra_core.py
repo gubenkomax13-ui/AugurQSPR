@@ -8410,13 +8410,25 @@ def spectral_save_descriptors(descriptors_df, spectrum_type="IR"):
     if descriptors_df is None or descriptors_df.empty:
         return ""
 
-    dirs = spectra_get_dirs_by_type(spectrum_type)
+    spectrum_type_label = str(spectrum_type or "").strip()
+    combined_spectrum_type = spectrum_type_label.lower().replace(" ", "") in [
+        "ir+mass",
+        "ir_mass",
+        "ir+ms",
+    ]
+
+    if combined_spectrum_type:
+        dirs = spectra_get_dirs_by_type("IR")
+        filename_prefix = "IR_Mass"
+    else:
+        dirs = spectra_get_dirs_by_type(spectrum_type)
+        filename_prefix = spectra_normalize_spectrum_type(spectrum_type)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     filepath = os.path.join(
         dirs["descriptors"],
-        f"{spectra_normalize_spectrum_type(spectrum_type)}_spectral_descriptors_{timestamp}.csv"
+        f"{filename_prefix}_spectral_descriptors_{timestamp}.csv"
     )
 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
