@@ -10691,23 +10691,36 @@ with st.expander(
     )
 
     allowed_phases_for_desc = None
+    phase_checkbox_options = [
+        ("gas", "gas"),
+        ("liquid", "liquid"),
+        ("solid", "solid"),
+        ("solution", "solution"),
+        ("film", "film"),
+        ("kbr", "KBr"),
+        ("nujol", "Nujol"),
+        ("unknown", "unknown"),
+    ]
 
-    if spectral_phase_mode == "manual":
-        allowed_phases_for_desc = st.multiselect(
-            t('spectra_desc.phase_manual_select_label'),
-            options=[
-                "gas",
-                "liquid",
-                "solid",
-                "solution",
-                "film",
-                "kbr",
-                "nujol",
-                "unknown",
-            ],
-            default=["gas"],
-            key="spectral_allowed_phases_for_desc"
-        )
+    if spectral_phase_mode in ["manual", "any"]:
+        st.markdown("Разрешённые фазы / состояния образца")
+
+        allowed_phases_for_desc = []
+        phase_cols = st.columns(4)
+        default_all_phases = spectral_phase_mode == "any"
+
+        for phase_idx, (phase_value, phase_label) in enumerate(phase_checkbox_options):
+            with phase_cols[phase_idx % len(phase_cols)]:
+                phase_checked = st.checkbox(
+                    phase_label,
+                    value=default_all_phases or phase_value == "gas",
+                    key=f"spectral_allowed_phase_checkbox_{phase_value}_{spectral_phase_mode}"
+                )
+
+            if phase_checked:
+                allowed_phases_for_desc.append(phase_value)
+
+        spectral_phase_mode = "manual"
 
         if not allowed_phases_for_desc:
             st.warning(t('spectra_desc.phase_manual_warning'))
@@ -10715,8 +10728,11 @@ with st.expander(
     elif spectral_phase_mode == "only_gas":
         allowed_phases_for_desc = ["gas"]
 
-    if spectral_phase_mode == "any":
-        st.warning(t('spectra_desc.phase_any_warning'))
+    if spectral_phase_mode == "manual":
+        st.info(
+            "Будут использоваться только спектры отмеченных фаз: "
+            + ", ".join(allowed_phases_for_desc or [])
+        )
     elif spectral_phase_mode == "prefer_gas":
         st.info(t('spectra_desc.phase_prefer_info'))
     elif spectral_phase_mode == "only_gas":
