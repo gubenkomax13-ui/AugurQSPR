@@ -10704,6 +10704,10 @@ with st.expander(
 
     if spectral_phase_mode in ["manual", "any"]:
         st.markdown("Разрешённые фазы / состояния образца")
+        st.caption(
+            "Этот выбор применяется и к готовому файлу спектральных дескрипторов: "
+            "будут взяты только строки с отмеченными фазами."
+        )
 
         allowed_phases_for_desc = []
         phase_cols = st.columns(4)
@@ -10730,7 +10734,7 @@ with st.expander(
 
     if spectral_phase_mode == "manual":
         st.info(
-            "Будут использоваться только спектры отмеченных фаз: "
+            "Будут использоваться только спектры или готовые дескрипторы отмеченных фаз: "
             + ", ".join(allowed_phases_for_desc or [])
         )
     elif spectral_phase_mode == "prefer_gas":
