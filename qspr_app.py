@@ -11040,20 +11040,180 @@ with st.expander(
 
     st.markdown(t('spectra_desc.run_title'))
 
-    run_spectral_descriptors = st.button(
-        t('spectra_desc.run_button'),
-        type="primary",
-        key=f"run_spectral_descriptors_{descriptor_spectrum_type.lower()}"
-    )
+    col_run_ready, col_run_bank = st.columns(2)
 
-    if run_spectral_descriptors:
+    with col_run_ready:
+        run_ready_spectral_descriptors = st.button(
+            "Использовать готовые спектральные дескрипторы",
+            type="primary",
+            key=f"use_ready_spectral_descriptors_{descriptor_spectrum_type.lower()}",
+            help=(
+                "Берёт готовую таблицу спектральных дескрипторов из локального кэша "
+                "или из GitHub raw URL, без скачивания файлов спектров."
+            )
+        )
+
+    run_spectral_descriptors = False
+
+    with col_run_bank:
+        if is_admin():
+            run_spectral_descriptors = st.button(
+                "Скачать спектры из банка и рассчитать дескрипторы",
+                type="secondary",
+                key=f"run_spectral_descriptors_{descriptor_spectrum_type.lower()}"
+            )
+        else:
+            st.caption("Для пользователя используется режим готовых спектральных дескрипторов без скачивания спектров.")
+
+    run_admin_cache_all_spectra = False
+
+    if is_admin():
+        st.markdown("#### Админ: готовые спектральные дескрипторы для GitHub")
+        st.caption(
+            "Рассчитывает дескрипторы для всех локально имеющихся processed-спектров "
+            "выбранного типа и сохраняет CSV-кэш в папке проекта. SVD сюда не входит, "
+            "потому что SVD зависит от конкретного датасета пользователя."
+        )
+        run_admin_cache_all_spectra = st.button(
+            f"Рассчитать готовые {descriptor_spectrum_type}-дескрипторы для всех имеющихся спектров",
+            key=f"admin_cache_all_spectra_{descriptor_spectrum_type.lower()}",
+            type="secondary"
+        )
+
+    if run_admin_cache_all_spectra:
+        if not any([use_grid_desc, use_binary_fp, use_binned_numeric]):
+            st.error("Для готового кэша выберите хотя бы GRID, BIN или BAND. SVD отдельно в кэш не сохраняется.")
+        elif wn_min >= wn_max:
+            st.error(t('spectra_desc.error_axis_min_max'))
+        else:
+            admin_progress_bar = st.progress(0.0)
+            admin_progress_status = st.empty()
+
+            def update_admin_cache_progress(current, total, stage, payload):
+                total = max(int(total or 0), 1)
+                current = max(0, min(int(current or 0), total))
+                admin_progress_bar.progress(current / total)
+
+                payload = payload or {}
+                spectrum_id_text = str(payload.get("spectrum_id", "")).strip()
+
+                if stage == "loading_spectrum":
+                    msg = f"Чтение локального processed-спектра: {current + 1}/{total}"
+                elif stage == "done":
+                    msg = f"Готовый дескриптор сохранён: {current}/{total}"
+                else:
+                    msg = f"Подготовка кэша спектральных дескрипторов: {current}/{total}"
+
+                if spectrum_id_text:
+                    msg += " | " + spectrum_id_text
+
+                admin_progress_status.info(msg)
+
+            with st.spinner("Рассчитываем готовые спектральные дескрипторы для локального банка..."):
+                cache_df_all, cache_report = spectral_build_descriptor_cache_for_all_indexed_spectra(
+                    spectrum_type=descriptor_spectrum_type,
+                    wn_min=wn_min,
+                    wn_max=wn_max,
+                    step=wn_step,
+                    normalization=normalization,
+                    invert_signal=invert_signal,
+                    use_grid=use_grid_desc,
+                    use_binary_fp=use_binary_fp,
+                    use_binned_numeric=use_binned_numeric,
+                    binary_window=binary_window,
+                    binary_threshold=binary_threshold,
+                    numeric_window=numeric_window,
+                    active_only=True,
+                    progress_callback=update_admin_cache_progress,
+                )
+
+            admin_progress_bar.progress(1.0)
+            admin_progress_status.success("Подготовка готовых спектральных дескрипторов завершена.")
+
+            st.session_state.spectral_admin_cache_report = cache_report
+
+            st.success(
+                f"Сохранено строк в кэш: {cache_report.get('cached', 0)}. "
+                f"Файл: {cache_report.get('cache_file', '')}"
+            )
+
+            summary_rows = [
+                {"Показатель": "Строк в индексе выбранного типа", "Значение": cache_report.get("total_index_rows", 0)},
+                {"Показатель": "Успешно рассчитано", "Значение": cache_report.get("processed", 0)},
+                {"Показатель": "Нет локального processed_file", "Значение": cache_report.get("missing_processed_file", 0)},
+                {"Показатель": "Ошибки чтения/парсинга", "Значение": cache_report.get("parse_errors", 0)},
+                {"Показатель": "Пустая сетка", "Значение": cache_report.get("empty_grid", 0)},
+                {"Показатель": "Файл кэша", "Значение": cache_report.get("cache_file", "")},
+            ]
+            st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
+            if cache_df_all is not None and not cache_df_all.empty:
+                st.dataframe(cache_df_all.head(50), use_container_width=True, hide_index=True)
+
+    if run_ready_spectral_descriptors or run_spectral_descriptors:
+        use_ready_descriptor_cache_only = bool(run_ready_spectral_descriptors)
+
         if not any([use_grid_desc, use_binary_fp, use_binned_numeric, use_svd_desc]):
             st.error(t('spectra_desc.error_no_descriptor_type'))
         elif wn_min >= wn_max:
             st.error(t('spectra_desc.error_axis_min_max'))
         else:
-            with st.spinner(t('spectra_desc.spinner_converting')):
-                descriptors_df, spectral_report = spectral_build_descriptors_for_dataset(
+            progress_bar = st.progress(0.0)
+            progress_status = st.empty()
+
+            def update_spectral_progress(current, total, stage, payload):
+                total = max(int(total or 0), 1)
+                current = max(0, min(int(current or 0), total))
+                progress_bar.progress(current / total)
+
+                payload = payload or {}
+                inchikey_text = str(payload.get("inchikey", "")).strip()
+                spectrum_id_text = str(payload.get("spectrum_id", "")).strip()
+
+                if stage == "loading_ready_descriptors":
+                    msg = f"Поиск готовых {descriptor_spectrum_type}-дескрипторов: {current + 1}/{total}"
+                elif stage == "no_ready_descriptors":
+                    msg = f"Готовые дескрипторы не найдены: {current}/{total}"
+                elif stage == "searching":
+                    msg = f"Поиск подходящего {descriptor_spectrum_type}-спектра: {current + 1}/{total}"
+                elif stage == "loading_spectrum":
+                    msg = f"Скачивание/чтение спектра из банка: {current + 1}/{total}"
+                elif stage == "done":
+                    msg = f"Спектр обработан: {current}/{total}"
+                elif stage == "no_spectrum":
+                    msg = f"Подходящий спектр не найден: {current}/{total}"
+                elif stage in ["parse_error", "empty_grid"]:
+                    msg = f"Спектр найден, но не удалось подготовить дескрипторы: {current}/{total}"
+                else:
+                    msg = f"Обработка спектров: {current}/{total}"
+
+                details = []
+
+                if inchikey_text:
+                    details.append(inchikey_text)
+
+                if spectrum_id_text:
+                    details.append(spectrum_id_text)
+
+                if details:
+                    msg += " | " + " | ".join(details)
+
+                progress_status.info(msg)
+
+            spinner_text = (
+                "Подключаем готовые спектральные дескрипторы..."
+                if use_ready_descriptor_cache_only
+                else t('spectra_desc.spinner_converting')
+            )
+
+            with st.spinner(spinner_text):
+                spectral_builder = (
+                    spectral_build_descriptors_from_ready_cache_for_dataset
+                    if use_ready_descriptor_cache_only
+                    else spectral_build_descriptors_for_dataset
+                )
+
+                descriptors_df, spectral_report = spectral_builder(
                     input_df=current_df,
                     smiles_col=smiles_col_current,
                     spectrum_type=descriptor_spectrum_type,
@@ -11076,7 +11236,14 @@ with st.expander(
                     allowed_intensity_types=selected_intensity_types_for_desc,
                     prefer_quantitative=prefer_quantitative_for_desc,
                     experimental_only=experimental_only_for_desc,
+                    progress_callback=update_spectral_progress,
                 )
+
+                progress_bar.progress(1.0)
+                if use_ready_descriptor_cache_only:
+                    progress_status.success("Готовые спектральные дескрипторы подключены.")
+                else:
+                    progress_status.success("Загрузка спектров и расчёт спектральных дескрипторов завершены.")
 
                 if add_sparring_columns and descriptors_df is not None and not descriptors_df.empty:
                     molwt_rows = []
@@ -11127,6 +11294,11 @@ with st.expander(
                 spectral_report["axis_label"] = axis_label
                 spectral_report["normalization"] = normalization
                 spectral_report["invert_signal"] = bool(invert_signal)
+                spectral_report["descriptor_input_mode"] = (
+                    "ready_descriptor_cache"
+                    if use_ready_descriptor_cache_only
+                    else "spectra_bank_processed"
+                )
 
                 st.session_state.spectral_descriptors_df = descriptors_df
                 st.session_state.spectral_descriptors_report = spectral_report
@@ -11157,6 +11329,15 @@ with st.expander(
 
         with col_rep3:
             st.metric(t('spectra_report.without_spectrum'), rep.get("without_spectrum", 0))
+
+        if rep.get("descriptor_cache_hits", 0) or rep.get("ready_descriptor_mode", False):
+            col_cache_1, col_cache_2 = st.columns(2)
+
+            with col_cache_1:
+                st.metric("Готовые дескрипторы найдены", rep.get("descriptor_cache_hits", 0))
+
+            with col_cache_2:
+                st.metric("Готовые дескрипторы не найдены", rep.get("descriptor_cache_misses", 0))
 
         bank_status = rep.get("spectra_bank_status", {})
 
@@ -11217,6 +11398,10 @@ with st.expander(
                         "Значение": "да" if bank_status.get("remote_search_cache_configured") else "нет",
                     },
                     {
+                        "Параметр": "AUGUR_SPECTRA_*_DESCRIPTOR_CACHE_URL настроен",
+                        "Значение": "да" if bank_status.get("remote_descriptor_cache_configured") else "нет",
+                    },
+                    {
                         "Параметр": "AUGUR_SPECTRA_BANK_FOLDER_* настроен",
                         "Значение": "да" if bank_status.get("remote_bank_folder_configured") else "нет",
                     },
@@ -11231,6 +11416,14 @@ with st.expander(
                     {
                         "Параметр": "Локальных Mass processed CSV",
                         "Значение": bank_status.get("local_mass_processed_files", 0),
+                    },
+                    {
+                        "Параметр": "Строк в IR descriptor cache",
+                        "Значение": bank_status.get("local_ir_descriptor_cache_rows", 0),
+                    },
+                    {
+                        "Параметр": "Строк в Mass descriptor cache",
+                        "Значение": bank_status.get("local_mass_descriptor_cache_rows", 0),
                     },
                 ]
 

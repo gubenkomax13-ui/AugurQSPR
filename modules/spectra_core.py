@@ -62,6 +62,18 @@ SPECTRA_REMOTE_MANIFEST_URL = os.environ.get("AUGUR_SPECTRA_MANIFEST_URL", "").s
 SPECTRA_REMOTE_MANIFEST_FILE_ID = os.environ.get("AUGUR_SPECTRA_MANIFEST_FILE_ID", "").strip()
 SPECTRA_REMOTE_SEARCH_CACHE_URL = os.environ.get("AUGUR_SPECTRA_SEARCH_CACHE_URL", "").strip()
 SPECTRA_REMOTE_SEARCH_CACHE_FILE_ID = os.environ.get("AUGUR_SPECTRA_SEARCH_CACHE_FILE_ID", "").strip()
+SPECTRA_REMOTE_IR_DESCRIPTOR_CACHE_URL = (
+    os.environ.get("AUGUR_SPECTRA_IR_DESCRIPTOR_CACHE_URL", "").strip()
+    or os.environ.get("AUGUR_IR_SPECTRAL_DESCRIPTOR_CACHE_URL", "").strip()
+)
+SPECTRA_REMOTE_MASS_DESCRIPTOR_CACHE_URL = (
+    os.environ.get("AUGUR_SPECTRA_MASS_DESCRIPTOR_CACHE_URL", "").strip()
+    or os.environ.get("AUGUR_MASS_SPECTRAL_DESCRIPTOR_CACHE_URL", "").strip()
+)
+SPECTRA_REMOTE_DESCRIPTOR_CACHE_URL = os.environ.get(
+    "AUGUR_SPECTRA_DESCRIPTOR_CACHE_URL",
+    ""
+).strip()
 SPECTRA_REMOTE_BANK_FOLDER_URL = os.environ.get("AUGUR_SPECTRA_BANK_FOLDER_URL", "").strip()
 SPECTRA_REMOTE_BANK_FOLDER_ID = os.environ.get("AUGUR_SPECTRA_BANK_FOLDER_ID", "").strip()
 SPECTRA_GOOGLE_DRIVE_API_KEY = os.environ.get("AUGUR_GOOGLE_DRIVE_API_KEY", "").strip()
@@ -78,12 +90,20 @@ SPECTRA_IR_RAW_DIR = os.path.join(SPECTRA_IR_DIR, "raw_jdx")
 SPECTRA_IR_PROCESSED_DIR = os.path.join(SPECTRA_IR_DIR, "processed")
 SPECTRA_IR_DESCRIPTORS_DIR = os.path.join(SPECTRA_IR_DIR, "descriptors")
 SPECTRA_IR_LOG_DIR = os.path.join(SPECTRA_IR_DIR, "search_log")
+SPECTRA_IR_DESCRIPTOR_CACHE_FILE = os.path.join(
+    SPECTRA_IR_DESCRIPTORS_DIR,
+    "IR_spectral_descriptor_cache.csv"
+)
 
 # Mass
 SPECTRA_MASS_RAW_DIR = os.path.join(SPECTRA_MASS_DIR, "raw_jdx")
 SPECTRA_MASS_PROCESSED_DIR = os.path.join(SPECTRA_MASS_DIR, "processed")
 SPECTRA_MASS_DESCRIPTORS_DIR = os.path.join(SPECTRA_MASS_DIR, "descriptors")
 SPECTRA_MASS_LOG_DIR = os.path.join(SPECTRA_MASS_DIR, "search_log")
+SPECTRA_MASS_DESCRIPTOR_CACHE_FILE = os.path.join(
+    SPECTRA_MASS_DESCRIPTORS_DIR,
+    "Mass_spectral_descriptor_cache.csv"
+)
 
 # Таблицы неудачных поисков
 SPECTRA_IR_NOT_FOUND_FILE = os.path.join(
@@ -593,8 +613,17 @@ def spectra_remote_bank_status():
         "remote_search_cache_configured": bool(
             SPECTRA_REMOTE_SEARCH_CACHE_URL or SPECTRA_REMOTE_SEARCH_CACHE_FILE_ID
         ),
+        "remote_descriptor_cache_configured": bool(
+            SPECTRA_REMOTE_IR_DESCRIPTOR_CACHE_URL
+            or SPECTRA_REMOTE_MASS_DESCRIPTOR_CACHE_URL
+            or SPECTRA_REMOTE_DESCRIPTOR_CACHE_URL
+        ),
         "local_ir_processed_files": 0,
         "local_mass_processed_files": 0,
+        "local_ir_descriptor_cache_exists": os.path.exists(SPECTRA_IR_DESCRIPTOR_CACHE_FILE),
+        "local_mass_descriptor_cache_exists": os.path.exists(SPECTRA_MASS_DESCRIPTOR_CACHE_FILE),
+        "local_ir_descriptor_cache_rows": 0,
+        "local_mass_descriptor_cache_rows": 0,
     }
 
     try:
@@ -684,6 +713,20 @@ def spectra_remote_bank_status():
             ])
     except Exception:
         pass
+
+    for spectrum_type, exists_key, rows_key in [
+        ("IR", "local_ir_descriptor_cache_exists", "local_ir_descriptor_cache_rows"),
+        ("Mass", "local_mass_descriptor_cache_exists", "local_mass_descriptor_cache_rows"),
+    ]:
+        try:
+            cache_file = spectral_descriptor_cache_file(spectrum_type)
+            status[exists_key] = os.path.exists(cache_file)
+
+            if status[exists_key]:
+                cache_df = pd.read_csv(cache_file)
+                status[rows_key] = int(len(cache_df))
+        except Exception:
+            pass
 
     return status
 
@@ -858,6 +901,7 @@ def spectra_materialize_remote_bank_file(local_or_relative_path, spectrum_record
 SPECTRA_INDEX_LOCK = threading.RLock()
 SPECTRA_SEARCH_CACHE_LOCK = threading.RLock()
 SPECTRA_NOT_FOUND_LOCK = threading.RLock()
+SPECTRA_DESCRIPTOR_CACHE_LOCK = threading.RLock()
 SPECTRA_STOP_FILE = os.path.join(
     SPECTRA_BANK_DIR,
     "spectra_search_stop.flag"
@@ -6052,6 +6096,1041 @@ def spectral_make_binned_numeric_descriptors(grid, values, window_size=100, pref
     return desc
 
 
+def spectral_descriptor_cache_file(spectrum_type="IR"):
+    """
+    Returns the per-spectrum descriptor cache file for a spectrum type.
+    """
+    spectrum_type = spectra_normalize_spectrum_type(spectrum_type)
+
+    if spectrum_type == "Mass":
+        return SPECTRA_MASS_DESCRIPTOR_CACHE_FILE
+
+    return SPECTRA_IR_DESCRIPTOR_CACHE_FILE
+
+
+def spectral_remote_descriptor_cache_url(spectrum_type="IR"):
+    """
+    Returns a GitHub/raw URL for the ready descriptor cache, if configured.
+    """
+    spectrum_type = spectra_normalize_spectrum_type(spectrum_type)
+
+    if spectrum_type == "Mass":
+        return SPECTRA_REMOTE_MASS_DESCRIPTOR_CACHE_URL or SPECTRA_REMOTE_DESCRIPTOR_CACHE_URL
+
+    return SPECTRA_REMOTE_IR_DESCRIPTOR_CACHE_URL or SPECTRA_REMOTE_DESCRIPTOR_CACHE_URL
+
+
+def spectral_descriptor_cache_settings(
+    spectrum_type="IR",
+    wn_min=550,
+    wn_max=3798,
+    step=4,
+    normalization="min-max",
+    invert_signal=False,
+    use_grid=True,
+    use_binary_fp=True,
+    use_binned_numeric=True,
+    binary_window=20,
+    binary_threshold=0.10,
+    numeric_window=100,
+):
+    """
+    Settings that make cached per-spectrum descriptors comparable.
+
+    SVD is intentionally not included: SVD descriptors are dataset-level
+    components and cannot be reused as a property of one spectrum.
+    """
+    return {
+        "descriptor_spectrum_type": spectra_normalize_spectrum_type(spectrum_type),
+        "descriptor_wn_min": float(wn_min),
+        "descriptor_wn_max": float(wn_max),
+        "descriptor_step": float(step),
+        "descriptor_normalization": str(normalization),
+        "descriptor_invert_signal": bool(invert_signal),
+        "descriptor_use_grid": bool(use_grid),
+        "descriptor_use_binary_fp": bool(use_binary_fp),
+        "descriptor_use_binned_numeric": bool(use_binned_numeric),
+        "descriptor_binary_window": float(binary_window),
+        "descriptor_binary_threshold": float(binary_threshold),
+        "descriptor_numeric_window": float(numeric_window),
+    }
+
+
+def spectral_descriptor_cache_required_cols():
+    return [
+        "spectrum_id",
+        "inchikey",
+        "canonical_smiles",
+        "spectrum_type",
+        "descriptor_spectrum_type",
+        "descriptor_wn_min",
+        "descriptor_wn_max",
+        "descriptor_step",
+        "descriptor_normalization",
+        "descriptor_invert_signal",
+        "descriptor_use_grid",
+        "descriptor_use_binary_fp",
+        "descriptor_use_binned_numeric",
+        "descriptor_binary_window",
+        "descriptor_binary_threshold",
+        "descriptor_numeric_window",
+        "descriptor_cached_at",
+    ]
+
+
+def spectral_load_descriptor_cache(spectrum_type="IR"):
+    """
+    Loads ready per-spectrum descriptors.
+    """
+    cache_file = spectral_descriptor_cache_file(spectrum_type)
+
+    if not os.path.exists(cache_file):
+        remote_url = spectral_remote_descriptor_cache_url(spectrum_type)
+
+        if remote_url:
+            try:
+                spectra_download_public_file(remote_url, cache_file, timeout=90)
+            except Exception:
+                pass
+
+    if not os.path.exists(cache_file):
+        rel_path = spectra_normalize_bank_relative_path(cache_file)
+        remote_path = spectra_materialize_remote_bank_file(rel_path)
+
+        if remote_path and os.path.exists(remote_path):
+            cache_file = remote_path
+
+    if os.path.exists(cache_file):
+        try:
+            cache_df = pd.read_csv(cache_file)
+        except Exception:
+            cache_df = pd.DataFrame()
+    else:
+        cache_df = pd.DataFrame()
+
+    for col in spectral_descriptor_cache_required_cols():
+        if col not in cache_df.columns:
+            cache_df[col] = ""
+
+    return cache_df
+
+
+def spectral_save_descriptor_cache(cache_df, spectrum_type="IR"):
+    """
+    Saves the per-spectrum descriptor cache.
+    """
+    if cache_df is None:
+        cache_df = pd.DataFrame()
+
+    cache_file = spectral_descriptor_cache_file(spectrum_type)
+    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+
+    with SPECTRA_DESCRIPTOR_CACHE_LOCK:
+        cache_df.to_csv(cache_file, index=False, encoding="utf-8-sig")
+
+
+def spectral_cache_value_matches(actual, expected):
+    if isinstance(expected, bool):
+        actual_norm = str(actual).strip().lower()
+        return actual_norm in ["true", "1", "yes", "y"] if expected else actual_norm in ["false", "0", "no", "n", ""]
+
+    if isinstance(expected, (int, float)):
+        try:
+            return abs(float(actual) - float(expected)) <= 1e-9
+        except Exception:
+            return False
+
+    return str(actual).strip() == str(expected).strip()
+
+
+def spectral_filter_descriptor_cache_by_settings(cache_df, settings):
+    if cache_df is None or cache_df.empty:
+        return pd.DataFrame()
+
+    work = cache_df.copy()
+
+    for col, expected in settings.items():
+        if col not in work.columns:
+            return pd.DataFrame()
+
+        mask = work[col].apply(lambda actual: spectral_cache_value_matches(actual, expected))
+        work = work[mask].copy()
+
+        if work.empty:
+            return pd.DataFrame()
+
+    return work
+
+
+def spectral_find_cached_descriptor_row(spectrum_record, descriptor_settings=None):
+    """
+    Finds a cached descriptor row for a spectrum record and calculation settings.
+    """
+    if spectrum_record is None:
+        return None
+
+    spectrum_type = spectra_normalize_spectrum_type(
+        spectrum_record.get("spectrum_type", "")
+        or spectrum_record.get("descriptor_spectrum_type", "")
+        or "IR"
+    )
+
+    cache_df = spectral_load_descriptor_cache(spectrum_type)
+
+    if cache_df.empty:
+        return None
+
+    if descriptor_settings:
+        cache_df = spectral_filter_descriptor_cache_by_settings(
+            cache_df,
+            descriptor_settings
+        )
+
+        if cache_df.empty:
+            return None
+
+    spectrum_id = str(spectrum_record.get("spectrum_id", "")).strip()
+    inchikey = str(spectrum_record.get("inchikey", "")).strip()
+    canonical_smiles = str(spectrum_record.get("canonical_smiles", "")).strip()
+
+    found = pd.DataFrame()
+
+    if spectrum_id and "spectrum_id" in cache_df.columns:
+        found = cache_df[cache_df["spectrum_id"].astype(str).str.strip() == spectrum_id].copy()
+
+    if found.empty and inchikey and "inchikey" in cache_df.columns:
+        found = cache_df[cache_df["inchikey"].astype(str).str.strip() == inchikey].copy()
+
+    if found.empty and canonical_smiles and "canonical_smiles" in cache_df.columns:
+        found = cache_df[
+            cache_df["canonical_smiles"].astype(str).str.strip() == canonical_smiles
+        ].copy()
+
+    if found.empty:
+        return None
+
+    return found.iloc[-1].to_dict()
+
+
+def spectral_make_descriptor_row_metadata(compound, spectrum_record, processed_file):
+    return {
+        "row_index": compound.get("row_index", ""),
+        "compound_id": compound.get("compound_id", ""),
+        "name": compound.get("name", ""),
+        "input_smiles": compound.get("input_smiles", ""),
+        "canonical_smiles": compound.get("canonical_smiles", ""),
+        "inchikey": compound.get("inchikey", ""),
+        "spectrum_type": spectra_normalize_spectrum_type(
+            spectrum_record.get("spectrum_type", "")
+        ),
+        "spectrum_id": spectrum_record.get("spectrum_id", ""),
+        "spectrum_source": spectrum_record.get("source", ""),
+        "spectrum_source_database": spectrum_record.get("source_database", ""),
+        "spectrum_phase": spectrum_record.get("phase", ""),
+        "spectrum_phase_norm": spectrum_record.get("spectrum_phase_norm", ""),
+        "spectrum_intensity_type": spectrum_record.get("intensity_type", ""),
+        "spectrum_is_experimental": spectrum_record.get("is_experimental", ""),
+        "spectrum_is_quantitative": spectrum_record.get("is_quantitative", ""),
+        "spectrum_selection_reason": spectrum_record.get("spectrum_selection_reason", ""),
+        "processed_file": processed_file,
+    }
+
+
+def spectral_descriptor_columns_from_row(row, spectrum_type="IR"):
+    prefix = spectra_normalize_spectrum_type(spectrum_type)
+    descriptor_prefixes = (
+        f"{prefix}_GRID_",
+        f"{prefix}_BIN_",
+        f"{prefix}_BAND_",
+    )
+
+    return [
+        c for c in row.keys()
+        if any(str(c).startswith(p) for p in descriptor_prefixes)
+    ]
+
+
+def spectral_prepare_cached_descriptor_row(cached_row, compound, spectrum_record, processed_file):
+    """
+    Converts a cached per-spectrum descriptor row to the current dataset row.
+    """
+    if cached_row is None:
+        return None
+
+    spectrum_type = spectra_normalize_spectrum_type(
+        spectrum_record.get("spectrum_type", "")
+    )
+    metadata = spectral_make_descriptor_row_metadata(
+        compound,
+        spectrum_record,
+        processed_file
+    )
+
+    desc = dict(metadata)
+
+    for col in spectral_descriptor_columns_from_row(cached_row, spectrum_type=spectrum_type):
+        value = cached_row.get(col, np.nan)
+        desc[col] = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+
+    if len(desc) == len(metadata):
+        return None
+
+    desc["spectral_descriptor_source"] = "cached_descriptor"
+
+    return desc
+
+
+def spectral_values_norm_from_descriptor_row(desc, spectrum_type="IR"):
+    """
+    Rebuilds a normalized grid vector from GRID descriptors when available.
+    """
+    prefix = f"{spectra_normalize_spectrum_type(spectrum_type)}_GRID_"
+    pairs = []
+
+    for col, value in desc.items():
+        col_str = str(col)
+
+        if not col_str.startswith(prefix):
+            continue
+
+        try:
+            wn = int(col_str.replace(prefix, "", 1))
+            val = float(value)
+        except Exception:
+            continue
+
+        pairs.append((wn, val))
+
+    if not pairs:
+        return None
+
+    pairs = sorted(pairs, key=lambda x: x[0])
+    return np.asarray([p[1] for p in pairs], dtype=float)
+
+
+def spectral_update_descriptor_cache(row, descriptor_settings, spectrum_type="IR"):
+    """
+    Adds or replaces one ready descriptor row in the per-spectrum cache.
+    """
+    if row is None or not isinstance(row, dict):
+        return
+
+    descriptor_cols = spectral_descriptor_columns_from_row(row, spectrum_type=spectrum_type)
+
+    if not descriptor_cols:
+        return
+
+    cache_row = dict(row)
+    cache_row.update(descriptor_settings or {})
+    cache_row["descriptor_cached_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    drop_cols = ["row_index", "compound_id", "name", "input_smiles"]
+
+    for col in drop_cols:
+        cache_row.pop(col, None)
+
+    cache_df = spectral_load_descriptor_cache(spectrum_type)
+    cache_row_df = pd.DataFrame([cache_row])
+
+    if cache_df.empty:
+        cache_df = cache_row_df
+    else:
+        cache_df = pd.concat([cache_df, cache_row_df], ignore_index=True)
+
+    dedupe_cols = [
+        c for c in [
+            "spectrum_id",
+            "inchikey",
+            "descriptor_spectrum_type",
+            "descriptor_wn_min",
+            "descriptor_wn_max",
+            "descriptor_step",
+            "descriptor_normalization",
+            "descriptor_invert_signal",
+            "descriptor_use_grid",
+            "descriptor_use_binary_fp",
+            "descriptor_use_binned_numeric",
+            "descriptor_binary_window",
+            "descriptor_binary_threshold",
+            "descriptor_numeric_window",
+        ]
+        if c in cache_df.columns
+    ]
+
+    if dedupe_cols:
+        cache_df = cache_df.drop_duplicates(subset=dedupe_cols, keep="last")
+
+    spectral_save_descriptor_cache(cache_df, spectrum_type=spectrum_type)
+
+
+def spectral_spectrum_record_from_cached_descriptor_row(cached_row, spectrum_type="IR"):
+    """
+    Builds a spectrum-like record from a cached descriptor row.
+    """
+    cached_row = dict(cached_row or {})
+
+    phase = (
+        cached_row.get("spectrum_phase", "")
+        or cached_row.get("phase", "")
+        or cached_row.get("spectrum_phase_norm", "")
+    )
+
+    source = (
+        cached_row.get("spectrum_source", "")
+        or cached_row.get("source", "")
+    )
+
+    source_database = (
+        cached_row.get("spectrum_source_database", "")
+        or cached_row.get("source_database", "")
+    )
+
+    intensity_type = (
+        cached_row.get("spectrum_intensity_type", "")
+        or cached_row.get("intensity_type", "")
+    )
+
+    return {
+        "spectrum_id": cached_row.get("spectrum_id", ""),
+        "inchikey": cached_row.get("inchikey", ""),
+        "canonical_smiles": cached_row.get("canonical_smiles", ""),
+        "spectrum_type": spectra_normalize_spectrum_type(
+            cached_row.get("spectrum_type", "")
+            or cached_row.get("descriptor_spectrum_type", "")
+            or spectrum_type
+        ),
+        "source": source,
+        "source_database": source_database,
+        "phase": phase,
+        "spectrum_phase_norm": (
+            cached_row.get("spectrum_phase_norm", "")
+            or spectral_normalize_phase_value(phase)
+        ),
+        "intensity_type": intensity_type,
+        "is_experimental": (
+            cached_row.get("spectrum_is_experimental", "")
+            or cached_row.get("is_experimental", "")
+        ),
+        "is_quantitative": (
+            cached_row.get("spectrum_is_quantitative", "")
+            or cached_row.get("is_quantitative", "")
+        ),
+        "spectrum_selection_reason": (
+            cached_row.get("spectrum_selection_reason", "")
+            or "selected_ready_descriptor"
+        ),
+        "processed_file": cached_row.get("processed_file", ""),
+    }
+
+
+def spectral_filter_ready_descriptor_candidates(
+    cache_df,
+    phase_mode="prefer_gas",
+    allowed_phases=None,
+    allowed_sources=None,
+    allowed_intensity_types=None,
+    prefer_quantitative=False,
+    experimental_only=True,
+):
+    """
+    Applies the same practical filters to ready descriptors where metadata exists.
+    """
+    if cache_df is None or cache_df.empty:
+        return pd.DataFrame()
+
+    work = cache_df.copy()
+
+    for col in [
+        "spectrum_phase",
+        "phase",
+        "spectrum_source",
+        "source",
+        "spectrum_intensity_type",
+        "intensity_type",
+        "spectrum_is_experimental",
+        "is_experimental",
+        "spectrum_is_quantitative",
+        "is_quantitative",
+        "spectrum_id",
+    ]:
+        if col not in work.columns:
+            work[col] = ""
+
+    phase_values = work["spectrum_phase"].where(
+        work["spectrum_phase"].astype(str).str.strip() != "",
+        work["phase"]
+    )
+    source_values = work["spectrum_source"].where(
+        work["spectrum_source"].astype(str).str.strip() != "",
+        work["source"]
+    )
+    intensity_values = work["spectrum_intensity_type"].where(
+        work["spectrum_intensity_type"].astype(str).str.strip() != "",
+        work["intensity_type"]
+    )
+    experimental_values = work["spectrum_is_experimental"].where(
+        work["spectrum_is_experimental"].astype(str).str.strip() != "",
+        work["is_experimental"]
+    )
+    quantitative_values = work["spectrum_is_quantitative"].where(
+        work["spectrum_is_quantitative"].astype(str).str.strip() != "",
+        work["is_quantitative"]
+    )
+
+    work["_phase_norm"] = phase_values.apply(spectral_normalize_phase_value)
+    work["_phase_priority"] = work["_phase_norm"].apply(spectral_phase_priority_score)
+    work["_source_norm"] = source_values.apply(spectral_normalize_source_value)
+    work["_intensity_type_norm"] = (
+        intensity_values.astype(str).str.strip().str.lower().replace("", "unknown")
+    )
+
+    if experimental_only:
+        exp_norm = experimental_values.astype(str).str.lower().str.strip()
+        experimental_ok = ["true", "1", "yes", "y", "РґР°", "experimental", ""]
+        work = work[exp_norm.isin(experimental_ok)].copy()
+
+        if work.empty:
+            return pd.DataFrame()
+
+    if allowed_sources is not None:
+        allowed_sources_norm = [
+            spectral_normalize_source_value(x)
+            for x in allowed_sources
+        ]
+        work = work[work["_source_norm"].isin(allowed_sources_norm)].copy()
+
+        if work.empty:
+            return pd.DataFrame()
+
+    if allowed_intensity_types is not None:
+        allowed_intensity_types_norm = [
+            str(x).strip().lower()
+            for x in allowed_intensity_types
+        ]
+        work = work[work["_intensity_type_norm"].isin(allowed_intensity_types_norm)].copy()
+
+        if work.empty:
+            return pd.DataFrame()
+
+    phase_mode = str(phase_mode).strip().lower()
+
+    if phase_mode == "only_gas":
+        work = work[work["_phase_norm"] == "gas"].copy()
+
+        if work.empty:
+            return pd.DataFrame()
+
+    elif phase_mode == "manual":
+        if allowed_phases is None or len(allowed_phases) == 0:
+            return pd.DataFrame()
+
+        allowed_phases_norm = [
+            spectral_normalize_phase_value(x)
+            for x in allowed_phases
+        ]
+        work = work[work["_phase_norm"].isin(allowed_phases_norm)].copy()
+
+        if work.empty:
+            return pd.DataFrame()
+
+    if "confidence_level" in work.columns:
+        conf = work["confidence_level"].astype(str).str.lower().str.strip()
+        confidence_priority_map = {
+            "high": 0,
+            "spectral_page_found": 10,
+            "medium": 20,
+            "low": 40,
+            "error": 90,
+            "": 50,
+        }
+        work["_confidence_priority"] = conf.map(confidence_priority_map).fillna(50)
+    else:
+        work["_confidence_priority"] = 50
+
+    quant_norm = quantitative_values.astype(str).str.lower().str.strip()
+    work["_quant_priority"] = np.where(
+        quant_norm.isin(["true", "1", "yes", "y", "РґР°"]),
+        0 if prefer_quantitative else 1,
+        1 if prefer_quantitative else 0
+    )
+
+    return work.sort_values(
+        by=[
+            "_phase_priority",
+            "_quant_priority",
+            "_confidence_priority",
+            "spectrum_id",
+        ],
+        ascending=[True, True, True, True]
+    ).reset_index(drop=True)
+
+
+def spectral_build_descriptors_from_ready_cache_for_dataset(
+    input_df,
+    smiles_col="SMILES",
+    spectrum_type="IR",
+    wn_min=550,
+    wn_max=3798,
+    step=4,
+    normalization="min-max",
+    invert_signal=False,
+    use_grid=True,
+    use_binary_fp=True,
+    use_binned_numeric=True,
+    binary_window=20,
+    binary_threshold=0.10,
+    numeric_window=100,
+    use_svd=True,
+    svd_components=10,
+    spectrum_phase_mode="prefer_gas",
+    allowed_phases=None,
+    allowed_sources=None,
+    allowed_intensity_types=None,
+    prefer_quantitative=False,
+    experimental_only=True,
+    progress_callback=None
+):
+    """
+    Builds a dataset descriptor table only from ready per-spectrum descriptors.
+    No processed spectra are downloaded or read.
+    """
+    compounds = spectra_prepare_compounds_from_df(input_df, smiles_col=smiles_col)
+    descriptor_settings = spectral_descriptor_cache_settings(
+        spectrum_type=spectrum_type,
+        wn_min=wn_min,
+        wn_max=wn_max,
+        step=step,
+        normalization=normalization,
+        invert_signal=invert_signal,
+        use_grid=use_grid,
+        use_binary_fp=use_binary_fp,
+        use_binned_numeric=use_binned_numeric,
+        binary_window=binary_window,
+        binary_threshold=binary_threshold,
+        numeric_window=numeric_window,
+    )
+
+    cache_df = spectral_load_descriptor_cache(spectrum_type)
+    cache_df = spectral_filter_descriptor_cache_by_settings(
+        cache_df,
+        descriptor_settings
+    )
+    cache_df = spectral_filter_ready_descriptor_candidates(
+        cache_df,
+        phase_mode=spectrum_phase_mode,
+        allowed_phases=allowed_phases,
+        allowed_sources=allowed_sources,
+        allowed_intensity_types=allowed_intensity_types,
+        prefer_quantitative=prefer_quantitative,
+        experimental_only=experimental_only,
+    )
+
+    rows = []
+    matrix_rows = []
+    matrix_meta = []
+
+    report = {
+        "total_compounds": len(compounds),
+        "with_spectrum": 0,
+        "without_spectrum": 0,
+        "parse_errors": 0,
+        "used_spectra": [],
+        "used_phases": {},
+        "spectrum_selection_reasons": {},
+        "descriptor_cache_hits": 0,
+        "descriptor_cache_misses": 0,
+        "ready_descriptor_cache_rows": int(len(cache_df)),
+        "ready_descriptor_mode": True,
+        "spectra_bank_status": spectra_remote_bank_status(),
+    }
+
+    total_compounds = len(compounds)
+
+    for processed_count, (_, compound) in enumerate(compounds.iterrows(), start=1):
+        inchikey = str(compound.get("inchikey", "")).strip()
+        canonical_smiles = str(compound.get("canonical_smiles", "")).strip()
+
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    processed_count - 1,
+                    total_compounds,
+                    "loading_ready_descriptors",
+                    {
+                        "inchikey": inchikey,
+                        "canonical_smiles": canonical_smiles,
+                    }
+                )
+            except Exception:
+                pass
+
+        found = pd.DataFrame()
+
+        if not cache_df.empty and inchikey and "inchikey" in cache_df.columns:
+            found = cache_df[
+                cache_df["inchikey"].astype(str).str.strip() == inchikey
+            ].copy()
+
+        if found.empty and not cache_df.empty and canonical_smiles and "canonical_smiles" in cache_df.columns:
+            found = cache_df[
+                cache_df["canonical_smiles"].astype(str).str.strip() == canonical_smiles
+            ].copy()
+
+        if found.empty:
+            report["without_spectrum"] += 1
+            report["descriptor_cache_misses"] += 1
+
+            if progress_callback is not None:
+                try:
+                    progress_callback(
+                        processed_count,
+                        total_compounds,
+                        "no_ready_descriptors",
+                        {
+                            "inchikey": inchikey,
+                            "canonical_smiles": canonical_smiles,
+                        }
+                    )
+                except Exception:
+                    pass
+
+            continue
+
+        cached_row = found.iloc[0].to_dict()
+        spectrum_record = spectral_spectrum_record_from_cached_descriptor_row(
+            cached_row,
+            spectrum_type=spectrum_type
+        )
+        desc = spectral_prepare_cached_descriptor_row(
+            cached_row,
+            compound,
+            spectrum_record,
+            spectrum_record.get("processed_file", "")
+        )
+
+        if desc is None:
+            report["parse_errors"] += 1
+            continue
+
+        rows.append(desc)
+        report["with_spectrum"] += 1
+        report["descriptor_cache_hits"] += 1
+        report["used_spectra"].append(spectrum_record.get("spectrum_id", ""))
+
+        values_norm_cached = spectral_values_norm_from_descriptor_row(
+            desc,
+            spectrum_type=spectrum_type
+        )
+
+        if values_norm_cached is not None:
+            matrix_rows.append(values_norm_cached)
+            matrix_meta.append({
+                "row_index": compound.get("row_index", ""),
+                "compound_id": compound.get("compound_id", ""),
+                "name": compound.get("name", ""),
+                "canonical_smiles": canonical_smiles,
+                "inchikey": inchikey,
+                "spectrum_id": spectrum_record.get("spectrum_id", ""),
+            })
+
+        used_phase = str(
+            spectrum_record.get("spectrum_phase_norm", "unknown")
+        ).strip() or "unknown"
+        report["used_phases"][used_phase] = report["used_phases"].get(used_phase, 0) + 1
+
+        selection_reason = str(
+            spectrum_record.get("spectrum_selection_reason", "selected_ready_descriptor")
+        ).strip() or "selected_ready_descriptor"
+        report["spectrum_selection_reasons"][selection_reason] = (
+            report["spectrum_selection_reasons"].get(selection_reason, 0) + 1
+        )
+
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    processed_count,
+                    total_compounds,
+                    "done",
+                    {
+                        "inchikey": inchikey,
+                        "canonical_smiles": canonical_smiles,
+                        "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                        "descriptor_source": "ready_descriptor_cache",
+                    }
+                )
+            except Exception:
+                pass
+
+    descriptors_df = pd.DataFrame(rows)
+
+    if use_svd and len(matrix_rows) >= 2 and not descriptors_df.empty:
+        X_spec = np.vstack(matrix_rows)
+        max_components = min(
+            int(svd_components),
+            X_spec.shape[0] - 1,
+            X_spec.shape[1] - 1
+        )
+
+        if max_components >= 1:
+            try:
+                svd = TruncatedSVD(n_components=max_components, random_state=42)
+                svd_values = svd.fit_transform(X_spec)
+                svd_df = pd.DataFrame(matrix_meta)
+                prefix = spectra_normalize_spectrum_type(spectrum_type)
+
+                for i in range(max_components):
+                    svd_df[f"{prefix}_SVD_{i + 1}"] = svd_values[:, i]
+
+                descriptors_df = descriptors_df.merge(
+                    svd_df,
+                    on=[
+                        "row_index",
+                        "compound_id",
+                        "name",
+                        "canonical_smiles",
+                        "inchikey",
+                        "spectrum_id",
+                    ],
+                    how="left"
+                )
+                report["svd_components_created"] = max_components
+                report["svd_explained_variance_sum"] = float(
+                    np.sum(svd.explained_variance_ratio_)
+                )
+            except Exception as e:
+                report["svd_error"] = str(e)
+
+    report["without_spectrum"] = (
+        report["total_compounds"]
+        - report["with_spectrum"]
+        - report["parse_errors"]
+    )
+
+    if report["without_spectrum"] < 0:
+        report["without_spectrum"] = 0
+
+    if descriptors_df.empty:
+        return descriptors_df, report
+
+    return descriptors_df.reset_index(drop=True), report
+
+
+def spectral_build_descriptor_cache_for_all_indexed_spectra(
+    spectrum_type="IR",
+    wn_min=550,
+    wn_max=3798,
+    step=4,
+    normalization="min-max",
+    invert_signal=False,
+    use_grid=True,
+    use_binary_fp=True,
+    use_binned_numeric=True,
+    binary_window=20,
+    binary_threshold=0.10,
+    numeric_window=100,
+    active_only=True,
+    progress_callback=None
+):
+    """
+    Calculates ready per-spectrum descriptors for all indexed local spectra.
+    The result is appended to the project descriptor cache file.
+    """
+    spectrum_type_norm = spectra_normalize_spectrum_type(spectrum_type)
+    descriptor_settings = spectral_descriptor_cache_settings(
+        spectrum_type=spectrum_type_norm,
+        wn_min=wn_min,
+        wn_max=wn_max,
+        step=step,
+        normalization=normalization,
+        invert_signal=invert_signal,
+        use_grid=use_grid,
+        use_binary_fp=use_binary_fp,
+        use_binned_numeric=use_binned_numeric,
+        binary_window=binary_window,
+        binary_threshold=binary_threshold,
+        numeric_window=numeric_window,
+    )
+
+    index_df = spectra_load_index()
+
+    report = {
+        "spectrum_type": spectrum_type_norm,
+        "total_index_rows": 0,
+        "processed": 0,
+        "cached": 0,
+        "missing_processed_file": 0,
+        "parse_errors": 0,
+        "empty_grid": 0,
+        "cache_file": spectral_descriptor_cache_file(spectrum_type_norm),
+        "descriptor_settings": descriptor_settings,
+    }
+
+    if index_df.empty:
+        return pd.DataFrame(), report
+
+    work = index_df.copy()
+
+    for col in [
+        "spectrum_type",
+        "active",
+        "processed_file",
+        "spectrum_id",
+        "canonical_smiles",
+        "inchikey",
+        "compound_id",
+        "name",
+        "source",
+        "source_database",
+        "phase",
+        "intensity_type",
+        "is_experimental",
+        "is_quantitative",
+    ]:
+        if col not in work.columns:
+            work[col] = ""
+
+    work["_spectrum_type_norm"] = work["spectrum_type"].apply(
+        spectra_normalize_spectrum_type
+    )
+    work = work[work["_spectrum_type_norm"] == spectrum_type_norm].copy()
+
+    if active_only:
+        active_values = ["true", "1", "yes", "y", "РґР°", "active", ""]
+        work = work[
+            work["active"].astype(str).str.lower().str.strip().isin(active_values)
+        ].copy()
+
+    work = work.reset_index(drop=True)
+    report["total_index_rows"] = int(len(work))
+    rows = []
+    total = len(work)
+
+    for pos, (_, spectrum_record_row) in enumerate(work.iterrows(), start=1):
+        spectrum_record = spectrum_record_row.to_dict()
+        processed_file = str(spectrum_record.get("processed_file", "")).strip()
+
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    pos - 1,
+                    total,
+                    "loading_spectrum",
+                    {
+                        "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                        "processed_file": processed_file,
+                    }
+                )
+            except Exception:
+                pass
+
+        real_processed_path = spectral_resolve_processed_spectrum_path(
+            processed_file,
+            spectrum_record=spectrum_record,
+            allow_remote=False
+        )
+
+        if not real_processed_path:
+            report["missing_processed_file"] += 1
+            continue
+
+        spectrum_df = spectral_load_processed_spectrum(
+            real_processed_path,
+            spectrum_record=spectrum_record
+        )
+
+        if spectrum_df.empty:
+            report["parse_errors"] += 1
+            continue
+
+        grid, values = spectral_interpolate_to_grid(
+            spectrum_df,
+            wn_min=wn_min,
+            wn_max=wn_max,
+            step=step
+        )
+
+        if len(grid) == 0:
+            report["empty_grid"] += 1
+            continue
+
+        values_norm = spectral_normalize_values(
+            values,
+            method=normalization,
+            invert=invert_signal
+        )
+
+        compound = {
+            "row_index": "",
+            "compound_id": spectrum_record.get("compound_id", ""),
+            "name": spectrum_record.get("name", ""),
+            "input_smiles": spectrum_record.get("canonical_smiles", ""),
+            "canonical_smiles": spectrum_record.get("canonical_smiles", ""),
+            "inchikey": spectrum_record.get("inchikey", ""),
+        }
+
+        desc = spectral_make_descriptor_row_metadata(
+            compound,
+            spectrum_record,
+            processed_file
+        )
+
+        if use_grid:
+            desc.update(
+                spectral_make_grid_descriptors(
+                    grid,
+                    values_norm,
+                    prefix=f"{spectrum_type_norm}_GRID"
+                )
+            )
+
+        if use_binary_fp:
+            desc.update(
+                spectral_make_binary_fp(
+                    grid,
+                    values_norm,
+                    window_size=binary_window,
+                    threshold=binary_threshold,
+                    prefix=f"{spectrum_type_norm}_BIN"
+                )
+            )
+
+        if use_binned_numeric:
+            desc.update(
+                spectral_make_binned_numeric_descriptors(
+                    grid,
+                    values_norm,
+                    window_size=numeric_window,
+                    prefix=f"{spectrum_type_norm}_BAND"
+                )
+            )
+
+        spectral_update_descriptor_cache(
+            desc,
+            descriptor_settings,
+            spectrum_type=spectrum_type_norm
+        )
+
+        rows.append(desc)
+        report["processed"] += 1
+        report["cached"] += 1
+
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    pos,
+                    total,
+                    "done",
+                    {
+                        "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                        "processed_file": processed_file,
+                    }
+                )
+            except Exception:
+                pass
+
+    return pd.DataFrame(rows), report
+
+
 def spectral_get_active_spectrum_for_compound(inchikey, canonical_smiles="", spectrum_type="IR"):
     """
     Возвращает активную запись спектра для вещества.
@@ -6258,7 +7337,9 @@ def spectral_get_best_spectrum_for_compound(
     allowed_sources=None,
     allowed_intensity_types=None,
     prefer_quantitative=False,
-    experimental_only=True
+    experimental_only=True,
+    descriptor_settings=None,
+    progress_callback=None
 ):
     """
     Выбирает лучший спектр вещества для расчёта дескрипторов.
@@ -6403,16 +7484,28 @@ def spectral_get_best_spectrum_for_compound(
     # ------------------------------------------------------------
     # Проверка наличия processed_file
 
+    work["_descriptor_exists_priority"] = 1
     work["_processed_exists_priority"] = 1
 
     for idx, row in work.iterrows():
+        row_dict = row.to_dict()
+
+        if descriptor_settings:
+            cached_row = spectral_find_cached_descriptor_row(
+                row_dict,
+                descriptor_settings=descriptor_settings
+            )
+
+            if cached_row is not None:
+                work.loc[idx, "_descriptor_exists_priority"] = 0
+
         processed_file = str(row.get("processed_file", "")).strip()
 
         if processed_file:
             exists = bool(
                 spectral_resolve_processed_spectrum_path(
                     processed_file,
-                    spectrum_record=row.to_dict(),
+                    spectrum_record=row_dict,
                     allow_remote=False
                 )
             )
@@ -6420,7 +7513,7 @@ def spectral_get_best_spectrum_for_compound(
             if not exists:
                 exists = spectra_find_remote_manifest_record(
                     processed_file,
-                    spectrum_record=row.to_dict()
+                    spectrum_record=row_dict
                 ) is not None
 
             if exists:
@@ -6431,13 +7524,14 @@ def spectral_get_best_spectrum_for_compound(
 
     work = work.sort_values(
         by=[
+            "_descriptor_exists_priority",
             "_processed_exists_priority",
             "_phase_priority",
             "_quant_priority",
             "_confidence_priority",
             "spectrum_id",
         ],
-        ascending=[True, True, True, True, True]
+        ascending=[True, True, True, True, True, True]
     ).reset_index(drop=True)
 
     selected = work.iloc[0].to_dict()
@@ -6483,7 +7577,8 @@ def spectral_build_descriptors_for_dataset(
     allowed_sources=None,
     allowed_intensity_types=None,
     prefer_quantitative=False,
-    experimental_only=True
+    experimental_only=True,
+    progress_callback=None
 ):
     """
     Главная функция:
@@ -6495,6 +7590,20 @@ def spectral_build_descriptors_for_dataset(
     compounds = spectra_prepare_compounds_from_df(
         input_df,
         smiles_col=smiles_col
+    )
+    descriptor_settings = spectral_descriptor_cache_settings(
+        spectrum_type=spectrum_type,
+        wn_min=wn_min,
+        wn_max=wn_max,
+        step=step,
+        normalization=normalization,
+        invert_signal=invert_signal,
+        use_grid=use_grid,
+        use_binary_fp=use_binary_fp,
+        use_binned_numeric=use_binned_numeric,
+        binary_window=binary_window,
+        binary_threshold=binary_threshold,
+        numeric_window=numeric_window,
     )
 
     rows = []
@@ -6509,12 +7618,30 @@ def spectral_build_descriptors_for_dataset(
         "used_spectra": [],
         "used_phases": {},
         "spectrum_selection_reasons": {},
+        "descriptor_cache_hits": 0,
+        "descriptor_cache_misses": 0,
         "spectra_bank_status": spectra_remote_bank_status(),
     }
 
-    for _, compound in compounds.iterrows():
+    total_compounds = len(compounds)
+
+    for processed_count, (_, compound) in enumerate(compounds.iterrows(), start=1):
         inchikey = compound.get("inchikey", "")
         canonical_smiles = compound.get("canonical_smiles", "")
+
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    processed_count - 1,
+                    total_compounds,
+                    "searching",
+                    {
+                        "inchikey": inchikey,
+                        "canonical_smiles": canonical_smiles,
+                    }
+                )
+            except Exception:
+                pass
 
         spectrum_record = spectral_get_best_spectrum_for_compound(
             inchikey=inchikey,
@@ -6525,14 +7652,126 @@ def spectral_build_descriptors_for_dataset(
             allowed_sources=allowed_sources,
             allowed_intensity_types=allowed_intensity_types,
             prefer_quantitative=prefer_quantitative,
-            experimental_only=experimental_only
+            experimental_only=experimental_only,
+            descriptor_settings=descriptor_settings
         )
 
         if spectrum_record is None:
             report["without_spectrum"] += 1
+            if progress_callback is not None:
+                try:
+                    progress_callback(
+                        processed_count,
+                        total_compounds,
+                        "no_spectrum",
+                        {
+                            "inchikey": inchikey,
+                            "canonical_smiles": canonical_smiles,
+                        }
+                    )
+                except Exception:
+                    pass
             continue
 
         processed_file = spectrum_record.get("processed_file", "")
+
+        cached_descriptor_row = spectral_find_cached_descriptor_row(
+            spectrum_record,
+            descriptor_settings=descriptor_settings
+        )
+
+        if cached_descriptor_row is not None:
+            desc = spectral_prepare_cached_descriptor_row(
+                cached_descriptor_row,
+                compound,
+                spectrum_record,
+                processed_file
+            )
+
+            if desc is not None:
+                rows.append(desc)
+
+                values_norm_cached = spectral_values_norm_from_descriptor_row(
+                    desc,
+                    spectrum_type=spectrum_type
+                )
+
+                if values_norm_cached is not None:
+                    matrix_rows.append(values_norm_cached)
+                    matrix_meta.append({
+                        "row_index": compound.get("row_index", ""),
+                        "compound_id": compound.get("compound_id", ""),
+                        "name": compound.get("name", ""),
+                        "canonical_smiles": canonical_smiles,
+                        "inchikey": inchikey,
+                        "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                    })
+
+                report["with_spectrum"] += 1
+                report["descriptor_cache_hits"] += 1
+                report["used_spectra"].append(spectrum_record.get("spectrum_id", ""))
+
+                used_phase = str(
+                    spectrum_record.get(
+                        "spectrum_phase_norm",
+                        spectrum_record.get("phase", "unknown")
+                    )
+                ).strip()
+
+                if not used_phase:
+                    used_phase = "unknown"
+
+                report["used_phases"][used_phase] = (
+                    report["used_phases"].get(used_phase, 0) + 1
+                )
+
+                selection_reason = str(
+                    spectrum_record.get("spectrum_selection_reason", "unknown")
+                ).strip()
+
+                if not selection_reason:
+                    selection_reason = "unknown"
+
+                report["spectrum_selection_reasons"][selection_reason] = (
+                    report["spectrum_selection_reasons"].get(selection_reason, 0) + 1
+                )
+
+                if progress_callback is not None:
+                    try:
+                        progress_callback(
+                            processed_count,
+                            total_compounds,
+                            "done",
+                            {
+                                "inchikey": inchikey,
+                                "canonical_smiles": canonical_smiles,
+                                "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                                "processed_file": processed_file,
+                                "descriptor_source": "cached_descriptor",
+                            }
+                        )
+                    except Exception:
+                        pass
+
+                continue
+
+        report["descriptor_cache_misses"] += 1
+
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    processed_count - 1,
+                    total_compounds,
+                    "loading_spectrum",
+                    {
+                        "inchikey": inchikey,
+                        "canonical_smiles": canonical_smiles,
+                        "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                        "processed_file": processed_file,
+                    }
+                )
+            except Exception:
+                pass
 
         spectrum_df = spectral_load_processed_spectrum(
             processed_file,
@@ -6541,6 +7780,21 @@ def spectral_build_descriptors_for_dataset(
 
         if spectrum_df.empty:
             report["parse_errors"] += 1
+            if progress_callback is not None:
+                try:
+                    progress_callback(
+                        processed_count,
+                        total_compounds,
+                        "parse_error",
+                        {
+                            "inchikey": inchikey,
+                            "canonical_smiles": canonical_smiles,
+                            "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                            "processed_file": processed_file,
+                        }
+                    )
+                except Exception:
+                    pass
             continue
 
         grid, values = spectral_interpolate_to_grid(
@@ -6552,6 +7806,21 @@ def spectral_build_descriptors_for_dataset(
 
         if len(grid) == 0:
             report["parse_errors"] += 1
+            if progress_callback is not None:
+                try:
+                    progress_callback(
+                        processed_count,
+                        total_compounds,
+                        "empty_grid",
+                        {
+                            "inchikey": inchikey,
+                            "canonical_smiles": canonical_smiles,
+                            "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                            "processed_file": processed_file,
+                        }
+                    )
+                except Exception:
+                    pass
             continue
 
         values_norm = spectral_normalize_values(
@@ -6560,25 +7829,11 @@ def spectral_build_descriptors_for_dataset(
             invert=invert_signal
         )
 
-        desc = {
-            "row_index": compound.get("row_index", ""),
-            "compound_id": compound.get("compound_id", ""),
-            "name": compound.get("name", ""),
-            "input_smiles": compound.get("input_smiles", ""),
-            "canonical_smiles": canonical_smiles,
-            "inchikey": inchikey,
-            "spectrum_type": spectra_normalize_spectrum_type(spectrum_type),
-            "spectrum_id": spectrum_record.get("spectrum_id", ""),
-            "spectrum_source": spectrum_record.get("source", ""),
-            "spectrum_source_database": spectrum_record.get("source_database", ""),
-            "spectrum_phase": spectrum_record.get("phase", ""),
-            "spectrum_phase_norm": spectrum_record.get("spectrum_phase_norm", ""),
-            "spectrum_intensity_type": spectrum_record.get("intensity_type", ""),
-            "spectrum_is_experimental": spectrum_record.get("is_experimental", ""),
-            "spectrum_is_quantitative": spectrum_record.get("is_quantitative", ""),
-            "spectrum_selection_reason": spectrum_record.get("spectrum_selection_reason", ""),
-            "processed_file": processed_file,
-        }
+        desc = spectral_make_descriptor_row_metadata(
+            compound,
+            spectrum_record,
+            processed_file
+        )
 
         if use_grid:
             desc.update(
@@ -6611,6 +7866,11 @@ def spectral_build_descriptors_for_dataset(
             )
 
         rows.append(desc)
+        spectral_update_descriptor_cache(
+            desc,
+            descriptor_settings,
+            spectrum_type=spectrum_type
+        )
 
         matrix_rows.append(values_norm)
         matrix_meta.append({
@@ -6649,6 +7909,22 @@ def spectral_build_descriptors_for_dataset(
         report["spectrum_selection_reasons"][selection_reason] = (
             report["spectrum_selection_reasons"].get(selection_reason, 0) + 1
         )
+
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    processed_count,
+                    total_compounds,
+                    "done",
+                    {
+                        "inchikey": inchikey,
+                        "canonical_smiles": canonical_smiles,
+                        "spectrum_id": spectrum_record.get("spectrum_id", ""),
+                        "processed_file": processed_file,
+                    }
+                )
+            except Exception:
+                pass
 
     descriptors_df = pd.DataFrame(rows)
 
