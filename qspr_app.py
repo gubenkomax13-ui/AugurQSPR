@@ -3699,6 +3699,11 @@ def spectral_selection_reason_to_text(reason):
 
     return reason
 
+
+def spectral_selection_reason_to_ru(reason):
+    return spectral_selection_reason_to_text(reason)
+
+
 def qspr_connect_spectral_descriptors_to_session(
     current_df,
     target_col,
