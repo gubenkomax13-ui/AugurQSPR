@@ -15,6 +15,10 @@ import pandas as pd
 import streamlit as st
 
 from modules.i18n import t
+from modules.statistics_summary_ui import (
+    build_final_statistics_summary,
+    final_statistics_to_flat_dataframe,
+)
 
 try:
     from rdkit import Chem as _ReportChem
@@ -295,6 +299,12 @@ def render_report_section(context):
                 t('report.include_quality_comment'),
                 value=True,
                 key="report_include_quality_comment"
+            )
+
+            report_include_final_statistics = st.checkbox(
+                t('report.include_final_statistics'),
+                value=True,
+                key="report_include_final_statistics"
             )
     
         if unavailable_report_sections:
@@ -1290,6 +1300,22 @@ def render_report_section(context):
                         t('report.quality_section_title'),
                         "<p>" + escape(" ".join(quality_comment_parts)) + "</p>"
                     )
+
+                # --------------------------------------------------------
+                # 10.2 Final statistics
+
+                if report_include_final_statistics:
+                    try:
+                        final_stats_summary = build_final_statistics_summary(context)
+                        final_stats_df = final_statistics_to_flat_dataframe(final_stats_summary)
+                        if isinstance(final_stats_df, pd.DataFrame) and not final_stats_df.empty:
+                            report_tables["Final statistics"] = final_stats_df
+                            _add_html_section(
+                                t('report.section_final_statistics'),
+                                _df_to_html_table(final_stats_df, max_rows=300),
+                            )
+                    except Exception as exc:
+                        quality_comment_parts.append(t('report.final_statistics_error', error=exc))
     
                 # --------------------------------------------------------
                 # 11. Excel report

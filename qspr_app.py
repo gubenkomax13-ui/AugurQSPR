@@ -42,6 +42,7 @@ from modules.consensus_ui import render_consensus_section
 from modules.diagnostics_ui import render_model_diagnostics_section
 from modules.training_ui import render_training_section
 from modules.report_ui import render_report_section
+from modules.statistics_summary_ui import render_final_statistics_summary
 import time
 
 import streamlit as st
@@ -14393,6 +14394,12 @@ qspr_show_prognostic_training_section(
     get_model_params_from_session=get_model_params_from_session,
     add_log=add_log,
 )
+
+# ------------------------------------------------------------------
+# Final statistics
+
+with st.expander(t("final_stats.expander_title"), expanded=False):
+    render_final_statistics_summary({**globals(), **locals()})
 
 # ------------------------------------------------------------------
 # Report
