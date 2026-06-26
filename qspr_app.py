@@ -4423,17 +4423,18 @@ def qspr_loo_skip_reason(model_name, n_samples):
     model_key = normalize_runtime_name(model_name)
 
     if int(n_samples) > QSPR_LOO_MAX_SAMPLES:
-        return (
-            f"LOO пропущен: {int(n_samples)} объектов. "
-            f"В облачной версии лимит для LOO = {QSPR_LOO_MAX_SAMPLES}; "
-            "используйте K-Fold/hold-out или задайте AUGUR_QSPR_LOO_MAX_SAMPLES."
+        return t(
+            "loo_guard.skip_general",
+            n=int(n_samples),
+            limit=QSPR_LOO_MAX_SAMPLES,
         )
 
     if model_key in QSPR_LOO_HEAVY_MODELS and int(n_samples) > QSPR_LOO_HEAVY_MAX_SAMPLES:
-        return (
-            f"LOO пропущен для тяжёлой модели {model_name}: {int(n_samples)} объектов. "
-            f"В облачной версии лимит для таких моделей = {QSPR_LOO_HEAVY_MAX_SAMPLES}; "
-            "это предотвращает зависание и перезапуск Streamlit Cloud."
+        return t(
+            "loo_guard.skip_heavy",
+            model=model_name,
+            n=int(n_samples),
+            limit=QSPR_LOO_HEAVY_MAX_SAMPLES,
         )
 
     return None
@@ -6652,7 +6653,7 @@ if st.session_state.data is None:
     if os.path.exists(sample_alkanes_path):
         with open(sample_alkanes_path, "rb") as sample_file:
             st.download_button(
-                "Скачать пример XLSX: алканы, T кип. (153.xlsx)",
+                t("upload.sample_alkanes_download"),
                 data=sample_file,
                 file_name="153.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -1238,7 +1238,8 @@
     "csv_read_error": "CSV оқу мүмкін болмады: {error}",
     "unsupported_format": "Тек CSV және XLSX қолданылады.",
     "file_loaded": "Жаңа файл жүктелді: {name}, жолдар: {rows}",
-    "example_header": "📂 `;` бөлгіші бар CSV файлының мысалы:"
+    "example_header": "📂 `;` бөлгіші бар CSV файлының мысалы:",
+    "sample_alkanes_download": "XLSX мысалын жүктеу: алкандар, қайнау температурасы (153.xlsx)"
   },
   "data_prep": {
     "header": "🧭 Модельдеу алдында деректерді дайындау және бақылау модулі",
@@ -2684,5 +2685,9 @@
     "model_loaded_short": "Модель жүктелді.",
     "model_load_error": "Модельді жүктеу мүмкін болмады: {error}",
     "active_model_caption": "Белсенді модель: {model}; қасиет: {target}; дескрипторлар: {count}."
+  },
+  "loo_guard": {
+    "skip_general": "LOO өткізіліп жіберілді: {n} қосылыс. Бұлттық нұсқада LOO шегі = {limit}; K-Fold/hold-out қолданыңыз немесе AUGUR_QSPR_LOO_MAX_SAMPLES орнатыңыз.",
+    "skip_heavy": "Ауыр модель {model} үшін LOO өткізіліп жіберілді: {n} қосылыс. Бұлттық нұсқада мұндай модельдер үшін шек = {limit}; бұл Streamlit Cloud-тың тұрып қалуын және қайта іске қосылуын болдырмайды."
   }
 }

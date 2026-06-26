@@ -1238,7 +1238,8 @@
     "csv_read_error": "Не удалось прочитать CSV: {error}",
     "unsupported_format": "Поддерживаются только CSV и XLSX.",
     "file_loaded": "Загружен новый файл: {name}, строк: {rows}",
-    "example_header": "📂 Пример файла CSV с разделителем `;`:"
+    "example_header": "📂 Пример файла CSV с разделителем `;`:",
+    "sample_alkanes_download": "Скачать пример XLSX: алканы, T кип. (153.xlsx)"
   },
   "data_prep": {
     "header": "🧭 Модуль подготовки и контроля данных перед моделированием",
@@ -2684,5 +2685,9 @@
     "model_loaded_short": "Модель загружена.",
     "model_load_error": "Не удалось загрузить модель: {error}",
     "active_model_caption": "Активная модель: {model}; свойство: {target}; дескрипторов: {count}."
+  },
+  "loo_guard": {
+    "skip_general": "LOO пропущен: {n} объектов. В облачной версии лимит для LOO = {limit}; используйте K-Fold/hold-out или задайте AUGUR_QSPR_LOO_MAX_SAMPLES.",
+    "skip_heavy": "LOO пропущен для тяжёлой модели {model}: {n} объектов. В облачной версии лимит для таких моделей = {limit}; это предотвращает зависание и перезапуск Streamlit Cloud."
   }
 }

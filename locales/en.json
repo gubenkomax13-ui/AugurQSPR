@@ -1238,7 +1238,8 @@
     "csv_read_error": "Could not read CSV: {error}",
     "unsupported_format": "Only CSV and XLSX are supported.",
     "file_loaded": "New file loaded: {name}, rows: {rows}",
-    "example_header": "📂 Example CSV file with delimiter `;`:"
+    "example_header": "📂 Example CSV file with delimiter `;`:",
+    "sample_alkanes_download": "Download XLSX example: alkanes, boiling point (153.xlsx)"
   },
   "data_prep": {
     "header": "🧭 Data preparation and quality control module before modelling",
@@ -2684,5 +2685,9 @@
     "model_loaded_short": "Model loaded.",
     "model_load_error": "Could not load the model: {error}",
     "active_model_caption": "Active model: {model}; property: {target}; descriptors: {count}."
+  },
+  "loo_guard": {
+    "skip_general": "LOO skipped: {n} compounds. In the cloud version, the LOO limit is {limit}; use K-Fold/hold-out or set AUGUR_QSPR_LOO_MAX_SAMPLES.",
+    "skip_heavy": "LOO skipped for heavy model {model}: {n} compounds. In the cloud version, the limit for these models is {limit}; this prevents Streamlit Cloud from hanging and restarting."
   }
 }
