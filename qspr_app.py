@@ -4385,6 +4385,11 @@ def get_model_params_from_session():
     }
 
 
+QSPR_IS_CLOUD_RUNTIME = (
+    os.environ.get("AUGUR_QSPR_CLOUD_GUARD", "").lower() in {"1", "true", "yes", "y"}
+    or os.getcwd().replace("\\", "/").startswith("/mount/src/")
+    or os.path.abspath(__file__).replace("\\", "/").startswith("/mount/src/")
+)
 QSPR_LOO_MAX_SAMPLES = int(os.environ.get("AUGUR_QSPR_LOO_MAX_SAMPLES", "150"))
 QSPR_LOO_HEAVY_MAX_SAMPLES = int(os.environ.get("AUGUR_QSPR_LOO_HEAVY_MAX_SAMPLES", "40"))
 QSPR_ALLOW_EXPENSIVE_LOO = os.environ.get("AUGUR_QSPR_ALLOW_EXPENSIVE_LOO", "").lower() in {
@@ -4412,7 +4417,7 @@ QSPR_LOO_HEAVY_MODELS = {
 
 
 def qspr_loo_skip_reason(model_name, n_samples):
-    if QSPR_ALLOW_EXPENSIVE_LOO:
+    if QSPR_ALLOW_EXPENSIVE_LOO or not QSPR_IS_CLOUD_RUNTIME:
         return None
 
     model_key = normalize_runtime_name(model_name)
