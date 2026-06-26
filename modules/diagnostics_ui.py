@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Applicability Domain, важность дескрипторов и SHAP."""
 
 import matplotlib.pyplot as plt
@@ -437,7 +437,7 @@ def _diagnostics_render_residual_vs_descriptor(context):
         st.markdown(t("diagnostics.residual_top_title"))
         st.dataframe(
             display,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -615,7 +615,7 @@ def render_model_diagnostics_section(context):
                             if c in high_residual_df.columns
                         ]
                     ],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
     
@@ -665,7 +665,7 @@ def render_model_diagnostics_section(context):
     
                 st.dataframe(
                     critical_df[show_cols],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
     
@@ -712,7 +712,7 @@ def render_model_diagnostics_section(context):
         with st.expander(t('applicability_domain.expander_show_table'), expanded=False):
             st.dataframe(
                 ad_table,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
     
@@ -797,7 +797,7 @@ def render_model_diagnostics_section(context):
                 })
                 st.dataframe(
                     coefficient_display,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
     
@@ -831,7 +831,7 @@ def render_model_diagnostics_section(context):
                 })
                 st.dataframe(
                     native_display,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
                 st.warning(t('feature_importance.native_warning'))
@@ -1027,7 +1027,7 @@ def render_model_diagnostics_section(context):
                 })
                 st.dataframe(
                     permutation_display,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
     
@@ -1091,7 +1091,7 @@ def render_model_diagnostics_section(context):
                     })
                     st.dataframe(
                         grouped_display,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                     )
                     st.caption(
@@ -1264,7 +1264,7 @@ def render_model_diagnostics_section(context):
                     })
                     st.dataframe(
                         shap_display,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                     )
     
@@ -1328,7 +1328,7 @@ def render_model_diagnostics_section(context):
                 st.caption(t('feature_importance.summary_caption'))
                 st.dataframe(
                     unified_display,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
     

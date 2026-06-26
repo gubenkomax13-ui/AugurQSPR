@@ -1613,7 +1613,7 @@ def qspr_show_loaded_model_descriptor_summary():
             t("prediction_page.descriptor_count_col"): counts["molecular_or_other"],
         },
     ]
-    st.dataframe(pd.DataFrame(category_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(category_rows), width="stretch", hide_index=True)
 
     if flags["has_spectral"]:
         st.warning(t("prediction_page.model_has_spectral_warning"))
@@ -2131,7 +2131,7 @@ def qspr_prog_show_ad_summary(pred_df):
         st.markdown("### Новые вещества вне применимой области")
         st.dataframe(
             pred_df[pred_df["AD-статус"] == "вне AD"].copy(),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -2249,7 +2249,7 @@ def qspr_show_prognostic_training_section(
         },
         disabled=["№", "Индекс", "SMILES", "Экспериментальное значение", "Расчётное значение", "Ошибка"],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         key=f"prog_editor_{model_name_for_prog}",
     )
 
@@ -2465,7 +2465,7 @@ def qspr_show_new_compound_prediction_section(
             new_df = pd.read_excel(new_file)
 
         new_df.columns = new_df.columns.str.strip()
-        st.dataframe(new_df.head(50), use_container_width=True)
+        st.dataframe(new_df.head(50), width="stretch")
 
         if prediction_mode == "smiles":
             qspr_prog_show_smiles_prediction_ui(
@@ -2750,7 +2750,7 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
         col_rel_3.metric("Средняя надёжность", medium)
         col_rel_4.metric("Низкая надёжность", low)
 
-    st.dataframe(pred_df, use_container_width=True, hide_index=True)
+    st.dataframe(pred_df, width="stretch", hide_index=True)
 
     diagnostics = uncertainty_payload.get("diagnostics", {})
     if diagnostics:
@@ -2761,7 +2761,7 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
             })
             st.dataframe(
                 diagnostic_df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -2779,7 +2779,7 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
                 ])
                 st.dataframe(
                     model_df,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
 
@@ -2793,7 +2793,7 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
         with st.expander("🧭 Ближайшие обучающие аналоги", expanded=False):
             st.dataframe(
                 neighbours,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
             st.download_button(
@@ -3311,7 +3311,7 @@ def qspr_show_prediction_capability_tool():
     if not all_rows:
         return
 
-    st.dataframe(pd.DataFrame(all_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(all_rows), width="stretch", hide_index=True)
 
     if not runnable_options:
         st.info(t("prediction_page.capability_no_runnable_models"))

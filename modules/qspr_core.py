@@ -19,6 +19,7 @@ qspr_core.py
 
 import os
 import json
+import warnings
 from datetime import datetime
 from sklearn.svm import SVR
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -34,6 +35,12 @@ from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"X does not have valid feature names, but .* was fitted with feature names",
+    category=UserWarning,
+)
 
 try:
     from .model_catalog import (

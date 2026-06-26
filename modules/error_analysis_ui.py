@@ -179,7 +179,7 @@ def _series_tab(context, result, model_name):
         ),
         "reliability": t("error_analysis.col_reliability"),
     })
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
 
     options = summary["series_id"].tolist()
     labels = dict(zip(summary["series_id"], summary["structural_series"]))
@@ -211,7 +211,7 @@ def _series_tab(context, result, model_name):
     ]
     st.dataframe(
         members[[column for column in member_columns if column in members]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     if members["size"].nunique() > 1:
@@ -259,7 +259,7 @@ def _effects_tab(result, model_name):
         ),
         "reliability": t("error_analysis.col_reliability"),
     })
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
 
     options = summary["effect_series_id"].tolist()
     labels = dict(zip(
@@ -274,7 +274,7 @@ def _effects_tab(result, model_name):
     selected_pairs = pairs[pairs["effect_series_id"] == selected].sort_values(
         "comparison_size"
     )
-    st.dataframe(selected_pairs, use_container_width=True, hide_index=True)
+    st.dataframe(selected_pairs, width="stretch", hide_index=True)
     if selected_pairs["comparison_size"].nunique() > 1:
         chart = selected_pairs.set_index("comparison_size")[
             ["delta_experimental", "delta_predicted"]
@@ -298,7 +298,7 @@ def _groups_tab(context, result, model_name):
         return
     display = summary.copy()
     display["reliability"] = display["reliability"].map(_reliability_label)
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
     selectable = summary[summary["group_id"] != "overall"]
     if not selectable.empty:
         labels = dict(zip(selectable["group_id"], selectable["group"]))
@@ -311,7 +311,7 @@ def _groups_tab(context, result, model_name):
         members = error_analysis_select_group_members(
             table, selected
         ).sort_values("absolute_error", ascending=False)
-        st.dataframe(members, use_container_width=True, hide_index=True)
+        st.dataframe(members, width="stretch", hide_index=True)
         _show_molecules(
             context, members,
             t("error_analysis.group_structures", group=labels[selected]),
@@ -335,7 +335,7 @@ def _clusters_tab(context, result, model_name):
         return
     display = summary.copy()
     display["reliability"] = display["reliability"].map(_reliability_label)
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
     selected = st.selectbox(
         t("error_analysis.select_cluster"),
         summary["cluster_id"].astype(int).tolist(),
@@ -347,7 +347,7 @@ def _clusters_tab(context, result, model_name):
     members = error_analysis_select_cluster_members(
         table, selected
     ).sort_values("absolute_error", ascending=False)
-    st.dataframe(members, use_container_width=True, hide_index=True)
+    st.dataframe(members, width="stretch", hide_index=True)
     _show_molecules(
         context, members,
         t("error_analysis.cluster_structures", cluster=selected),
@@ -376,7 +376,7 @@ def _problems_tab(context, result, model_name):
         problems[problems["large_error"]]
         if large_only else problems
     )
-    st.dataframe(visible, use_container_width=True, hide_index=True)
+    st.dataframe(visible, width="stretch", hide_index=True)
     _show_molecules(
         context, visible,
         t("error_analysis.problem_structures"),

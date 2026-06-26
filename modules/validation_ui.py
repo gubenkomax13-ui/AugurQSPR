@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Интерфейс валидации QSPR-моделей."""
 
 import matplotlib.pyplot as plt
@@ -129,7 +129,7 @@ def render_validation_section(context):
     
             st.dataframe(
                 res["train_table"],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
     
@@ -228,7 +228,7 @@ def render_validation_section(context):
     
             st.dataframe(
                 res["test_table"],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
     
@@ -458,7 +458,7 @@ def render_validation_section(context):
     
             st.dataframe(
                 res["result_table"],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
     
@@ -643,7 +643,7 @@ def render_validation_section(context):
     
             st.dataframe(
                 res["result_table"],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
     
@@ -902,7 +902,7 @@ def render_validation_section(context):
     
             # Таблица всех прогнозов
             with st.expander(t('validation.external.expander_predictions')):
-                st.dataframe(ext_res['combined_test_table'], use_container_width=True, hide_index=True)
+                st.dataframe(ext_res['combined_test_table'], width="stretch", hide_index=True)
     
             csv_ext = ext_res['combined_test_table'].to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -1101,7 +1101,7 @@ def render_validation_section(context):
     
                     st.dataframe(
                         summary_table_rh,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
     
@@ -1153,7 +1153,7 @@ def render_validation_section(context):
                     with st.expander(t('repeated_holdout.expander_repeats_table'), expanded=False):
                         st.dataframe(
                             repeats_table_rh,
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
     
@@ -1176,7 +1176,7 @@ def render_validation_section(context):
                     with st.expander(t('repeated_holdout.expander_test_predictions'), expanded=False):
                         st.dataframe(
                             combined_test_table_rh.head(2000),
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
     
@@ -1349,7 +1349,7 @@ def render_validation_section(context):
                 if isinstance(bootstrap_summary_table, pd.DataFrame) and not bootstrap_summary_table.empty:
                     st.dataframe(
                         bootstrap_summary_table,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
     
@@ -1392,7 +1392,7 @@ def render_validation_section(context):
                     with st.expander(t('bootstrap.ui_expander_iterations'), expanded=False):
                         st.dataframe(
                             bootstrap_iterations_table,
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
     
@@ -1413,7 +1413,7 @@ def render_validation_section(context):
                     with st.expander(t('bootstrap.ui_expander_oob'), expanded=False):
                         st.dataframe(
                             bootstrap_oob_predictions.head(2000),
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
     
@@ -1615,7 +1615,7 @@ def render_validation_section(context):
     
                 st.dataframe(
                     y_rand_summary_table,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
     
@@ -1654,7 +1654,7 @@ def render_validation_section(context):
                     with st.expander(t('y_rand.ui_expander_table'), expanded=False):
                         st.dataframe(
                             y_rand_perm_table,
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
     

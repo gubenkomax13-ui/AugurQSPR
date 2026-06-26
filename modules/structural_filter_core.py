@@ -113,7 +113,7 @@ def qspr_show_descriptor_meaning_table(
 
         st.dataframe(
             meaning_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 

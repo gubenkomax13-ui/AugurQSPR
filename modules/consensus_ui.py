@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Интерфейс consensus-прогноза QSPR-моделей."""
 
 import numpy as np
@@ -30,7 +30,7 @@ def render_consensus_section(context):
                     "LOO Q²",
                     "RMSE"
                 ]].head(10),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
     
@@ -129,7 +129,7 @@ def render_consensus_section(context):
                 numeric_cols = consensus_df.select_dtypes(include=[np.number]).columns
                 consensus_display = consensus_df.copy()
                 consensus_display[numeric_cols] = consensus_display[numeric_cols].round(1)
-                st.dataframe(consensus_display, use_container_width=True, hide_index=True)
+                st.dataframe(consensus_display, width="stretch", hide_index=True)
     
                 # --- Два графика в одной строке ---
                 col1, col2 = st.columns(2)

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Интерфейс автоматического сравнения QSPR-моделей."""
 
 import numpy as np
@@ -490,7 +490,7 @@ def render_model_comparison_section(context):
     
             st.dataframe(
                 display_cmp,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
     
@@ -528,7 +528,7 @@ def render_model_comparison_section(context):
             error_df = st.session_state.get("model_comparison_errors_df")
             if isinstance(error_df, pd.DataFrame) and not error_df.empty:
                 with st.expander(t('comparison.errors_expander'), expanded=False):
-                    st.dataframe(error_df, use_container_width=True, hide_index=True)
+                    st.dataframe(error_df, width="stretch", hide_index=True)
     
             if st.button(t('comparison.switch_button'), key="switch_to_best_model"):
                 st.session_state.pending_selected_model = best_model

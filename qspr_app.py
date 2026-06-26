@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
@@ -610,7 +610,7 @@ def show_molecule_viewer(data, target_col, smiles_col="SMILES"):
                 st.warning(t('molecule_viewer.invalid_count', count=len(invalid_rows)))
                 st.dataframe(
                     pd.DataFrame(invalid_rows),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
             else:
@@ -830,7 +830,7 @@ def show_molecule_grid_from_table(
             st.warning(t('molecule_grid.invalid_count', count=len(invalid_rows)))
             st.dataframe(
                 pd.DataFrame(invalid_rows),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
 def show_dataset_change_report(
@@ -948,7 +948,7 @@ def show_dataset_change_report(
 
     st.dataframe(
         stats_compare.round(4),
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -1042,7 +1042,7 @@ def show_dataset_change_report(
 
     st.dataframe(
         removed_view.head(300),
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -1405,7 +1405,7 @@ def show_saod_molecule_grid(
             st.warning(t('saod_grid.invalid_count', count=len(invalid_rows)))
             st.dataframe(
                 pd.DataFrame(invalid_rows),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
             
@@ -2396,7 +2396,7 @@ def qspr_show_data_leakage_warning(leakage_df, title=t('data_leakage.warning_tit
     with st.expander(title, expanded=True):
         st.dataframe(
             leakage_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -3260,7 +3260,7 @@ def render_spectra_search_results_if_available():
 
     if "spectrum_status" not in search_results_df.columns:
         st.warning(t('spectra.old_or_invalid_result'))
-        st.dataframe(search_results_df, use_container_width=True)
+        st.dataframe(search_results_df, width="stretch")
         return True
 
     for col in [
@@ -3314,7 +3314,7 @@ def render_spectra_search_results_if_available():
             last_compound,
         ],
     })
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    st.dataframe(summary_df, width="stretch", hide_index=True)
 
     search_results_df["_spectrum_status_norm"] = status_norm
     search_results_df["_spectrum_type_norm"] = (
@@ -3332,10 +3332,10 @@ def render_spectra_search_results_if_available():
         .rename(columns={"spectrum_status": t('spectra.status_label')})
         .sort_values(t('spectra.status_count'), ascending=False)
     )
-    st.dataframe(status_summary, use_container_width=True, hide_index=True)
+    st.dataframe(status_summary, width="stretch", hide_index=True)
 
     with st.expander(t('spectra.show_full_table_expander'), expanded=True):
-        st.dataframe(search_results_df, use_container_width=True, hide_index=True)
+        st.dataframe(search_results_df, width="stretch", hide_index=True)
 
     csv_search = search_results_df.drop(
         columns=["_spectrum_status_norm", "_spectrum_type_norm"],
@@ -5802,7 +5802,7 @@ def qspr_show_descriptor_meaning_table(
 
         st.dataframe(
             meaning_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -5890,7 +5890,7 @@ def manage_data_bank():
             st.rerun()
 
     if st.checkbox(t('data_bank.show_content_checkbox')):
-        st.dataframe(bank_df.reset_index(drop=True), use_container_width=True)
+        st.dataframe(bank_df.reset_index(drop=True), width="stretch")
         csv_bank = bank_df.to_csv(index=False).encode("utf-8")
         st.download_button(t('data_bank.download_button'), csv_bank, "data_bank.csv", "text/csv")
 
@@ -6038,9 +6038,9 @@ def saod2_show_table(df, height=None):
         pass
 
     if height is None:
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(styled, width="stretch")
     else:
-        st.dataframe(styled, use_container_width=True, height=height)
+        st.dataframe(styled, width="stretch", height=height)
 
 def saod2_make_review_dataset(original_df, processed, checkability, suspicion):
     """
@@ -6900,7 +6900,7 @@ if not available_smiles_cols:
     st.error(t('data_prep.no_smiles_column'))
     st.stop()
 
-st.dataframe(data.head(), use_container_width=True)
+st.dataframe(data.head(), width="stretch")
 
 show_molecule_viewer(
     data=data,
@@ -6954,7 +6954,7 @@ if isinstance(st.session_state.get("standardization_summary_df"), pd.DataFrame):
     if not std_summary_df.empty:
         st.dataframe(
             std_summary_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -6984,7 +6984,7 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
         with st.expander(t('standardization_ui.preview_title'), expanded=True):
             st.dataframe(
                 std_df[preview_cols].head(200),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
 
@@ -6997,7 +6997,7 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
             with st.expander(t('standardization_ui.warning_title'), expanded=False):
                 st.dataframe(
                     warning_df[preview_cols].head(300),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -7014,7 +7014,7 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                 with st.expander(t('standardization_ui.duplicates_title'), expanded=False):
                     st.dataframe(
                         std_duplicates_df[duplicate_preview_cols].head(300),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
 
@@ -7220,7 +7220,7 @@ try:
     with st.expander(t('dataset_passport.full_passport'), expanded=True):
         st.dataframe(
             dataset_passport_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -7228,7 +7228,7 @@ try:
         with st.expander(t('dataset_passport.suspicious_values'), expanded=False):
             st.dataframe(
                 suspicious_values_df.head(300),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
 
@@ -7236,7 +7236,7 @@ try:
         with st.expander(t('dataset_passport.duplicate_structures'), expanded=False):
             st.dataframe(
                 duplicate_structures_df.head(300),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
 
@@ -7244,7 +7244,7 @@ try:
         with st.expander(t('dataset_passport.conflict_duplicates'), expanded=False):
             st.dataframe(
                 passport_conflict_duplicates_df.head(300),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
 
@@ -7327,7 +7327,7 @@ if not conflict_smiles.empty:
 
     st.dataframe(
         conflict_rows,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -7418,7 +7418,7 @@ if len(valid_target) >= 4:
         )
         st.dataframe(
             target_outlier_rows,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
     else:
@@ -7737,7 +7737,7 @@ if filtered_result is not None:
 
         st.dataframe(
             filtered_result[show_cols].head(200),
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -7845,7 +7845,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
 
                 saod2_df.columns = saod2_df.columns.str.strip()
                 st.success(t('saod_ui.upload_success', count=len(saod2_df)))
-                st.dataframe(saod2_df.head(), use_container_width=True)
+                st.dataframe(saod2_df.head(), width="stretch")
             except Exception as e:
                 st.error(t('saod_ui.upload_error', error=e))
 
@@ -7979,7 +7979,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             if c not in ["SAOD_manual_decision", "SAOD_manual_comment"]
                         ],
                         hide_index=True,
-                        use_container_width=True,
+                        width="stretch",
                         key="saod2_review_editor"
                     )
 
@@ -8485,7 +8485,7 @@ with st.expander(
 
                 st.dataframe(
                     import_report_df,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -8545,7 +8545,7 @@ with st.expander(
 
                 st.dataframe(
                     reindex_report_df,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -8782,7 +8782,7 @@ with st.expander(
 
                 st.dataframe(
                     phase_summary,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -8805,7 +8805,7 @@ with st.expander(
 
                 st.dataframe(
                     phase_type_summary,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -8825,7 +8825,7 @@ with st.expander(
 
                 st.dataframe(
                     type_summary,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -8848,7 +8848,7 @@ with st.expander(
 
                 st.dataframe(
                     source_type_summary,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -8871,7 +8871,7 @@ with st.expander(
 
                 st.dataframe(
                     source_database_summary,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -8894,7 +8894,7 @@ with st.expander(
 
                 st.dataframe(
                     intensity_summary,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -8917,7 +8917,7 @@ with st.expander(
 
                 st.dataframe(
                     sample_type_summary,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -8940,7 +8940,7 @@ with st.expander(
 
                 st.dataframe(
                     status_summary,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -9001,7 +9001,7 @@ with st.expander(
         if spectra_index.empty:
             st.info(t('spectra.index_empty'))
         else:
-            st.dataframe(spectra_index, use_container_width=True)
+            st.dataframe(spectra_index, width="stretch")
 
     current_df = data.copy()
 
@@ -9217,7 +9217,7 @@ with st.expander(
 
         st.dataframe(
             compact_view,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -9437,7 +9437,7 @@ with st.expander(
         else:
             st.dataframe(
                 matched_spectra_df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
 
@@ -9570,7 +9570,7 @@ with st.expander(
 
                     st.dataframe(
                         cache_df.tail(100),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
 
@@ -10167,7 +10167,7 @@ with st.expander(
 
                     st.dataframe(
                         skipped_df[show_skip_cols].head(300),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
 
@@ -10215,7 +10215,7 @@ with st.expander(
 
                     st.dataframe(
                         preview_df[preview_cols].head(100),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
 
@@ -10598,7 +10598,7 @@ with st.expander(
                         st.info(t('spectra.no_results_yet'))
                     elif "spectrum_status" not in search_results_df.columns:
                         st.warning(t('spectra.old_or_invalid_result'))
-                        st.dataframe(search_results_df, use_container_width=True)
+                        st.dataframe(search_results_df, width="stretch")
                     else:
                         total_checked = len(search_results_df)
             
@@ -10790,7 +10790,7 @@ with st.expander(
                     .sort_values(t('spectra.status_count'), ascending=False)
                 )
 
-                st.dataframe(status_summary, use_container_width=True, hide_index=True)
+                st.dataframe(status_summary, width="stretch", hide_index=True)
 
                 if "spectrum_type" in search_results_df.columns:
                     st.subheader(t('spectra.type_summary_subheader'))
@@ -10801,10 +10801,10 @@ with st.expander(
                         .reset_index(name=t('spectra.status_count'))
                         .sort_values(["spectrum_type", t('spectra.status_count')], ascending=[True, False])
                     )
-                    st.dataframe(type_summary, use_container_width=True, hide_index=True)
+                    st.dataframe(type_summary, width="stretch", hide_index=True)
 
                 with st.expander(t('spectra.show_full_table_expander')):
-                    st.dataframe(search_results_df, use_container_width=True, hide_index=True)
+                    st.dataframe(search_results_df, width="stretch", hide_index=True)
 
                 csv_search = search_results_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -11532,10 +11532,10 @@ with st.expander(
                 {"Показатель": "Пустая сетка", "Значение": cache_report.get("empty_grid", 0)},
                 {"Показатель": "Файл кэша", "Значение": cache_report.get("cache_file", "")},
             ]
-            st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
 
             if cache_df_all is not None and not cache_df_all.empty:
-                st.dataframe(cache_df_all.head(50), use_container_width=True, hide_index=True)
+                st.dataframe(cache_df_all.head(50), width="stretch", hide_index=True)
 
     if run_ready_spectral_descriptors or run_spectral_descriptors:
         use_ready_descriptor_cache_only = bool(run_ready_spectral_descriptors)
@@ -11991,7 +11991,7 @@ with st.expander(
 
                 st.dataframe(
                     pd.DataFrame(diagnostic_rows),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -12041,7 +12041,7 @@ with st.expander(
 
                 st.dataframe(
                     used_phases_df,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
             used_phases_dict = rep.get("used_phases", {})
@@ -12069,7 +12069,7 @@ with st.expander(
 
                 st.dataframe(
                     reason_df,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -12089,7 +12089,7 @@ with st.expander(
             st.warning(t('spectra_report.no_descriptors'))
         else:
             st.subheader(t('spectra_report.table_subheader'))
-            st.dataframe(spectral_df.head(100), use_container_width=True, hide_index=True)
+            st.dataframe(spectral_df.head(100), width="stretch", hide_index=True)
             st.caption(t('spectra_report.table_size',
                 rows=spectral_df.shape[0],
                 cols=spectral_df.shape[1]
@@ -12853,7 +12853,7 @@ if use_molecular_descriptors_source:
 
                             st.dataframe(
                                 xtb_df,
-                                use_container_width=True,
+                                width="stretch",
                                 hide_index=True
                             )
 
@@ -13085,7 +13085,7 @@ if use_molecular_descriptors_source:
 
                         st.dataframe(
                             morfeus_df,
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
 
@@ -13112,7 +13112,7 @@ if use_molecular_descriptors_source:
                                             status_col: t('descriptor_calc.count_column')
                                         }
                                     ),
-                                    use_container_width=True,
+                                    width="stretch",
                                     hide_index=True
                                 )
 
@@ -13340,7 +13340,7 @@ if use_molecular_descriptors_source:
 
                         st.dataframe(
                             dscribe_df,
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
 
@@ -13372,7 +13372,7 @@ if use_molecular_descriptors_source:
                                 st.write(f"**{status_col}**")
                                 st.dataframe(
                                     status_table,
-                                    use_container_width=True,
+                                    width="stretch",
                                     hide_index=True
                                 )
 
@@ -13619,7 +13619,7 @@ with st.expander(t('incremental.expander_title'), expanded=False):
                 },
                 disabled=[t('incremental.column')],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 height=420,
                 key="incremental_exclude_table_editor"
             )
@@ -13645,7 +13645,7 @@ with st.expander(t('incremental.expander_title'), expanded=False):
             with st.expander(t('incremental.show_features_expander'), expanded=False):
                 st.dataframe(
                     pd.DataFrame({t('incremental.feature_label'): increment_cols}),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -13773,7 +13773,7 @@ with st.expander(t('incremental.expander_title'), expanded=False):
 
                 st.dataframe(
                     inc_result["coef_table"],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -13846,7 +13846,7 @@ with st.expander(t('incremental.expander_title'), expanded=False):
 
                 st.dataframe(
                     inc_result["result_table"],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -14245,7 +14245,7 @@ with col_table_1:
     if mahal_table_for_view is not None and not mahal_table_for_view.empty:
         st.dataframe(
             mahal_table_for_view,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -14260,7 +14260,7 @@ with col_table_2:
     if corr_table is not None and not corr_table.empty:
         st.dataframe(
             corr_table,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
     else:

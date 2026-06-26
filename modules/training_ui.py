@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Обучение QSPR-моделей и отображение результатов обучения."""
 
 import matplotlib.pyplot as plt
@@ -1325,7 +1325,7 @@ def render_training_section(context):
     
                     st.dataframe(
                         summary_ru,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
     
@@ -1341,7 +1341,7 @@ def render_training_section(context):
     
                     st.dataframe(
                         cv_metrics_df,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
     
@@ -1357,7 +1357,7 @@ def render_training_section(context):
     
                     st.dataframe(
                         best_params_df,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
     
@@ -1373,7 +1373,7 @@ def render_training_section(context):
     
                     st.dataframe(
                         selected_desc_df,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
                     # ----------------------------------------------------
@@ -1471,7 +1471,7 @@ def render_training_section(context):
                                     with st.expander(t('auto_results.heatmap_matrix_expander'), expanded=False):
                                         st.dataframe(
                                             corr_heatmap_selected.round(4),
-                                            use_container_width=True
+                                            width="stretch"
                                         )
     
                                         st.download_button(
@@ -1507,7 +1507,7 @@ def render_training_section(context):
     
                         st.dataframe(
                             selection_table_display.head(1000),
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True
                         )
     
@@ -1522,7 +1522,7 @@ def render_training_section(context):
                         )
     
         st.subheader(t('analysis_results.table_subheader'))
-        st.dataframe(analysis_table, use_container_width=True, hide_index=True)
+        st.dataframe(analysis_table, width="stretch", hide_index=True)
     
         qspr_save_results_auto(
             analysis_table,
@@ -1596,7 +1596,7 @@ def render_training_section(context):
     
         st.dataframe(
             metric_table,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
     
@@ -1618,7 +1618,7 @@ def render_training_section(context):
                 with st.expander(t('analysis_results.gpr_expander'), expanded=False):
                     st.dataframe(
                         gpr_uncertainty_df,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
     
