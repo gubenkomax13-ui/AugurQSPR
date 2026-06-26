@@ -1221,7 +1221,8 @@
   "mode": {
     "select": "Select operating mode",
     "qspr": "QSPR modelling of molecular properties",
-    "prediction": "Predict property for new compounds"
+    "prediction": "Predict property for new compounds",
+    "prediction_admin_only": "The \"Predict property for new compounds\" mode is available only to the administrator."
   },
   "header": {
     "qspr": "🧪 QSPR (Quantitative Structure‑Property Relationship): building mathematical models to predict molecular characteristics from structural descriptors without synthesis."

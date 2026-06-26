@@ -54,9 +54,68 @@ from modules.i18n import (
     validate_translation_keys,
 )
 
-# Установка языка по умолчанию (из session_state или 'ru')
-if 'lang' not in st.session_state:
-    st.session_state.lang = 'ru'
+SUPPORTED_LANGS = ("ru", "en", "kk")
+
+
+def _normalize_lang_code(value):
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+
+    value = str(value or "").strip().lower()
+    if not value:
+        return None
+
+    for item in value.split(","):
+        code = item.split(";", 1)[0].strip().lower()
+        base_code = code.split("-", 1)[0]
+        if base_code in SUPPORTED_LANGS:
+            return base_code
+
+    return None
+
+
+def _query_param_lang():
+    try:
+        return _normalize_lang_code(st.query_params.get("lang"))
+    except Exception:
+        return None
+
+
+def _browser_lang():
+    context = getattr(st, "context", None)
+    if context is None:
+        return None
+
+    for attr_name in ("locale", "language"):
+        lang = _normalize_lang_code(getattr(context, attr_name, None))
+        if lang:
+            return lang
+
+    headers = getattr(context, "headers", {}) or {}
+    try:
+        accept_language = headers.get("accept-language") or headers.get("Accept-Language")
+    except AttributeError:
+        accept_language = None
+
+    return _normalize_lang_code(accept_language)
+
+
+def _remember_lang_in_url(lang):
+    try:
+        st.query_params["lang"] = lang
+    except Exception:
+        pass
+
+
+query_lang = _query_param_lang()
+if query_lang and st.session_state.get("lang") != query_lang:
+    st.session_state.lang = query_lang
+    st.session_state.lang_from_url = True
+elif "lang" not in st.session_state:
+    initial_lang = _browser_lang() or "ru"
+    st.session_state.lang = initial_lang
+    st.session_state.lang_auto_detected = initial_lang
+
 set_language(st.session_state.lang)
 
 translation_key_issues = validate_translation_keys(
@@ -6454,7 +6513,7 @@ app_mode = st.radio(
 )
 
 if not is_admin():
-    st.caption('Режим "Прогноз свойства для новых веществ" доступен только администратору.')
+    st.caption(t("mode.prediction_admin_only"))
 
 with st.sidebar:
     st.header(t('sidebar.title'))
@@ -6469,6 +6528,8 @@ with st.sidebar:
     )
     if lang != st.session_state.lang:
         st.session_state.lang = lang
+        st.session_state.lang_manual = True
+        _remember_lang_in_url(lang)
         set_language(lang)
         st.rerun()
     # --- конец переключателя ---    
