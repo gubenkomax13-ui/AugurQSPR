@@ -32,9 +32,10 @@ def qspr_safe_dataframe_for_streamlit(df):
     if df is None or not isinstance(df, pd.DataFrame):
         return df
     out = df.copy()
+    out.columns = [str(col) for col in out.columns]
     for col in out.columns:
         if out[col].dtype == "object":
-            out[col] = out[col].map(_safe_cell_to_text)
+            out[col] = out[col].map(_safe_cell_to_text).astype("string")
     return out
 
 
@@ -46,6 +47,8 @@ def _safe_cell_to_text(value):
             return ""
     except (TypeError, ValueError):
         pass
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
     return str(value)
 
 
@@ -472,7 +475,7 @@ def final_statistics_to_flat_dataframe(summary):
                 t("final_stats.col_comment"),
             ]
         )
-    return pd.concat(frames, ignore_index=True, sort=False)
+    return qspr_safe_dataframe_for_streamlit(pd.concat(frames, ignore_index=True, sort=False))
 
 
 def final_statistics_to_json_bytes(summary):
