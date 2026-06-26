@@ -47,6 +47,61 @@ import time
 
 import streamlit as st
 
+
+def _qspr_arrow_safe_table_data(data):
+    """Return a display copy that PyArrow can serialize without noisy fallback logs."""
+    try:
+        import pandas as _pd
+    except Exception:
+        return data
+
+    if not isinstance(data, _pd.DataFrame):
+        return data
+
+    out = data.copy()
+    out.columns = [str(col) for col in out.columns]
+
+    for col in out.columns:
+        if out[col].dtype != "object":
+            continue
+
+        def _cell_to_text(value):
+            if value is None:
+                return ""
+            try:
+                if _pd.isna(value):
+                    return ""
+            except (TypeError, ValueError):
+                pass
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="replace")
+            return str(value)
+
+        out[col] = out[col].map(_cell_to_text).astype("string")
+
+    return out
+
+
+def _install_qspr_arrow_safe_streamlit_tables():
+    if getattr(st, "_qspr_arrow_safe_tables_installed", False):
+        return
+
+    original_dataframe = st.dataframe
+    original_data_editor = st.data_editor
+
+    def dataframe(data=None, *args, **kwargs):
+        return original_dataframe(_qspr_arrow_safe_table_data(data), *args, **kwargs)
+
+    def data_editor(data=None, *args, **kwargs):
+        return original_data_editor(_qspr_arrow_safe_table_data(data), *args, **kwargs)
+
+    st.dataframe = dataframe
+    st.data_editor = data_editor
+    st._qspr_arrow_safe_tables_installed = True
+
+
+_install_qspr_arrow_safe_streamlit_tables()
+
 from modules.i18n import (
     gettext,
     set_language,
