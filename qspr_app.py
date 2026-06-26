@@ -27,6 +27,7 @@ import io
 import subprocess
 import importlib
 import hmac
+import warnings
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.linear_model import LinearRegression
@@ -167,6 +168,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+warnings.filterwarnings(
+    "ignore",
+    message="`sklearn\\.utils\\.parallel\\.delayed` should be used with "
+    "`sklearn\\.utils\\.parallel\\.Parallel`.*",
+    category=UserWarning,
+)
 
 
 def _streamlit_table_value_to_text(value):
@@ -7748,16 +7756,18 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
             ]
             default_prop = numeric_candidates[0] if numeric_candidates else saod2_columns[0]
 
-        # Если SAOD хранит старый выбор свойства, например "№",
-        # принудительно синхронизируем его с основной целевой колонкой.
-        if (
-            "saod2_property_col" not in st.session_state
-            or st.session_state.get("saod2_property_col") not in saod2_columns
-            or str(st.session_state.get("saod2_property_col")).strip().lower() in ["№", "no", "id", "index", "номер"]
-        ):
-            st.session_state.saod2_property_col = default_prop
+        saod2_property_state = st.session_state.get("saod2_property_col")
+        invalid_property_state = (
+            saod2_property_state not in saod2_columns
+            or str(saod2_property_state).strip().lower() in ["№", "no", "id", "index", "номер"]
+        )
 
-        prop_index = saod2_columns.index(st.session_state.saod2_property_col)
+        if invalid_property_state and "saod2_property_col" in st.session_state:
+            del st.session_state["saod2_property_col"]
+            saod2_property_state = None
+
+        prop_value = saod2_property_state if saod2_property_state in saod2_columns else default_prop
+        prop_index = saod2_columns.index(prop_value)
 
         saod2_property_col = st.selectbox(
             t('saod_ui.property_col'),
