@@ -168,6 +168,90 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+
+def _streamlit_table_value_to_text(value):
+    if value is None:
+        return value
+
+    try:
+        if pd.isna(value):
+            return value
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        for encoding in ("utf-8", "cp1251"):
+            try:
+                return raw.decode(encoding)
+            except UnicodeDecodeError:
+                pass
+        return raw.hex()
+
+    return str(value)
+
+
+def _streamlit_safe_table_data(data):
+    if not isinstance(data, pd.DataFrame):
+        return data
+
+    safe = data.copy()
+
+    for col in safe.columns:
+        series = safe[col]
+        if series.dtype != "object":
+            continue
+
+        non_null = series.dropna()
+        if non_null.empty:
+            continue
+
+        type_names = {
+            type(value).__name__
+            for value in non_null.head(200).to_numpy(dtype=object)
+        }
+        has_bytes = any(
+            isinstance(value, (bytes, bytearray, memoryview))
+            for value in non_null.head(200).to_numpy(dtype=object)
+        )
+
+        if has_bytes or len(type_names) > 1:
+            safe[col] = series.map(_streamlit_table_value_to_text)
+
+    return safe
+
+
+def _patch_streamlit_table_renderers():
+    if getattr(st, "_qspr_table_renderers_patched", False):
+        return
+
+    original_dataframe = st.dataframe
+    original_data_editor = st.data_editor
+
+    def normalize_kwargs(kwargs):
+        if "use_container_width" in kwargs and "width" not in kwargs:
+            kwargs["width"] = (
+                "stretch" if kwargs.pop("use_container_width") else "content"
+            )
+        else:
+            kwargs.pop("use_container_width", None)
+        return kwargs
+
+    def safe_dataframe(data=None, *args, **kwargs):
+        kwargs = normalize_kwargs(kwargs)
+        return original_dataframe(_streamlit_safe_table_data(data), *args, **kwargs)
+
+    def safe_data_editor(data=None, *args, **kwargs):
+        kwargs = normalize_kwargs(kwargs)
+        return original_data_editor(_streamlit_safe_table_data(data), *args, **kwargs)
+
+    st.dataframe = safe_dataframe
+    st.data_editor = safe_data_editor
+    st._qspr_table_renderers_patched = True
+
+
+_patch_streamlit_table_renderers()
+
 def safe_histplot(ax, data, bins=30, kde=False, **kwargs):
     """
     Безопасная гистограмма: очищает данные, ограничивает выбросы,

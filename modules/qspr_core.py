@@ -1817,7 +1817,8 @@ def qspr_create_regression_model(
     if model_name == "LASSO":
         return Lasso(
             alpha=float(p["lasso_alpha"]),
-            max_iter=10000,
+            max_iter=50000,
+            tol=1e-3,
             random_state=42
         )
 
@@ -1825,7 +1826,8 @@ def qspr_create_regression_model(
         return ElasticNet(
             alpha=float(p["elastic_alpha"]),
             l1_ratio=float(p["elastic_l1_ratio"]),
-            max_iter=10000,
+            max_iter=50000,
+            tol=1e-3,
             random_state=42
         )
 
@@ -2468,7 +2470,8 @@ class QSPRDescriptorSelector(BaseEstimator, TransformerMixin):
 
                 lasso = Lasso(
                     alpha=float(self.lasso_alpha),
-                    max_iter=20000,
+                    max_iter=50000,
+                    tol=1e-3,
                     random_state=self.random_state
                 )
                 lasso.fit(X_scaled, y)
