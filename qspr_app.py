@@ -6644,6 +6644,19 @@ if uploaded_file is not None:
 if st.session_state.data is None:
     st.info(t('upload.example_header'))
     st.code("SMILES;BoilingPoint\nC;-161.5\nCC;-88.6\nCCC;-42.1", language="csv")
+    sample_alkanes_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "файлы для проб",
+        "153.xlsx",
+    )
+    if os.path.exists(sample_alkanes_path):
+        with open(sample_alkanes_path, "rb") as sample_file:
+            st.download_button(
+                "Скачать пример XLSX: алканы, T кип. (153.xlsx)",
+                data=sample_file,
+                file_name="153.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
     st.stop()
 # ------------------------------------------------------------------
 # Basic data preparation

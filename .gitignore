@@ -45,6 +45,8 @@ prognostic_models/
 # Local scratch folders
 файлы для проб/
 конт/
+!файлы для проб/
+!файлы для проб/153.xlsx
 
 # Local command stubs and scratch scripts
 python
