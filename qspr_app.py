@@ -229,37 +229,6 @@ def _streamlit_safe_table_data(data):
     return safe
 
 
-def _patch_streamlit_table_renderers():
-    if getattr(st, "_qspr_table_renderers_patched", False):
-        return
-
-    original_dataframe = st.dataframe
-    original_data_editor = st.data_editor
-
-    def normalize_kwargs(kwargs):
-        if "use_container_width" in kwargs and "width" not in kwargs:
-            kwargs["width"] = (
-                "stretch" if kwargs.pop("use_container_width") else "content"
-            )
-        else:
-            kwargs.pop("use_container_width", None)
-        return kwargs
-
-    def safe_dataframe(data=None, *args, **kwargs):
-        kwargs = normalize_kwargs(kwargs)
-        return original_dataframe(_streamlit_safe_table_data(data), *args, **kwargs)
-
-    def safe_data_editor(data=None, *args, **kwargs):
-        kwargs = normalize_kwargs(kwargs)
-        return original_data_editor(_streamlit_safe_table_data(data), *args, **kwargs)
-
-    st.dataframe = safe_dataframe
-    st.data_editor = safe_data_editor
-    st._qspr_table_renderers_patched = True
-
-
-_patch_streamlit_table_renderers()
-
 def safe_histplot(ax, data, bins=30, kde=False, **kwargs):
     """
     Безопасная гистограмма: очищает данные, ограничивает выбросы,
@@ -4416,6 +4385,55 @@ def get_model_params_from_session():
     }
 
 
+QSPR_LOO_MAX_SAMPLES = int(os.environ.get("AUGUR_QSPR_LOO_MAX_SAMPLES", "150"))
+QSPR_LOO_HEAVY_MAX_SAMPLES = int(os.environ.get("AUGUR_QSPR_LOO_HEAVY_MAX_SAMPLES", "40"))
+QSPR_ALLOW_EXPENSIVE_LOO = os.environ.get("AUGUR_QSPR_ALLOW_EXPENSIVE_LOO", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "y",
+}
+QSPR_LOO_HEAVY_MODELS = {
+    "Random Forest",
+    "Extra Trees",
+    "XGBoost",
+    "LightGBM",
+    "CatBoost",
+    "MLP Regression",
+    "Gaussian Process Regression (GPR)",
+    "AdaBoost Regressor",
+    "HistGradientBoosting Regressor",
+    "Stacking",
+    "Voting Regressor",
+    "GEP Symbolic Regression",
+    "Genetic Programming Regression",
+    "PySR",
+}
+
+
+def qspr_loo_skip_reason(model_name, n_samples):
+    if QSPR_ALLOW_EXPENSIVE_LOO:
+        return None
+
+    model_key = normalize_runtime_name(model_name)
+
+    if int(n_samples) > QSPR_LOO_MAX_SAMPLES:
+        return (
+            f"LOO пропущен: {int(n_samples)} объектов. "
+            f"В облачной версии лимит для LOO = {QSPR_LOO_MAX_SAMPLES}; "
+            "используйте K-Fold/hold-out или задайте AUGUR_QSPR_LOO_MAX_SAMPLES."
+        )
+
+    if model_key in QSPR_LOO_HEAVY_MODELS and int(n_samples) > QSPR_LOO_HEAVY_MAX_SAMPLES:
+        return (
+            f"LOO пропущен для тяжёлой модели {model_name}: {int(n_samples)} объектов. "
+            f"В облачной версии лимит для таких моделей = {QSPR_LOO_HEAVY_MAX_SAMPLES}; "
+            "это предотвращает зависание и перезапуск Streamlit Cloud."
+        )
+
+    return None
+
+
 def qspr_metric_from_result(result, metric_name, metrics_key="metrics"):
     """Безопасно достаёт метрику из результата валидации."""
     if result is None:
@@ -4666,6 +4684,11 @@ def qspr_run_missing_validation_for_models(
             messages.append(f"K-Fold: {candidate_model}")
 
         if run_loo and candidate_model not in st.session_state.loo_results_dict:
+            loo_skip_reason = qspr_loo_skip_reason(candidate_model, len(y))
+            if loo_skip_reason:
+                messages.append(loo_skip_reason)
+                continue
+
             res_loo = qspr_loo_validation(
                 X=X,
                 y=y,
@@ -4766,6 +4789,15 @@ def qspr_auto_train_validate_models_for_comparison(
                 qspr_save_results_auto(res_kfold["result_table"], "kfold", target_col, len(y))
 
             if run_loo and (force_retrain or candidate_model not in st.session_state.loo_results_dict):
+                loo_skip_reason = qspr_loo_skip_reason(candidate_model, len(y))
+                if loo_skip_reason:
+                    errors.append({
+                        t('training.model'): candidate_model,
+                        t('training.group'): qspr_model_group_for_name(candidate_model),
+                        t('training.error'): loo_skip_reason,
+                    })
+                    continue
+
                 res_loo = qspr_loo_validation(
                     X=X,
                     y=y,

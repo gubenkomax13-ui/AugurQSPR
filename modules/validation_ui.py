@@ -580,6 +580,22 @@ def render_validation_section(context):
         if st.button(t('validation.loo_run_button'), type="primary", key="run_loo"):
             try:
                 smiles_current = data[smiles_col_current].iloc[valid_indices_current].values.tolist()
+                loo_skip_checker = globals().get("qspr_loo_skip_reason")
+                if callable(loo_skip_checker):
+                    loo_skip_reason = loo_skip_checker(
+                        st.session_state.last_model_algorithm,
+                        len(y_all_current),
+                    )
+                    if loo_skip_reason:
+                        st.warning(loo_skip_reason)
+                        log_streamlit_message(
+                            "VALIDATION",
+                            loo_skip_reason,
+                            level="warning",
+                            details={"model": st.session_state.last_model_algorithm},
+                            event="loo_skipped_cloud_guard",
+                        )
+                        st.stop()
     
                 res_loo = qspr_loo_validation(
                     X=X_all_current,
