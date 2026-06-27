@@ -223,7 +223,7 @@ Admin mode is enabled only through Streamlit secrets. In Streamlit Community Clo
 ADMIN_PASSWORD = "your-private-password"
 ```
 
-The online demo notice is shown automatically on Streamlit Cloud hosts. To force this behavior, add:
+The online demo notice is shown automatically on Streamlit Cloud hosts. It opens on page load, collapses once after 10 seconds, and then works as a manual expand/collapse block until the page is reloaded. To force this behavior, add:
 
 ```toml
 AUGUR_SHOW_ONLINE_DEMO_NOTICE = "true"

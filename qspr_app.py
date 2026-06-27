@@ -47,6 +47,7 @@ from modules.statistics_summary_ui import render_final_statistics_summary
 import time
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 def _qspr_arrow_safe_table_data(data):
@@ -222,6 +223,11 @@ def qspr_show_online_demo_notice():
     if not qspr_is_online_streamlit_version():
         return
 
+    title = escape(t("online_demo_notice.title"))
+    body = escape(t("online_demo_notice.body"))
+    github_text = escape(t("online_demo_notice.github"))
+    collapse_label = escape(t("online_demo_notice.collapse_label"))
+    expand_label = escape(t("online_demo_notice.expand_label"))
     link_label = t("online_demo_notice.link_label")
     github_link = (
         f'<a href="{escape(AUGUR_GITHUB_URL, quote=True)}" '
@@ -232,20 +238,57 @@ def qspr_show_online_demo_notice():
     else:
         link_label = f"{escape(link_label)}: {github_link}"
 
-    st.markdown(
+    components.html(
         f"""
+        <!doctype html>
+        <html lang="{escape(st.session_state.get('lang', 'ru'))}">
+        <head>
+        <meta charset="utf-8">
         <style>
+        html, body {{
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            font-family: "Source Sans Pro", sans-serif;
+        }}
         .online-demo-notice {{
-            margin: 0.75rem 0 1rem 0;
-            padding: 0.9rem 1rem;
-            max-height: 30rem;
-            overflow: hidden;
+            box-sizing: border-box;
+            margin: 0;
             border: 1px solid #9ec5fe;
             border-radius: 0.5rem;
             background: #eef6ff;
             color: #102a43;
             line-height: 1.45;
-            animation: qspr-online-demo-hide 10s ease-in forwards;
+            overflow: hidden;
+        }}
+        .online-demo-notice summary {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.8rem 1rem;
+            cursor: pointer;
+            list-style: none;
+            user-select: none;
+        }}
+        .online-demo-notice summary::-webkit-details-marker {{
+            display: none;
+        }}
+        .online-demo-notice summary::after {{
+            content: "{collapse_label}";
+            flex: 0 0 auto;
+            color: #315f8f;
+            font-size: 0.86rem;
+            font-weight: 600;
+        }}
+        .online-demo-notice:not([open]) summary::after {{
+            content: "{expand_label}";
+        }}
+        .online-demo-notice-title {{
+            font-weight: 700;
+        }}
+        .online-demo-notice-body {{
+            padding: 0 1rem 0.95rem 1rem;
         }}
         .online-demo-notice a {{
             color: #0b5ed7;
@@ -255,34 +298,63 @@ def qspr_show_online_demo_notice():
         .online-demo-notice a:hover {{
             text-decoration: underline;
         }}
-        @keyframes qspr-online-demo-hide {{
-            0%, 88% {{
-                opacity: 1;
-                max-height: 30rem;
-                margin-top: 0.75rem;
-                margin-bottom: 1rem;
-                padding-top: 0.9rem;
-                padding-bottom: 0.9rem;
-            }}
-            100% {{
-                opacity: 0;
-                max-height: 0;
-                margin-top: 0;
-                margin-bottom: 0;
-                padding-top: 0;
-                padding-bottom: 0;
-                border-width: 0;
+        @media (max-width: 640px) {{
+            .online-demo-notice summary {{
+                align-items: flex-start;
+                flex-direction: column;
             }}
         }}
         </style>
-        <div class="online-demo-notice">
-          <strong>{escape(t('online_demo_notice.title'))}</strong><br>
-          {escape(t('online_demo_notice.body'))}<br><br>
-          {escape(t('online_demo_notice.github'))}<br><br>
-          {link_label}
-        </div>
+        </head>
+        <body>
+        <details class="online-demo-notice" id="online-demo-notice" open>
+          <summary><span class="online-demo-notice-title">{title}</span></summary>
+          <div class="online-demo-notice-body">
+            {body}<br><br>
+            {github_text}<br><br>
+            {link_label}
+          </div>
+        </details>
+        <script>
+        const notice = document.getElementById("online-demo-notice");
+        const summary = notice.querySelector("summary");
+        let userInteracted = false;
+
+        function setFrameHeight() {{
+            const height = Math.ceil(document.documentElement.scrollHeight);
+            window.parent.postMessage({{
+                isStreamlitMessage: true,
+                type: "streamlit:setFrameHeight",
+                height: height
+            }}, "*");
+        }}
+
+        function refreshFrameHeight() {{
+            setFrameHeight();
+            window.setTimeout(setFrameHeight, 80);
+            window.setTimeout(setFrameHeight, 250);
+        }}
+
+        summary.addEventListener("click", () => {{
+            userInteracted = true;
+            refreshFrameHeight();
+        }});
+
+        notice.addEventListener("toggle", refreshFrameHeight);
+        window.addEventListener("load", refreshFrameHeight);
+        window.setTimeout(() => {{
+            if (!userInteracted && notice.open) {{
+                notice.open = false;
+                refreshFrameHeight();
+            }}
+        }}, 10000);
+        refreshFrameHeight();
+        </script>
+        </body>
+        </html>
         """,
-        unsafe_allow_html=True,
+        height=230,
+        scrolling=False,
     )
 
 

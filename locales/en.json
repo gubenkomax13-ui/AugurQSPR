@@ -4,7 +4,9 @@
     "title": "Introductory online version",
     "body": "This version of Augur QSPR is hosted on Streamlit Cloud and is intended to demonstrate the main capabilities of the program. Due to technical limitations of the cloud environment, some functions related to local databases, long-running calculations, extended spectral resource management, and the full set of service tools may be unavailable or work in a limited mode.",
     "github": "To use the full functionality, download the program source code from the GitHub repository and run the application locally on your own computer.",
-    "link_label": "Full version and local launch instructions: GitHub"
+    "link_label": "Full version and local launch instructions: GitHub",
+    "collapse_label": "Collapse",
+    "expand_label": "Expand"
   },
   "sidebar": {
     "title": "⚙️ Control Panel",
