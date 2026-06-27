@@ -30,6 +30,7 @@ import hmac
 import warnings
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from html import escape
 from sklearn.linear_model import LinearRegression
 from modules.applicability_domain_core import *
 from modules.methodology_generator import generate_methodology_text
@@ -164,19 +165,124 @@ def _remember_lang_in_url(lang):
         pass
 
 
-def qspr_show_online_demo_notice():
-    link_label = t("online_demo_notice.link_label")
-    markdown_link = f"[GitHub]({AUGUR_GITHUB_URL})"
-    if "GitHub" in link_label:
-        link_label = link_label.replace("GitHub", markdown_link)
-    else:
-        link_label = f"{link_label}: {markdown_link}"
+def _qspr_bool_setting(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
 
-    st.info(
-        f"**{t('online_demo_notice.title')}**\n\n"
-        f"{t('online_demo_notice.body')}\n\n"
-        f"{t('online_demo_notice.github')}\n\n"
-        f"{link_label}"
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
+
+
+def qspr_is_online_streamlit_version():
+    for source in (os.environ.get("AUGUR_SHOW_ONLINE_DEMO_NOTICE"),):
+        parsed = _qspr_bool_setting(source)
+        if parsed is not None:
+            return parsed
+
+    try:
+        parsed = _qspr_bool_setting(st.secrets.get("AUGUR_SHOW_ONLINE_DEMO_NOTICE"))
+        if parsed is not None:
+            return parsed
+    except Exception:
+        pass
+
+    streamlit_env_markers = [
+        "STREAMLIT_CLOUD",
+        "STREAMLIT_SHARING_MODE",
+        "STREAMLIT_RUNTIME_ENV",
+    ]
+    for env_name in streamlit_env_markers:
+        value = str(os.environ.get(env_name, "")).strip().lower()
+        if value and value not in {"0", "false", "local", "development"}:
+            return True
+
+    context = getattr(st, "context", None)
+    headers = getattr(context, "headers", {}) if context is not None else {}
+    try:
+        host = str(headers.get("host") or headers.get("Host") or "").lower()
+    except AttributeError:
+        host = ""
+
+    try:
+        url = str(getattr(context, "url", "") or "").lower()
+    except Exception:
+        url = ""
+
+    online_hosts = ("streamlit.app", "share.streamlit.io")
+    return any(marker in host or marker in url for marker in online_hosts)
+
+
+def qspr_show_online_demo_notice():
+    if not qspr_is_online_streamlit_version():
+        return
+
+    link_label = t("online_demo_notice.link_label")
+    github_link = (
+        f'<a href="{escape(AUGUR_GITHUB_URL, quote=True)}" '
+        f'target="_blank" rel="noopener noreferrer">GitHub</a>'
+    )
+    if "GitHub" in link_label:
+        link_label = escape(link_label).replace("GitHub", github_link)
+    else:
+        link_label = f"{escape(link_label)}: {github_link}"
+
+    st.markdown(
+        f"""
+        <style>
+        .online-demo-notice {{
+            margin: 0.75rem 0 1rem 0;
+            padding: 0.9rem 1rem;
+            max-height: 30rem;
+            overflow: hidden;
+            border: 1px solid #9ec5fe;
+            border-radius: 0.5rem;
+            background: #eef6ff;
+            color: #102a43;
+            line-height: 1.45;
+            animation: qspr-online-demo-hide 10s ease-in forwards;
+        }}
+        .online-demo-notice a {{
+            color: #0b5ed7;
+            font-weight: 600;
+            text-decoration: none;
+        }}
+        .online-demo-notice a:hover {{
+            text-decoration: underline;
+        }}
+        @keyframes qspr-online-demo-hide {{
+            0%, 88% {{
+                opacity: 1;
+                max-height: 30rem;
+                margin-top: 0.75rem;
+                margin-bottom: 1rem;
+                padding-top: 0.9rem;
+                padding-bottom: 0.9rem;
+            }}
+            100% {{
+                opacity: 0;
+                max-height: 0;
+                margin-top: 0;
+                margin-bottom: 0;
+                padding-top: 0;
+                padding-bottom: 0;
+                border-width: 0;
+            }}
+        }}
+        </style>
+        <div class="online-demo-notice">
+          <strong>{escape(t('online_demo_notice.title'))}</strong><br>
+          {escape(t('online_demo_notice.body'))}<br><br>
+          {escape(t('online_demo_notice.github'))}<br><br>
+          {link_label}
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 

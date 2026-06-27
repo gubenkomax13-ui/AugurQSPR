@@ -223,6 +223,14 @@ Admin mode is enabled only through Streamlit secrets. In Streamlit Community Clo
 ADMIN_PASSWORD = "your-private-password"
 ```
 
+The online demo notice is shown automatically on Streamlit Cloud hosts. To force this behavior, add:
+
+```toml
+AUGUR_SHOW_ONLINE_DEMO_NOTICE = "true"
+```
+
+For a local run, leave this secret unset or set it to `"false"`.
+
 Do not commit `.streamlit/secrets.toml` to GitHub.
 
 The public repository should not include private datasets, generated reports, local caches, or private model packages. These are excluded by `.gitignore`.
