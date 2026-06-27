@@ -11645,31 +11645,6 @@ with st.expander(
     else:
         st.markdown(f"{run_section_number}. Расчёт")
 
-    col_run_ready, col_run_bank = st.columns(2)
-
-    with col_run_ready:
-        run_ready_spectral_descriptors = st.button(
-            "Использовать готовые спектральные дескрипторы",
-            type="primary",
-            key=f"use_ready_spectral_descriptors_{descriptor_spectrum_label.lower().replace(' ', '_').replace('+', 'plus')}",
-            help=(
-                "Берёт готовую таблицу спектральных дескрипторов из локального кэша "
-                "или из GitHub raw URL, без скачивания файлов спектров."
-            )
-        )
-
-    run_spectral_descriptors = False
-
-    with col_run_bank:
-        if is_admin():
-            run_spectral_descriptors = st.button(
-                "Скачать спектры из банка и рассчитать дескрипторы",
-                type="secondary",
-                key=f"run_spectral_descriptors_{descriptor_spectrum_type.lower()}"
-            )
-        else:
-            st.caption("Для пользователя используется режим готовых спектральных дескрипторов без скачивания спектров.")
-
     run_admin_cache_all_spectra = False
 
     if is_admin():
@@ -11703,6 +11678,16 @@ with st.expander(
             key=f"admin_cache_all_spectra_{descriptor_spectrum_type.lower()}",
             type="secondary"
         )
+
+    run_ready_spectral_descriptors = st.button(
+        "Использовать готовые спектральные дескрипторы",
+        type="primary",
+        key=f"use_ready_spectral_descriptors_{descriptor_spectrum_label.lower().replace(' ', '_').replace('+', 'plus')}",
+        help=(
+            "Берёт готовую таблицу спектральных дескрипторов из локального кэша "
+            "или из GitHub raw URL, без скачивания файлов спектров."
+        )
+    )
 
     if run_admin_cache_all_spectra:
         if not any([use_grid_desc, use_binary_fp, use_binned_numeric]):
@@ -11789,8 +11774,8 @@ with st.expander(
             if cache_df_all is not None and not cache_df_all.empty:
                 st.dataframe(cache_df_all.head(50), width="stretch", hide_index=True)
 
-    if run_ready_spectral_descriptors or run_spectral_descriptors:
-        use_ready_descriptor_cache_only = bool(run_ready_spectral_descriptors)
+    if run_ready_spectral_descriptors:
+        use_ready_descriptor_cache_only = True
         selected_descriptor_configs = list(spectral_descriptor_configs.values())
 
         if any(
@@ -11852,17 +11837,11 @@ with st.expander(
 
             spinner_text = (
                 "Подключаем готовые спектральные дескрипторы..."
-                if use_ready_descriptor_cache_only
-                else t('spectra_desc.spinner_converting')
             )
 
             with st.spinner(spinner_text):
                 def run_one_spectral_descriptor_builder(cfg):
-                    spectral_builder = (
-                        spectral_build_descriptors_from_ready_cache_for_dataset
-                        if use_ready_descriptor_cache_only
-                        else spectral_build_descriptors_for_dataset
-                    )
+                    spectral_builder = spectral_build_descriptors_from_ready_cache_for_dataset
 
                     def update_typed_progress(current, total, stage, payload):
                         payload = dict(payload or {})
