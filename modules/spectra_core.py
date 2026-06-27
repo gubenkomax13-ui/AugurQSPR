@@ -6342,8 +6342,15 @@ def spectral_load_descriptor_cache_for_inchikeys(spectrum_type="IR", inchikeys=N
     """
     Loads only descriptor shards needed for a set of InChIKey values.
     Falls back to the full descriptor cache if no local/remote shards are found.
+    If shards are present but stale, supplements missing InChIKey rows from
+    the full descriptor cache.
     """
     inchikeys = list(inchikeys or [])
+    requested_inchikeys = {
+        str(x).strip()
+        for x in inchikeys
+        if str(x).strip()
+    }
     shard_keys = sorted({
         spectral_descriptor_shard_key(x)
         for x in inchikeys
@@ -6388,6 +6395,37 @@ def spectral_load_descriptor_cache_for_inchikeys(spectrum_type="IR", inchikeys=N
         for col in spectral_descriptor_cache_required_cols():
             if col not in cache_df.columns:
                 cache_df[col] = ""
+
+        if requested_inchikeys and "inchikey" in cache_df.columns:
+            found_inchikeys = set(
+                cache_df["inchikey"]
+                .astype(str)
+                .str.strip()
+                .tolist()
+            )
+            missing_inchikeys = requested_inchikeys - found_inchikeys
+
+            if missing_inchikeys:
+                full_cache_df = spectral_load_descriptor_cache(spectrum_type)
+
+                if (
+                    full_cache_df is not None
+                    and not full_cache_df.empty
+                    and "inchikey" in full_cache_df.columns
+                ):
+                    fallback_df = full_cache_df[
+                        full_cache_df["inchikey"]
+                        .astype(str)
+                        .str.strip()
+                        .isin(missing_inchikeys)
+                    ].copy()
+
+                    if not fallback_df.empty:
+                        cache_df = pd.concat(
+                            [cache_df, fallback_df],
+                            ignore_index=True,
+                            sort=False,
+                        )
 
         return cache_df
 
