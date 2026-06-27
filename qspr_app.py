@@ -111,6 +111,7 @@ from modules.i18n import (
 )
 
 SUPPORTED_LANGS = ("ru", "en", "kk")
+AUGUR_GITHUB_URL = "https://github.com/gubenkomax13-ui/AugurQSPR"
 
 
 def _normalize_lang_code(value):
@@ -161,6 +162,22 @@ def _remember_lang_in_url(lang):
         st.query_params["lang"] = lang
     except Exception:
         pass
+
+
+def qspr_show_online_demo_notice():
+    link_label = t("online_demo_notice.link_label")
+    markdown_link = f"[GitHub]({AUGUR_GITHUB_URL})"
+    if "GitHub" in link_label:
+        link_label = link_label.replace("GitHub", markdown_link)
+    else:
+        link_label = f"{link_label}: {markdown_link}"
+
+    st.info(
+        f"**{t('online_demo_notice.title')}**\n\n"
+        f"{t('online_demo_notice.body')}\n\n"
+        f"{t('online_demo_notice.github')}\n\n"
+        f"{link_label}"
+    )
 
 
 query_lang = _query_param_lang()
@@ -6525,6 +6542,8 @@ def reset_project_state_for_new_file():
 # Sidebar
 
 st.title(t('app_title'))
+
+qspr_show_online_demo_notice()
 
 render_admin_login_controls()
 

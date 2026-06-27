@@ -14,6 +14,105 @@ Branch: main
 Main file path: qspr_app.py
 ```
 
+## Полная версия и локальный запуск
+
+Онлайн-версия Augur QSPR на Streamlit Cloud предназначена для ознакомления с основными возможностями программы. Полная функциональность, включая работу с локальными базами спектров, расширенные расчёты дескрипторов, длительные процедуры валидации и служебные инструменты, доступна при локальном запуске приложения на собственном компьютере.
+
+Репозиторий полной версии: [GitHub](https://github.com/gubenkomax13-ui/AugurQSPR).
+
+### 1. Скачать проект
+
+```bash
+git clone https://github.com/gubenkomax13-ui/AugurQSPR.git
+cd AugurQSPR
+```
+
+Также можно нажать `Code` -> `Download ZIP` на странице репозитория, распаковать архив и открыть папку проекта.
+
+### 2. Создать виртуальное окружение
+
+Windows:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+Linux/macOS:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 3. Установить зависимости
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 4. Запустить приложение
+
+```bash
+streamlit run qspr_app.py
+```
+
+После запуска откройте:
+
+```text
+http://localhost:8501
+```
+
+## Системные требования
+
+- Рекомендуется Python 3.11.
+- Минимум 8 GB RAM; для больших наборов дескрипторов желательно 16 GB RAM.
+- Java Runtime Environment требуется для PaDEL-дескрипторов. В Streamlit Cloud он задаётся через `packages.txt` как `default-jre`.
+- Интернет требуется только для загрузки внешних ресурсов, Google Drive баз или онлайн-поиска спектров.
+
+## Возможности локальной версии
+
+Локальный запуск позволяет использовать:
+
+- QSPR/QSAR-моделирование;
+- расчёт RDKit, Mordred и PaDEL-дескрипторов;
+- обучение и сравнение моделей;
+- Hold-out, K-Fold, LOO, Repeated Hold-out, Bootstrap и Y-randomization;
+- Applicability Domain;
+- диагностику ошибок модели;
+- анализ важности дескрипторов;
+- прогноз свойств новых веществ;
+- работу с локальными спектральными базами;
+- расчёт спектральных дескрипторов;
+- расширенные отчёты и экспорт результатов.
+
+## Ограничения Streamlit Cloud версии
+
+Облачная версия может иметь ограничения:
+
+- нет прямого доступа к диску пользователя;
+- большие спектральные базы должны подключаться отдельно;
+- длительные расчёты могут быть ограничены ресурсами Streamlit Cloud;
+- часть служебных инструментов доступна только администратору;
+- локальные модели и базы данных не входят в демонстрационную поставку.
+
+## Зависимости
+
+Основные зависимости устанавливаются из `requirements.txt`: Streamlit, NumPy, pandas, SciPy, scikit-learn, matplotlib, seaborn, RDKit, joblib, openpyxl, xlsxwriter, SHAP, streamlit-ketcher и пакеты для работы со спектральными ресурсами.
+
+Mordred и PaDEL используются для расширенных наборов молекулярных дескрипторов. PaDEL требует Java Runtime Environment; для базового запуска достаточно RDKit-дескрипторов. Если установка Mordred/PaDEL нестабильна в облачной среде, используйте локальный запуск или режим RDKit-дескрипторов.
+
+Опциональные возможности используют дополнительные пакеты:
+
+- `gdown` - загрузка ресурсов из Google Drive;
+- `python-docx` и `reportlab` - подготовка расширенных отчётов;
+- `plotly` - интерактивные графики, если они включены в соответствующих блоках;
+- `morfeus-ml` - 3D/morfeus-дескрипторы;
+- `dscribe` - атомистические дескрипторы;
+- `xgboost`, `lightgbm`, `catboost` - дополнительные алгоритмы машинного обучения;
+- `jcamp` - разбор спектральных файлов JCAMP-DX.
+
 ## Run Locally
 
 ```bash
@@ -131,3 +230,7 @@ The public repository should not include private datasets, generated reports, lo
 ## Security Note
 
 Only upload `.pkl` or `.joblib` models from trusted sources. Pickle/joblib files can execute Python code when loaded.
+
+## Безопасность
+
+Загружайте `.pkl` и `.joblib` модели только из доверенных источников. Эти форматы используют pickle-механизм Python и потенциально могут выполнять код при загрузке.
