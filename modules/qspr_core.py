@@ -183,6 +183,44 @@ try:
 except Exception:
     xtb_python_available = False
 
+
+def qspr_is_streamlit_cloud_runtime():
+    """Return True when the app appears to run in Streamlit Cloud."""
+    override = os.environ.get("AUGUR_ONLINE_LIGHT_MODE", "")
+    override_norm = str(override).strip().lower()
+
+    if override_norm in {"1", "true", "yes", "y", "on"}:
+        return True
+
+    if override_norm in {"0", "false", "no", "n", "off"}:
+        return False
+
+    for env_name in (
+        "STREAMLIT_CLOUD",
+        "STREAMLIT_SHARING_MODE",
+        "STREAMLIT_RUNTIME_ENV",
+    ):
+        value = str(os.environ.get(env_name, "")).strip().lower()
+
+        if value and value not in {"0", "false", "local", "development"}:
+            return True
+
+    try:
+        context = getattr(st, "context", None)
+        headers = getattr(context, "headers", {}) if context is not None else {}
+        host = str(headers.get("host") or headers.get("Host") or "").lower()
+        url = str(getattr(context, "url", "") or "").lower()
+    except Exception:
+        host = ""
+        url = ""
+
+    return any(marker in host or marker in url for marker in ("streamlit.app", "share.streamlit.io"))
+
+
+def qspr_n_jobs():
+    """Conservative parallelism for Streamlit Cloud, full parallelism locally."""
+    return 1 if qspr_is_streamlit_cloud_runtime() else -1
+
 # ------------------------------------------------------------------
 # Файлы и папки
 
@@ -1784,11 +1822,19 @@ def qspr_create_regression_model(
     if params:
         p.update(params)
 
+    if qspr_is_streamlit_cloud_runtime():
+        p["rf_n_estimators"] = min(int(p.get("rf_n_estimators", 300)), 100)
+        p["et_n_estimators"] = min(int(p.get("et_n_estimators", 300)), 100)
+        p["xgb_n_estimators"] = min(int(p.get("xgb_n_estimators", 300)), 100)
+        p["lightgbm_n_estimators"] = min(int(p.get("lightgbm_n_estimators", 300)), 100)
+        p["catboost_iterations"] = min(int(p.get("catboost_iterations", 300)), 100)
+        p["mlp_max_iter"] = min(int(p.get("mlp_max_iter", 1000)), 500)
+
     if model_name == "Random Forest":
         return RandomForestRegressor(
             n_estimators=int(p["rf_n_estimators"]),
             random_state=42,
-            n_jobs=-1
+            n_jobs=qspr_n_jobs()
         )
     
     if model_name == "Extra Trees":
@@ -1799,7 +1845,7 @@ def qspr_create_regression_model(
             min_samples_leaf=int(p["et_min_samples_leaf"]),
             max_features=p["et_max_features"],
             random_state=42,
-            n_jobs=-1
+            n_jobs=qspr_n_jobs()
         )
     
     if model_name == "Множественная линейная регрессия (MLR)":
@@ -1849,7 +1895,8 @@ def qspr_create_regression_model(
             subsample=0.9,
             colsample_bytree=0.9,
             random_state=42,
-            objective="reg:squarederror"
+            objective="reg:squarederror",
+            n_jobs=qspr_n_jobs()
         )
 
     if model_name == "LightGBM":
@@ -1861,7 +1908,7 @@ def qspr_create_regression_model(
             learning_rate=float(p["lightgbm_learning_rate"]),
             num_leaves=int(p["lightgbm_num_leaves"]),
             random_state=42,
-            n_jobs=-1,
+            n_jobs=qspr_n_jobs(),
             verbosity=-1
         )
 
@@ -1875,6 +1922,7 @@ def qspr_create_regression_model(
             depth=int(p["catboost_depth"]),
             loss_function="RMSE",
             random_seed=42,
+            thread_count=qspr_n_jobs(),
             verbose=False
         )
 
@@ -2042,7 +2090,7 @@ def qspr_create_regression_model(
                 RandomForestRegressor(
                     n_estimators=int(p["rf_n_estimators"]),
                     random_state=42,
-                    n_jobs=-1
+                    n_jobs=qspr_n_jobs()
                 )
             )
         )
@@ -2058,7 +2106,8 @@ def qspr_create_regression_model(
                         subsample=0.9,
                         colsample_bytree=0.9,
                         random_state=42,
-                        objective="reg:squarederror"
+                        objective="reg:squarederror",
+                        n_jobs=qspr_n_jobs()
                     )
                 )
             )
@@ -2072,7 +2121,7 @@ def qspr_create_regression_model(
                         learning_rate=float(p["lightgbm_learning_rate"]),
                         num_leaves=int(p["lightgbm_num_leaves"]),
                         random_state=42,
-                        n_jobs=-1,
+                        n_jobs=qspr_n_jobs(),
                         verbosity=-1
                     )
                 )
@@ -2088,6 +2137,7 @@ def qspr_create_regression_model(
                         depth=int(p["catboost_depth"]),
                         loss_function="RMSE",
                         random_seed=42,
+                        thread_count=qspr_n_jobs(),
                         verbose=False
                     )
                 )
@@ -2109,7 +2159,7 @@ def qspr_create_regression_model(
             final_estimator=Ridge(alpha=1.0),
             cv=cv_value,
             passthrough=bool(p["stacking_passthrough"]),
-            n_jobs=-1
+            n_jobs=qspr_n_jobs()
         )
 
     if model_name == "Voting Regressor":
@@ -2119,7 +2169,7 @@ def qspr_create_regression_model(
                 RandomForestRegressor(
                     n_estimators=int(p["rf_n_estimators"]),
                     random_state=42,
-                    n_jobs=-1
+                    n_jobs=qspr_n_jobs()
                 )
             ),
             (
@@ -2131,7 +2181,7 @@ def qspr_create_regression_model(
                     min_samples_leaf=int(p["et_min_samples_leaf"]),
                     max_features=p["et_max_features"],
                     random_state=42,
-                    n_jobs=-1
+                    n_jobs=qspr_n_jobs()
                 )
             ),
             ("ridge", Ridge(alpha=float(p["ridge_alpha"]))),
@@ -2148,7 +2198,7 @@ def qspr_create_regression_model(
         return VotingRegressor(
             estimators=estimators,
             weights=weights,
-            n_jobs=-1
+            n_jobs=qspr_n_jobs()
         )
 
     raise ValueError(f"Неизвестная модель: {model_name}")
@@ -2508,7 +2558,7 @@ class QSPRDescriptorSelector(BaseEstimator, TransformerMixin):
                 rf = RandomForestRegressor(
                     n_estimators=int(self.rf_n_estimators),
                     random_state=self.random_state,
-                    n_jobs=-1
+                    n_jobs=qspr_n_jobs()
                 )
                 rf.fit(X_candidate, y)
 
@@ -2824,7 +2874,7 @@ def qspr_auto_select_and_tune(
                 scoring=scoring,
                 cv=cv,
                 random_state=42,
-                n_jobs=-1,
+                n_jobs=qspr_n_jobs(),
                 error_score=np.nan
             )
         else:
@@ -2833,7 +2883,7 @@ def qspr_auto_select_and_tune(
                 param_grid=param_grid,
                 scoring=scoring,
                 cv=cv,
-                n_jobs=-1,
+                n_jobs=qspr_n_jobs(),
                 error_score=np.nan
             )
 
@@ -2856,7 +2906,7 @@ def qspr_auto_select_and_tune(
             X,
             y,
             cv=cv,
-            n_jobs=-1
+            n_jobs=qspr_n_jobs()
         )
         cv_metrics = qspr_metrics(y, y_cv_pred)
     except Exception:

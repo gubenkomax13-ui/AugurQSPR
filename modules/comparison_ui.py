@@ -29,6 +29,23 @@ def render_model_comparison_section(context):
         for _m in _models:
             if _m not in all_models_for_compare:
                 all_models_for_compare.append(_m)
+
+    try:
+        online_light_mode = bool(qspr_is_online_streamlit_version())
+    except Exception:
+        try:
+            online_light_mode = bool(qspr_is_streamlit_cloud_runtime())
+        except Exception:
+            online_light_mode = False
+
+    online_default_models = [
+        "Множественная линейная регрессия (MLR)",
+        "PLS Regression",
+        "Ridge",
+        "LASSO",
+        "Elastic Net",
+        "CART Regression",
+    ]
     
     safe_default_models = [
         "Множественная линейная регрессия (MLR)",
@@ -45,12 +62,38 @@ def render_model_comparison_section(context):
         "GAM Regression",
         "Voting Regressor",
     ]
+
+    if online_light_mode:
+        safe_default_models = online_default_models
     
     safe_default_models = [m for m in safe_default_models if m in all_models_for_compare]
     
     if not all_models_for_compare:
         st.warning(t('model_comparison.no_models_warning'))
     else:
+        if online_light_mode:
+            st.info(
+                "Онлайн-версия работает в облегчённом режиме сравнения моделей: "
+                "по умолчанию выбраны быстрые алгоритмы, K-Fold ограничен 3 блоками, "
+                "LOO и дополнительные многократные проверки отключены. "
+                "Для полного сравнения используйте локальную версию."
+            )
+            cloud_widget_limits = {
+                "cmp_top_n": 5,
+                "cmp_mc_repeats": 50,
+                "cmp_bootstrap_repeats": 50,
+                "cmp_yrandom_repeats": 50,
+            }
+
+            for state_key, max_value in cloud_widget_limits.items():
+                try:
+                    current_value = int(st.session_state.get(state_key, max_value))
+                except (TypeError, ValueError):
+                    current_value = max_value
+
+                if current_value > max_value:
+                    st.session_state[state_key] = max_value
+
         with st.expander(t('model_comparison.settings_expander'), expanded=True):
             selected_compare_models = st.multiselect(
                 t('model_comparison.candidates_label'),
@@ -96,11 +139,12 @@ def render_model_comparison_section(context):
             col_cmp_cfg_1, col_cmp_cfg_2 = st.columns(2)
     
             with col_cmp_cfg_1:
+                default_kfold_k = 3 if online_light_mode else min(5, max(3, min(10, len(y_all_current))))
                 cmp_kfold_k = st.slider(
                     t('model_comparison.kfold_k_label'),
                     min_value=3,
                     max_value=max(3, min(10, len(y_all_current))),
-                    value=min(5, max(3, min(10, len(y_all_current)))),
+                    value=default_kfold_k,
                     step=1,
                     key="cmp_kfold_k"
                 )
@@ -120,7 +164,7 @@ def render_model_comparison_section(context):
     
             cmp_run_loo_top = st.checkbox(
                 t('model_comparison.loo_top_checkbox'),
-                value=True,
+                value=not online_light_mode,
                 key="cmp_run_loo_top"
             )
     
@@ -145,8 +189,8 @@ def render_model_comparison_section(context):
             cmp_top_n = st.number_input(
                 t('model_comparison.top_n_label'),
                 min_value=1,
-                max_value=10,
-                value=3,
+                max_value=5 if online_light_mode else 10,
+                value=2 if online_light_mode else 3,
                 step=1,
                 key="cmp_top_n"
             )
@@ -154,8 +198,8 @@ def render_model_comparison_section(context):
             cmp_mc_repeats = st.number_input(
                 t('model_comparison.mc_repeats_label'),
                 min_value=10,
-                max_value=500,
-                value=50,
+                max_value=50 if online_light_mode else 500,
+                value=10 if online_light_mode else 50,
                 step=10,
                 key="cmp_mc_repeats",
                 disabled=not cmp_run_montecarlo_top
@@ -164,8 +208,8 @@ def render_model_comparison_section(context):
             cmp_bootstrap_repeats = st.number_input(
                 t('model_comparison.bootstrap_repeats_label'),
                 min_value=10,
-                max_value=500,
-                value=100,
+                max_value=50 if online_light_mode else 500,
+                value=10 if online_light_mode else 100,
                 step=10,
                 key="cmp_bootstrap_repeats",
                 disabled=not cmp_run_bootstrap_top
@@ -174,12 +218,34 @@ def render_model_comparison_section(context):
             cmp_yrandom_repeats = st.number_input(
                 t('model_comparison.yrandom_repeats_label'),
                 min_value=10,
-                max_value=1000,
-                value=100,
+                max_value=50 if online_light_mode else 1000,
+                value=10 if online_light_mode else 100,
                 step=10,
                 key="cmp_yrandom_repeats",
                 disabled=not cmp_run_yrandom_top
             )
+
+            if online_light_mode:
+                heavy_selected = [
+                    get_model_display_name(model_name)
+                    for model_name in selected_compare_models
+                    if model_name not in online_default_models
+                ]
+
+                if heavy_selected:
+                    st.warning(
+                        "Выбраны более тяжёлые модели для облачного режима: "
+                        + ", ".join(heavy_selected)
+                        + ". При падении Cloud-приложения уменьшите список моделей "
+                        "или запустите полное сравнение локально."
+                    )
+
+                if len(selected_compare_models) > 5:
+                    st.warning(
+                        "В онлайн-версии одновременно сравниваются первые 5 выбранных моделей. "
+                        "Остальные пропущены, чтобы не перегружать Streamlit Cloud."
+                    )
+                    selected_compare_models = selected_compare_models[:5]
             
     
         if st.button(t('model_comparison.run_button'), type="primary", key="train_compare_and_choose_models"):
