@@ -11441,11 +11441,11 @@ with st.expander(
 
     if descriptor_method_mode == t('spectra_desc.mode_vazhev'):
         default_use_grid = True
-        default_use_binary = False
-        default_use_bands = False
+        default_use_binary = True
+        default_use_bands = True
         default_use_svd = True
     elif descriptor_method_mode == t('spectra_desc.mode_compressed'):
-        default_use_grid = False
+        default_use_grid = True
         default_use_binary = True
         default_use_bands = True
         default_use_svd = True
