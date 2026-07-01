@@ -2,12 +2,48 @@
 """Интерфейс сохранения проверенной QSPR-модели."""
 
 from datetime import datetime
+import os
 
 import joblib
 import numpy as np
 import streamlit as st
 
 from modules.i18n import t
+
+
+ONLINE_LOCK_MESSAGE = (
+    "Эта функция показана как возможность полной локальной версии Augur QSPR, "
+    "но в публичном онлайн-режиме она отключена для безопасности и стабильности."
+)
+
+
+def qspr_save_is_online_mode():
+    for source in (os.environ.get("AUGUR_MODE"), os.environ.get("AUGUR_RUNTIME_MODE")):
+        value = str(source or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return True
+        if value in {"local", "full", "desktop"}:
+            return False
+
+    try:
+        value = str(st.secrets.get("AUGUR_MODE", "") or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return True
+        if value in {"local", "full", "desktop"}:
+            return False
+    except Exception:
+        pass
+
+    try:
+        context = getattr(st, "context", None)
+        headers = getattr(context, "headers", {}) if context is not None else {}
+        host = str(headers.get("host") or headers.get("Host") or "").lower()
+        url = str(getattr(context, "url", "") or "").lower()
+    except Exception:
+        host = ""
+        url = ""
+
+    return any(marker in host or marker in url for marker in ("streamlit.app", "share.streamlit.io"))
 
 try:
     from modules.prognostic_model_core import qspr_prog_build_descriptor_groups
@@ -55,7 +91,14 @@ def render_verified_model_save(
         return
 
     st.caption(t("save_model.verified_caption"))
-    if not st.button(t("save_model.button"), key="save_analysis"):
+    if qspr_save_is_online_mode():
+        st.info(ONLINE_LOCK_MESSAGE)
+
+    if not st.button(
+        t("save_model.button"),
+        key="save_analysis",
+        disabled=qspr_save_is_online_mode(),
+    ):
         return
 
     model_package = {

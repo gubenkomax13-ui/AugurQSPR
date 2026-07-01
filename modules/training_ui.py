@@ -174,6 +174,24 @@ def render_training_section(context):
             
     st.session_state.last_model_group = model_group
     st.session_state.last_model_algorithm = model_name
+
+    is_online_mode = bool(globals().get("qspr_is_online_mode", lambda: False)())
+    online_allowed_models = {
+        "Linear Regression",
+        "Ridge",
+        "LASSO",
+        "Elastic Net",
+        "Random Forest",
+        "SVR",
+    }
+    online_model_locked = is_online_mode and model_name not in online_allowed_models
+    if online_model_locked:
+        st.info(
+            "Эта модель показана как возможность полной локальной версии Augur QSPR, "
+            "но в публичном онлайн-режиме обучение для нее отключено. "
+            "Для онлайн-демо используйте Linear Regression, Ridge, LASSO, "
+            "Elastic Net, Random Forest или SVR."
+        )
     
     if model_group == MODEL_GROUP_KERNEL_SIMILARITY:
         show_markdown_help(
@@ -1044,7 +1062,11 @@ def render_training_section(context):
         )
     
     # Training
-    train_clicked = st.button(t('model_training.train_button'), type="primary")
+    train_clicked = st.button(
+        t('model_training.train_button'),
+        type="primary",
+        disabled=online_model_locked,
+    )
     
     if train_clicked:
         try:

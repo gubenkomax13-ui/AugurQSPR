@@ -252,6 +252,35 @@ def qspr_safe_target_name(target_col):
     return safe
 
 
+def qspr_core_is_online_mode():
+    for source in (os.environ.get("AUGUR_MODE"), os.environ.get("AUGUR_RUNTIME_MODE")):
+        value = str(source or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return True
+        if value in {"local", "full", "desktop"}:
+            return False
+
+    try:
+        value = str(st.secrets.get("AUGUR_MODE", "") or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return True
+        if value in {"local", "full", "desktop"}:
+            return False
+    except Exception:
+        pass
+
+    try:
+        context = getattr(st, "context", None)
+        headers = getattr(context, "headers", {}) if context is not None else {}
+        host = str(headers.get("host") or headers.get("Host") or "").lower()
+        url = str(getattr(context, "url", "") or "").lower()
+    except Exception:
+        host = ""
+        url = ""
+
+    return any(marker in host or marker in url for marker in ("streamlit.app", "share.streamlit.io"))
+
+
 def qspr_save_results_auto(df, prefix, target_col, n_compounds, results_dir=RESULTS_DIR):
     """
     Автосохранение DataFrame в CSV.
@@ -259,6 +288,9 @@ def qspr_save_results_auto(df, prefix, target_col, n_compounds, results_dir=RESU
     Имя:
     prefix_property_N_timestamp.csv
     """
+    if qspr_core_is_online_mode():
+        return ""
+
     os.makedirs(results_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

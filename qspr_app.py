@@ -114,6 +114,12 @@ from modules.i18n import (
 
 SUPPORTED_LANGS = ("ru", "en", "kk")
 AUGUR_GITHUB_URL = "https://github.com/gubenkomax13-ui/AugurQSPR"
+ONLINE_LOCK_MESSAGE = (
+    "Эта функция показана как возможность полной локальной версии Augur QSPR, "
+    "но в публичном онлайн-режиме она отключена для безопасности и стабильности."
+)
+ONLINE_MAX_UPLOAD_MB = 5
+ONLINE_MAX_DATA_ROWS = 1000
 
 
 def _normalize_lang_code(value):
@@ -217,6 +223,38 @@ def qspr_is_online_streamlit_version():
 
     online_hosts = ("streamlit.app", "share.streamlit.io")
     return any(marker in host or marker in url for marker in online_hosts)
+
+
+def qspr_runtime_mode():
+    """Return `online` or `local` for feature gating."""
+    for source in (os.environ.get("AUGUR_MODE"), os.environ.get("AUGUR_RUNTIME_MODE")):
+        value = str(source or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return "online"
+        if value in {"local", "full", "desktop"}:
+            return "local"
+
+    try:
+        value = str(st.secrets.get("AUGUR_MODE", "") or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return "online"
+        if value in {"local", "full", "desktop"}:
+            return "local"
+    except Exception:
+        pass
+
+    return "online" if qspr_is_online_streamlit_version() else "local"
+
+
+def qspr_is_online_mode():
+    return qspr_runtime_mode() == "online"
+
+
+def qspr_online_lock_notice(feature_name=""):
+    if feature_name:
+        st.info(f"{feature_name}: {ONLINE_LOCK_MESSAGE}")
+    else:
+        st.info(ONLINE_LOCK_MESSAGE)
 
 
 def qspr_show_online_demo_notice():
@@ -3994,6 +4032,17 @@ def show_admin_only_notice(feature):
 
 def render_admin_login_controls():
     with st.sidebar.expander("Администратор", expanded=False):
+        if qspr_is_online_mode():
+            st.info(ONLINE_LOCK_MESSAGE)
+            st.text_input(
+                "Admin password",
+                type="password",
+                disabled=True,
+                key="admin_password_input_online_disabled",
+            )
+            st.button("Login", disabled=True, key="admin_login_button_online_disabled")
+            return
+
         if is_admin():
             st.success("Режим администратора активен.")
             if st.button("Выйти из режима администратора", key="admin_logout_button"):
@@ -6748,11 +6797,11 @@ elif legacy_app_mode not in {"qspr", "prediction"}:
 else:
     st.session_state["main_app_mode_code"] = legacy_app_mode
 
-if not is_admin() and st.session_state.get("main_app_mode_code") == "prediction":
+if (not qspr_is_online_mode()) and not is_admin() and st.session_state.get("main_app_mode_code") == "prediction":
     show_admin_only_notice("prediction_mode")
     st.session_state["main_app_mode_code"] = "qspr"
 
-app_mode_options = ["qspr", "prediction"] if is_admin() else ["qspr"]
+app_mode_options = ["qspr", "prediction"] if (qspr_is_online_mode() or is_admin()) else ["qspr"]
 
 app_mode = st.radio(
     t('mode.select'),
@@ -6765,7 +6814,7 @@ app_mode = st.radio(
     key="main_app_mode_code",
 )
 
-if not is_admin():
+if not is_admin() and not qspr_is_online_mode():
     st.caption(t("mode.prediction_admin_only"))
 
 with st.sidebar:
@@ -6843,6 +6892,11 @@ with st.sidebar:
         else:
             st.session_state.show_data_bank_panel = False
 
+if app_mode == "prediction" and qspr_is_online_mode():
+    st.header(t('mode.prediction'))
+    qspr_online_lock_notice("Standalone prediction and model package loading")
+    st.stop()
+
 if app_mode == "prediction":
     qspr_show_standalone_prediction_page()
     st.stop()
@@ -6872,6 +6926,12 @@ if uploaded_file is not None:
         st.info(t('upload.xlsx_info'))
 
     uploaded_file_size = uploaded_file.size
+    if qspr_is_online_mode() and uploaded_file_size > ONLINE_MAX_UPLOAD_MB * 1024 * 1024:
+        st.error(
+            f"Online demo accepts files up to {ONLINE_MAX_UPLOAD_MB} MB. "
+            "Use the local version for larger datasets."
+        )
+        st.stop()
 
     file_changed = (
         st.session_state.get("uploaded_file_name") != uploaded_file.name or
@@ -6928,6 +6988,13 @@ if uploaded_file is not None:
             st.stop()
 
         data.columns = data.columns.str.strip()
+
+        if qspr_is_online_mode() and len(data) > ONLINE_MAX_DATA_ROWS:
+            st.error(
+                f"Online demo accepts up to {ONLINE_MAX_DATA_ROWS} rows. "
+                "Use the local version for larger datasets."
+            )
+            st.stop()
 
         reset_project_state_for_new_file()
 
@@ -8658,7 +8725,23 @@ with st.expander(
         expanded=False
     )
 
-    if is_admin():
+    if qspr_is_online_mode():
+        with st.expander(t('spectra.import_expander'), expanded=False):
+            qspr_online_lock_notice("Local spectral bank import")
+            st.file_uploader(
+                t('spectra.import_file_uploader'),
+                type=["jdx", "dx", "json", "txt", "csv"],
+                accept_multiple_files=True,
+                disabled=True,
+                key="local_spectra_import_files_online_disabled"
+            )
+            st.button(
+                t('spectra.import_button'),
+                key="run_local_spectra_import_online_disabled",
+                disabled=True,
+            )
+
+    elif is_admin():
         with st.expander(t('spectra.import_expander'), expanded=False):
             st.markdown(t('spectra.import_section1_title'))
 
@@ -10054,7 +10137,15 @@ with st.expander(
 
         spectra_results_rendered_this_run = False
 
-        if st.button(t('spectra.search_button'), type="primary", key="run_spectra_search"):
+        if qspr_is_online_mode():
+            qspr_online_lock_notice("Online spectral search and local spectral bank writes")
+
+        if st.button(
+            t('spectra.search_button'),
+            type="primary",
+            key="run_spectra_search",
+            disabled=qspr_is_online_mode(),
+        ):
             st.session_state.stop_spectra_search_requested = False
             st.session_state.spectra_search_status = "running"
             spectra_clear_stop()
@@ -11683,6 +11774,7 @@ with st.expander(
         "Использовать готовые спектральные дескрипторы",
         type="primary",
         key=f"use_ready_spectral_descriptors_{descriptor_spectrum_label.lower().replace(' ', '_').replace('+', 'plus')}",
+        disabled=qspr_is_online_mode(),
         help=(
             "Берёт готовую таблицу спектральных дескрипторов из локального кэша "
             "или из GitHub raw URL, без скачивания файлов спектров."
@@ -12599,8 +12691,11 @@ else:
         use_quantum_descriptors_source = st.checkbox(
             t('descriptor_settings.checkbox_quantum'),
             value=False,
+            disabled=qspr_is_online_mode(),
             key="use_quantum_descriptors_source"
         )
+        if qspr_is_online_mode():
+            st.caption(ONLINE_LOCK_MESSAGE)
 
     with col_desc_source_3:
         if not spectral_ready_for_source:
@@ -12608,14 +12703,20 @@ else:
 
         use_spectral_descriptors_source = st.checkbox(
             t('descriptor_settings.checkbox_spectral'),
-            disabled=not spectral_ready_for_source,
+            disabled=(not spectral_ready_for_source) or qspr_is_online_mode(),
             key="use_spectral_descriptors_source"
         )
+        if qspr_is_online_mode():
+            st.caption(ONLINE_LOCK_MESSAGE)
 
     # По умолчанию подисточники квантово-химического блока выключены.
     use_xtb_descriptors_source = False
     use_morfeus_descriptors_source = False
     use_dscribe_descriptors_source = False
+
+    if qspr_is_online_mode():
+        use_quantum_descriptors_source = False
+        use_spectral_descriptors_source = False
 
     if use_morfeus_descriptors_source and not morfeus_available:
         st.warning(t('descriptor_settings.morfeus_not_available', error=morfeus_import_error))
@@ -12861,7 +12962,7 @@ if use_molecular_descriptors_source:
     mode = st.radio(
         t("descriptor_mode.radio_label"),
         options=list(DESCRIPTOR_MODE_OPTIONS.keys()),
-        index=1,
+        index=0 if qspr_is_online_mode() else 1,
         format_func=lambda key: t(DESCRIPTOR_MODE_OPTIONS[key]),
         key="descriptor_mode_radio_v2"
     )
@@ -12869,6 +12970,10 @@ if use_molecular_descriptors_source:
     st.caption(
         t("descriptor_mode.help_prefix") + " " + t(DESCRIPTOR_MODE_HELP[mode])
     )
+
+    online_heavy_descriptor_mode = qspr_is_online_mode() and mode != "rdkit_fast"
+    if online_heavy_descriptor_mode:
+        qspr_online_lock_notice("Mordred, PaDEL and maximum-accuracy descriptor modes")
 
     (
         allowed_rdkit_names,
@@ -12886,7 +12991,11 @@ if use_molecular_descriptors_source:
         or use_dscribe_descriptors_source
     ):
 
-        if st.button(t('descriptor_calc.calculate_button'), type="primary"):
+        if st.button(
+            t('descriptor_calc.calculate_button'),
+            type="primary",
+            disabled=online_heavy_descriptor_mode,
+        ):
             try:
                 bundle = None
                 source_label = ""

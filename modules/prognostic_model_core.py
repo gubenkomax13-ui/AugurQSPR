@@ -43,6 +43,45 @@ except Exception:
     ketcher_available = False
 
 
+ONLINE_LOCK_MESSAGE = (
+    "Эта функция показана как возможность полной локальной версии Augur QSPR, "
+    "но в публичном онлайн-режиме она отключена для безопасности и стабильности."
+)
+
+
+def qspr_prog_runtime_mode():
+    for source in (os.environ.get("AUGUR_MODE"), os.environ.get("AUGUR_RUNTIME_MODE")):
+        value = str(source or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return "online"
+        if value in {"local", "full", "desktop"}:
+            return "local"
+
+    try:
+        value = str(st.secrets.get("AUGUR_MODE", "") or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return "online"
+        if value in {"local", "full", "desktop"}:
+            return "local"
+    except Exception:
+        pass
+
+    try:
+        context = getattr(st, "context", None)
+        headers = getattr(context, "headers", {}) if context is not None else {}
+        host = str(headers.get("host") or headers.get("Host") or "").lower()
+        url = str(getattr(context, "url", "") or "").lower()
+    except Exception:
+        host = ""
+        url = ""
+
+    return "online" if any(marker in host or marker in url for marker in ("streamlit.app", "share.streamlit.io")) else "local"
+
+
+def qspr_prog_is_online_mode():
+    return qspr_prog_runtime_mode() == "online"
+
+
 def safe_len(value):
     """Return len(value) without forcing numpy/pandas objects into bool context."""
     if value is None:
@@ -693,6 +732,9 @@ def qspr_prog_try_autoload_default_model():
     Автоматически загружает model_prognostic_package.pkl,
     если файл лежит в текущей папке проекта и модель ещё не загружена.
     """
+    if qspr_prog_is_online_mode():
+        return False
+
     if "prog_model" in st.session_state:
         return True
 
@@ -2279,9 +2321,13 @@ def qspr_show_prognostic_training_section(
         except Exception as e:
             st.error(f"Ошибка обучения прогностической модели: {e}")
 
+    if "prog_model" in st.session_state and qspr_prog_is_online_mode():
+        st.info(ONLINE_LOCK_MESSAGE)
+
     if "prog_model" in st.session_state and st.button(
         "💾 Сохранить прогностическую модель полным пакетом",
-        key="save_prog"
+        key="save_prog",
+        disabled=qspr_prog_is_online_mode(),
     ):
         package = qspr_prog_make_save_package(
             target_col=target_col,
@@ -2814,6 +2860,9 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
 
 
 def qspr_prog_find_available_model_rows():
+    if qspr_prog_is_online_mode():
+        return []
+
     available_model_rows = []
 
     search_folders = [
@@ -3090,6 +3139,7 @@ def qspr_show_prediction_sidebar():
             t("prediction_page.connect_model"),
             type="primary",
             key="load_selected_available_prognostic_model",
+            disabled=qspr_prog_is_online_mode(),
         ):
             try:
                 package = joblib.load(selected_model_row["Путь"])
@@ -3105,7 +3155,11 @@ def qspr_show_prediction_sidebar():
         t("prediction_page.upload_model"),
         type=["pkl", "joblib"],
         key="standalone_prog_model_file",
+        disabled=qspr_prog_is_online_mode(),
     )
+
+    if qspr_prog_is_online_mode():
+        st.info(ONLINE_LOCK_MESSAGE)
 
     if model_file is not None:
         st.warning(
@@ -3161,6 +3215,7 @@ def qspr_show_prediction_model_source_controls():
             t("prediction_page.connect_model"),
             type="primary",
             key="load_selected_available_prognostic_model",
+            disabled=qspr_prog_is_online_mode(),
         ):
             try:
                 package = joblib.load(selected_model_row["Путь"])
@@ -3176,7 +3231,11 @@ def qspr_show_prediction_model_source_controls():
         t("prediction_page.upload_model"),
         type=["pkl", "joblib"],
         key="standalone_prog_model_file",
+        disabled=qspr_prog_is_online_mode(),
     )
+
+    if qspr_prog_is_online_mode():
+        st.info(ONLINE_LOCK_MESSAGE)
 
     if model_file is not None:
         st.warning(
@@ -3328,7 +3387,12 @@ def qspr_show_prediction_capability_tool():
         t("prediction_page.capability_launch_prediction"),
         type="primary",
         key="prediction_capability_launch_prediction",
+        disabled=qspr_prog_is_online_mode(),
     ):
+        return
+
+    if qspr_prog_is_online_mode():
+        st.info(ONLINE_LOCK_MESSAGE)
         return
 
     option = runnable_options[selected_option]
