@@ -3559,12 +3559,24 @@ def render_spectra_search_results_if_available():
         "source_line_number",
         "name",
         "input_smiles",
+        "_from_real_search",
     ]:
         if col not in search_results_df.columns:
-            search_results_df[col] = ""
+            search_results_df[col] = False if col == "_from_real_search" else ""
 
     status_norm = search_results_df["spectrum_status"].astype(str).str.strip().str.lower()
-    found_mask = status_norm.isin(["found_downloaded", "already_in_bank"])
+    type_norm = search_results_df["spectrum_type"].astype(str).str.strip().apply(spectra_normalize_spectrum_type)
+    real_search_mask = (
+        search_results_df["_from_real_search"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin(["1", "true", "yes", "y"])
+    )
+    summary_scope_mask = real_search_mask if bool(real_search_mask.any()) else pd.Series(True, index=search_results_df.index)
+    found_mask = status_norm.isin(["found_downloaded", "already_in_bank"]) & summary_scope_mask
+    found_ir_count = int((found_mask & (type_norm == "IR")).sum())
+    found_mass_count = int((found_mask & (type_norm == "Mass")).sum())
     not_found_count = int((status_norm == "not_found_in_all_sources").sum())
     api_error_count = int(status_norm.isin(["api_error", "search_error", "download_error"]).sum())
     parse_error_count = int(status_norm.isin(["parse_error", "no_numeric_spectrum"]).sum())
@@ -3602,6 +3614,14 @@ def render_spectra_search_results_if_available():
             last_compound,
         ],
     })
+    summary_df = pd.concat([
+        summary_df.iloc[:2],
+        pd.DataFrame({
+            summary_df.columns[0]: ["Найдено IR", "Найдено Mass"],
+            summary_df.columns[1]: [found_ir_count, found_mass_count],
+        }),
+        summary_df.iloc[2:],
+    ], ignore_index=True)
     st.dataframe(summary_df, width="stretch", hide_index=True)
 
     search_results_df["_spectrum_status_norm"] = status_norm
@@ -3623,10 +3643,22 @@ def render_spectra_search_results_if_available():
     st.dataframe(status_summary, width="stretch", hide_index=True)
 
     with st.expander(t('spectra.show_full_table_expander'), expanded=True):
-        st.dataframe(search_results_df, width="stretch", hide_index=True)
+        st.dataframe(
+            search_results_df.drop(
+                columns=["_from_real_search", "_from_real_search_bool"],
+                errors="ignore",
+            ),
+            width="stretch",
+            hide_index=True,
+        )
 
     csv_search = search_results_df.drop(
-        columns=["_spectrum_status_norm", "_spectrum_type_norm"],
+        columns=[
+            "_spectrum_status_norm",
+            "_spectrum_type_norm",
+            "_from_real_search",
+            "_from_real_search_bool",
+        ],
         errors="ignore",
     ).to_csv(index=False).encode("utf-8")
     st.download_button(
@@ -10516,7 +10548,6 @@ with st.expander(
 
             if not tasks:
                 result_df = pd.DataFrame(skipped_results)
-                result_df = result_df.drop(columns=["_from_real_search"], errors="ignore")
                 st.session_state.spectra_search_results = result_df
                 st.session_state.spectra_search_status = "completed"
                 st.session_state.spectra_search_total_tasks = len(result_df)
@@ -10805,10 +10836,7 @@ with st.expander(
                             if skipped_results:
                                 partial_results.extend(skipped_results)
                             partial_results.extend(search_results)
-                            partial_df = pd.DataFrame(partial_results).drop(
-                                columns=["_from_real_search"],
-                                errors="ignore",
-                            )
+                            partial_df = pd.DataFrame(partial_results)
                             st.session_state.spectra_search_results = partial_df
                             st.session_state.spectra_search_status = "running"
 
@@ -10917,8 +10945,6 @@ with st.expander(
                     all_results.extend(search_results)
 
                 result_df = pd.DataFrame(all_results)
-
-                result_df = result_df.drop(columns=["_from_real_search"], errors="ignore")
                 st.session_state.spectra_search_results = result_df
 
                 if stop_requested:
@@ -11147,7 +11173,14 @@ with st.expander(
                     st.dataframe(type_summary, width="stretch", hide_index=True)
 
                 with st.expander(t('spectra.show_full_table_expander')):
-                    st.dataframe(search_results_df, width="stretch", hide_index=True)
+                    st.dataframe(
+                        search_results_df.drop(
+                            columns=["_from_real_search", "_from_real_search_bool"],
+                            errors="ignore",
+                        ),
+                        width="stretch",
+                        hide_index=True,
+                    )
 
                 csv_search = search_results_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
