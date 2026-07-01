@@ -3577,6 +3577,10 @@ def render_spectra_search_results_if_available():
     found_mask = status_norm.isin(["found_downloaded", "already_in_bank"]) & summary_scope_mask
     found_ir_count = int((found_mask & (type_norm == "IR")).sum())
     found_mass_count = int((found_mask & (type_norm == "Mass")).sum())
+    set_found_mask = status_norm.isin(["found_downloaded", "already_in_bank"])
+    set_ir_count = int((set_found_mask & (type_norm == "IR")).sum())
+    set_mass_count = int((set_found_mask & (type_norm == "Mass")).sum())
+    set_total_spectra_count = set_ir_count + set_mass_count
     not_found_count = int((status_norm == "not_found_in_all_sources").sum())
     api_error_count = int(status_norm.isin(["api_error", "search_error", "download_error"]).sum())
     parse_error_count = int(status_norm.isin(["parse_error", "no_numeric_spectrum"]).sum())
@@ -3621,6 +3625,22 @@ def render_spectra_search_results_if_available():
             summary_df.columns[1]: [found_ir_count, found_mass_count],
         }),
         summary_df.iloc[2:],
+    ], ignore_index=True)
+    summary_df = pd.concat([
+        summary_df.iloc[:4],
+        pd.DataFrame({
+            summary_df.columns[0]: [
+                "Есть в наборе IR",
+                "Есть в наборе Mass",
+                "Всего спектров в наборе",
+            ],
+            summary_df.columns[1]: [
+                set_ir_count,
+                set_mass_count,
+                set_total_spectra_count,
+            ],
+        }),
+        summary_df.iloc[4:],
     ], ignore_index=True)
     st.dataframe(summary_df, width="stretch", hide_index=True)
 
