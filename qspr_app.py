@@ -10175,6 +10175,16 @@ with st.expander(
             key="spectra_delay_seconds"
         )
 
+        spectra_search_workers = st.number_input(
+            "Параллельных задач поиска",
+            min_value=1,
+            max_value=8,
+            value=4,
+            step=1,
+            key="spectra_search_workers",
+            help="Для локальной версии: больше потоков быстрее обрабатывают большой список, но сильнее нагружают внешние источники."
+        )
+
         if st.button(t('spectra.stop_search_button'), key="stop_spectra_search"):
             st.session_state.stop_spectra_search_requested = True
             st.session_state.spectra_search_status = "stopped_by_user"
@@ -10752,13 +10762,13 @@ with st.expander(
                             "_from_real_search": True,
                         }
 
-                parallel_search_enabled = (
-                    len(selected_spectrum_types) > 1
-                    and "IR" in selected_spectrum_types
-                    and "Mass" in selected_spectrum_types
+                max_workers = max(
+                    1,
+                    min(
+                        int(spectra_search_workers),
+                        len(tasks)
+                    )
                 )
-
-                max_workers = 2 if parallel_search_enabled else 1
 
                 ir_total_tasks = sum(1 for _, spectrum_type in tasks if spectrum_type == "IR")
                 ms_total_tasks = sum(1 for _, spectrum_type in tasks if spectrum_type == "Mass")
