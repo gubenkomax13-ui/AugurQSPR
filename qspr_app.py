@@ -10185,6 +10185,16 @@ with st.expander(
             help="Для локальной версии: больше потоков быстрее обрабатывают большой список, но сильнее нагружают внешние источники."
         )
 
+        spectra_source_timeout_seconds = st.number_input(
+            "Таймаут внешнего источника, сек",
+            min_value=3.0,
+            max_value=60.0,
+            value=10.0,
+            step=1.0,
+            key="spectra_source_timeout_seconds",
+            help="Быстрый режим: 8-12 сек. Полный режим: 20-40 сек. Короткий таймаут ускоряет поиск, но может пропустить медленные ответы."
+        )
+
         if st.button(t('spectra.stop_search_button'), key="stop_spectra_search"):
             st.session_state.stop_spectra_search_requested = True
             st.session_state.spectra_search_status = "stopped_by_user"
@@ -10219,6 +10229,10 @@ with st.expander(
             if not selected_spectrum_types:
                 st.error(t('spectra.error_no_type'))
                 st.stop()
+
+            active_source_timeout = spectra_set_http_timeout(
+                spectra_source_timeout_seconds
+            )
 
             search_df = compounds_for_search.copy()
 
@@ -10795,6 +10809,7 @@ with st.expander(
                 cache_flush_every = 25
                 search_started_at = time.perf_counter()
                 last_task_seconds = 0.0
+                source_timing_stats = {}
 
                 def format_search_duration(seconds):
                     try:
@@ -10833,6 +10848,55 @@ with st.expander(
 
                     return status_labels.get(status_key, str(status).strip() or "—")
 
+                def source_label_for_timing(result_row, spectrum_type_norm):
+                    source_label = str(result_row.get("selected_source", "")).strip()
+
+                    if source_label:
+                        label_low = source_label.lower()
+
+                        if "mona" in label_low:
+                            return "MoNA"
+
+                        if "nist" in label_low:
+                            return "NIST"
+
+                        return source_label[:24]
+
+                    spectrum_type_norm = spectra_normalize_spectrum_type(spectrum_type_norm)
+
+                    if spectrum_type_norm == "IR":
+                        return "NIST"
+
+                    if spectrum_type_norm == "Mass":
+                        return "MoNA"
+
+                    return spectrum_type_norm or "source"
+
+                def record_source_timing(source_label, task_seconds):
+                    if not source_label:
+                        return
+
+                    stats = source_timing_stats.setdefault(
+                        source_label,
+                        {"count": 0, "seconds": 0.0}
+                    )
+                    stats["count"] += 1
+                    stats["seconds"] += float(task_seconds or 0)
+
+                def format_source_timing_stats():
+                    if not source_timing_stats:
+                        return "источники: —"
+
+                    parts = []
+
+                    for source_label, stats in source_timing_stats.items():
+                        count = int(stats.get("count", 0) or 0)
+                        seconds = float(stats.get("seconds", 0) or 0)
+                        avg = seconds / count if count else 0.0
+                        parts.append(f"{source_label}: {count}, {avg:.1f} сек")
+
+                    return "источники: " + " | ".join(parts)
+
                 def update_spectra_search_timer():
                     elapsed_seconds = time.perf_counter() - search_started_at
                     avg_seconds = elapsed_seconds / done_tasks if done_tasks else 0.0
@@ -10856,7 +10920,9 @@ with st.expander(
                         f"скорость: {tasks_per_minute:.1f} задач/мин | "
                         f"среднее: {avg_seconds:.1f} сек/задача | "
                         f"последняя: {last_task_seconds:.1f} сек | "
-                        f"потоки: {max_workers}"
+                        f"потоки: {max_workers} | "
+                        f"таймаут: {active_source_timeout:.0f} сек | "
+                        f"{format_source_timing_stats()}"
                     )
 
                 def flush_spectra_search_cache_buffer(force=False):
@@ -10974,6 +11040,14 @@ with st.expander(
                                 }
 
                             result_row["_task_seconds"] = round(last_task_seconds, 3)
+                            result_row["_source_timing_label"] = source_label_for_timing(
+                                result_row,
+                                spectrum_type
+                            )
+                            record_source_timing(
+                                result_row["_source_timing_label"],
+                                last_task_seconds
+                            )
 
                             search_results.append(result_row)
                             partial_results = []
@@ -11102,6 +11176,9 @@ with st.expander(
                     "avg_seconds_per_task": final_avg_seconds,
                     "last_task_seconds": last_task_seconds,
                     "max_workers": max_workers,
+                    "source_timeout_seconds": active_source_timeout,
+                    "source_timing_text": format_source_timing_stats(),
+                    "source_timing_stats": source_timing_stats,
                 }
                 update_spectra_search_timer()
 
@@ -11259,6 +11336,8 @@ with st.expander(
                 avg_seconds_per_task = float(search_timing.get("avg_seconds_per_task", 0) or 0)
                 last_task_seconds = float(search_timing.get("last_task_seconds", 0) or 0)
                 timing_workers = int(search_timing.get("max_workers", 0) or 0)
+                timing_timeout = float(search_timing.get("source_timeout_seconds", 0) or 0)
+                source_timing_text = str(search_timing.get("source_timing_text", ""))
 
                 summary_cards = pd.DataFrame({
                     t('spectra.summary_indicator'): [
@@ -11268,6 +11347,8 @@ with st.expander(
                         "Среднее время задачи",
                         "Последняя задача",
                         "Параллельных задач",
+                        "Таймаут источника",
+                        "Источники",
                         t('spectra.summary_checked_rows'),
                         t('spectra.summary_downloaded_total'),
                         t('spectra.summary_downloaded_ir'),
@@ -11292,6 +11373,8 @@ with st.expander(
                         f"{avg_seconds_per_task:.1f} сек",
                         f"{last_task_seconds:.1f} сек",
                         timing_workers or "—",
+                        f"{timing_timeout:.0f} сек" if timing_timeout else "—",
+                        source_timing_text or "—",
                         total_checked,
                         found_downloaded,
                         found_ir_spectra,

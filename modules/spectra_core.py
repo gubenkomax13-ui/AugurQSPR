@@ -34,6 +34,33 @@ from sklearn.decomposition import TruncatedSVD
 
 SPECTRA_HTTP_TIMEOUT = 20
 
+
+def spectra_set_http_timeout(timeout_seconds):
+    """
+    Sets a shared timeout for external spectral sources.
+
+    Streamlit runs the search workers in threads, so a simple module-level
+    value is enough for all workers launched by the current run.
+    """
+    global SPECTRA_HTTP_TIMEOUT
+
+    try:
+        timeout_seconds = float(timeout_seconds)
+    except Exception:
+        timeout_seconds = 20.0
+
+    SPECTRA_HTTP_TIMEOUT = max(3.0, min(timeout_seconds, 60.0))
+    return SPECTRA_HTTP_TIMEOUT
+
+
+def spectra_get_http_timeout(default=20):
+    try:
+        timeout_seconds = float(SPECTRA_HTTP_TIMEOUT)
+    except Exception:
+        timeout_seconds = float(default)
+
+    return max(3.0, min(timeout_seconds, 60.0))
+
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 # Папки spectra_bank
@@ -2331,6 +2358,8 @@ def spectra_urlopen_text(url, timeout=20):
     иногда падает с SSL:
     [ASN1: NOT_ENOUGH_DATA] not enough data (_ssl.c:4040)
     """
+    timeout = spectra_get_http_timeout(timeout)
+
     headers = {
         "User-Agent": "Mozilla/5.0 QSPR-Forge-SpectraSearch/0.5",
         "Accept": "text/html,application/xhtml+xml,application/xml,text/plain,*/*",
@@ -2376,6 +2405,8 @@ def spectra_download_binary(url, filepath, timeout=30):
     """
     Скачивает файл по URL.
     """
+    timeout = spectra_get_http_timeout(timeout)
+
     headers = {
         "User-Agent": "Mozilla/5.0 QSPR-Forge-SpectraSearch/0.5",
         "Accept": "chemical/x-jcamp-dx,text/plain,application/octet-stream,*/*",
@@ -2857,6 +2888,8 @@ def spectra_urlopen_json_get_params(url, params, timeout=40, referer=None):
     Для MoNA:
     /rest/spectra/search?query=...&size=...&page=...
     """
+    timeout = spectra_get_http_timeout(timeout)
+
     headers = spectra_mona_http_headers(
         accept="application/json,text/plain,*/*",
         referer=referer,
@@ -2903,6 +2936,8 @@ def spectra_urlopen_text_get(url, timeout=40, referer=None):
     """
     GET text. Нужен для MSP fallback.
     """
+    timeout = spectra_get_http_timeout(timeout)
+
     headers = spectra_mona_http_headers(
         accept="text/plain,application/json,*/*",
         referer=referer,
@@ -2947,6 +2982,8 @@ def spectra_urlopen_json_get(url, timeout=40, referer=None):
     с SSL-ошибкой:
     [ASN1: NOT_ENOUGH_DATA] not enough data (_ssl.c:4040)
     """
+    timeout = spectra_get_http_timeout(timeout)
+
     headers = spectra_mona_http_headers(
         accept="application/json,text/plain,*/*",
         referer=referer,
