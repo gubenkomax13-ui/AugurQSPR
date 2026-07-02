@@ -1598,6 +1598,137 @@ def spectra_add_to_search_cache(result_row, selected_sources=None):
         )
 
 
+def spectra_add_many_to_search_cache(result_rows, selected_sources=None):
+    """
+    Adds multiple spectral search results to the cache with one disk write.
+
+    The single-row helper is intentionally kept for compatibility, but long
+    searches should use this batch writer to avoid rewriting the cache file for
+    every processed spectrum.
+    """
+    if result_rows is None:
+        return 0
+
+    if isinstance(result_rows, dict):
+        result_rows = [result_rows]
+
+    selected_sources = selected_sources or []
+    selected_sources_key = spectra_make_sources_key(selected_sources)
+    checked_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    new_records = []
+
+    for result_row in result_rows:
+        if result_row is None or not isinstance(result_row, dict):
+            continue
+
+        inchikey = str(result_row.get("inchikey", "")).strip()
+        canonical_smiles = str(result_row.get("canonical_smiles", "")).strip()
+        spectrum_type_norm = spectra_normalize_spectrum_type(
+            result_row.get("spectrum_type", "")
+        )
+
+        if not inchikey and not canonical_smiles:
+            continue
+
+        final_status = (
+            result_row.get("spectrum_status", "")
+            or result_row.get("final_status", "")
+            or result_row.get("status", "")
+        )
+
+        new_records.append({
+            "inchikey": inchikey,
+            "canonical_smiles": canonical_smiles,
+            "spectrum_type": spectrum_type_norm,
+            "selected_sources_key": selected_sources_key,
+            "selected_sources": " | ".join(selected_sources),
+            "final_status": final_status,
+            "selected_source": result_row.get("selected_source", ""),
+            "candidate_count": result_row.get("candidate_count", 0),
+            "spectrum_id": result_row.get("spectrum_id", ""),
+            "raw_file": result_row.get("raw_file", ""),
+            "processed_file": result_row.get("processed_file", ""),
+            "message": result_row.get("message", ""),
+            "date_checked": checked_at,
+        })
+
+    if not new_records:
+        return 0
+
+    with SPECTRA_SEARCH_CACHE_LOCK:
+        cache_df = spectra_load_search_cache()
+
+        required_cols = [
+            "inchikey",
+            "canonical_smiles",
+            "spectrum_type",
+            "selected_sources_key",
+            "selected_sources",
+            "final_status",
+            "selected_source",
+            "candidate_count",
+            "spectrum_id",
+            "raw_file",
+            "processed_file",
+            "message",
+            "date_checked",
+        ]
+
+        for col in required_cols:
+            if col not in cache_df.columns:
+                cache_df[col] = ""
+
+        work = cache_df.copy()
+
+        work["inchikey"] = work["inchikey"].astype(str).str.strip()
+        work["canonical_smiles"] = work["canonical_smiles"].astype(str).str.strip()
+        work["_spectrum_type_norm"] = work["spectrum_type"].astype(str).apply(
+            spectra_normalize_spectrum_type
+        )
+
+        remove_mask = pd.Series(False, index=work.index)
+
+        for new_record in new_records:
+            inchikey = str(new_record.get("inchikey", "")).strip()
+            canonical_smiles = str(new_record.get("canonical_smiles", "")).strip()
+            spectrum_type_norm = str(new_record.get("spectrum_type", "")).strip()
+
+            if inchikey:
+                remove_mask = remove_mask | (
+                    (work["inchikey"] == inchikey)
+                    & (work["_spectrum_type_norm"] == spectrum_type_norm)
+                )
+
+            if canonical_smiles:
+                remove_mask = remove_mask | (
+                    (work["canonical_smiles"] == canonical_smiles)
+                    & (work["_spectrum_type_norm"] == spectrum_type_norm)
+                )
+
+        work = work.loc[~remove_mask].copy()
+        work = work.drop(columns=["_spectrum_type_norm"], errors="ignore")
+
+        batch_df = pd.DataFrame(new_records)
+        batch_df = batch_df.drop_duplicates(
+            subset=["inchikey", "canonical_smiles", "spectrum_type"],
+            keep="last"
+        )
+
+        work = pd.concat(
+            [work, batch_df],
+            ignore_index=True
+        )
+
+        work[required_cols].copy().to_csv(
+            SPECTRA_SEARCH_CACHE_FILE,
+            index=False,
+            encoding="utf-8-sig"
+        )
+
+    return len(new_records)
+
+
 def spectra_clear_search_cache_by_type(spectrum_type=None, selected_sources=None):
     """
     Очищает журнал уже проверенных спектров.

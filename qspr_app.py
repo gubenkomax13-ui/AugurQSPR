@@ -10170,8 +10170,8 @@ with st.expander(
             t('spectra.delay_seconds'),
             min_value=0.0,
             max_value=10.0,
-            value=1.0,
-            step=0.5,
+            value=0.5,
+            step=0.1,
             key="spectra_delay_seconds"
         )
 
@@ -10780,6 +10780,35 @@ with st.expander(
                     status_box_ms.info(t('spectra.mass_search_not_selected'))
 
                 stop_requested = False
+                cache_write_buffer = []
+                cache_flush_every = 25
+
+                def flush_spectra_search_cache_buffer(force=False):
+                    if not cache_write_buffer:
+                        return
+
+                    if not force and len(cache_write_buffer) < cache_flush_every:
+                        return
+
+                    rows_to_cache = list(cache_write_buffer)
+                    cache_write_buffer.clear()
+
+                    try:
+                        spectra_add_many_to_search_cache(
+                            rows_to_cache,
+                            selected_sources
+                        )
+                    except Exception as cache_error:
+                        cache_error_message = t(
+                            'spectra.cache_write_error',
+                            error=cache_error
+                        )
+
+                        for cached_row in rows_to_cache:
+                            cached_row["message"] = (
+                                str(cached_row.get("message", ""))
+                                + cache_error_message
+                            )
 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     task_iter = iter(tasks)
@@ -10891,16 +10920,8 @@ with st.expander(
                                     should_cache_result = False
 
                                 if should_cache_result:
-                                    try:
-                                        spectra_add_to_search_cache(
-                                            result_row,
-                                            selected_sources
-                                        )
-                                    except Exception as cache_error:
-                                        result_row["message"] = (
-                                            str(result_row.get("message", ""))
-                                            + t('spectra.cache_write_error', error=cache_error)
-                                        )
+                                    cache_write_buffer.append(result_row)
+                                    flush_spectra_search_cache_buffer()
 
                             done_tasks += 1
 
@@ -10955,6 +10976,8 @@ with st.expander(
                                 submit_next_task()
 
                             break
+
+                flush_spectra_search_cache_buffer(force=True)
 
                 all_results = []
 
