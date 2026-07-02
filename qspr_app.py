@@ -672,6 +672,7 @@ try:
         if _secret_value:
             os.environ.setdefault(_secret_key, str(_secret_value))
 
+    import modules.spectra_core as spectra_core_module
     from modules.spectra_core import *
     from modules.qspr_core import *
     from modules.saod2_core import *
@@ -10230,9 +10231,12 @@ with st.expander(
                 st.error(t('spectra.error_no_type'))
                 st.stop()
 
-            active_source_timeout = spectra_set_http_timeout(
-                spectra_source_timeout_seconds
-            )
+            try:
+                active_source_timeout = spectra_core_module.spectra_set_http_timeout(
+                    spectra_source_timeout_seconds
+                )
+            except Exception:
+                active_source_timeout = float(spectra_source_timeout_seconds)
 
             search_df = compounds_for_search.copy()
 
