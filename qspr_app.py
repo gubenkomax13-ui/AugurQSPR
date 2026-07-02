@@ -29,7 +29,7 @@ import importlib
 import hmac
 import warnings
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from html import escape
 from sklearn.linear_model import LinearRegression
 from modules.applicability_domain_core import *
@@ -10792,6 +10792,46 @@ with st.expander(
                 stop_requested = False
                 cache_write_buffer = []
                 cache_flush_every = 25
+                search_started_at = time.perf_counter()
+                last_task_seconds = 0.0
+                timer_box = st.empty()
+
+                def format_search_duration(seconds):
+                    try:
+                        seconds = max(0, int(seconds))
+                    except Exception:
+                        seconds = 0
+
+                    hours = seconds // 3600
+                    minutes = (seconds % 3600) // 60
+                    secs = seconds % 60
+
+                    if hours > 0:
+                        return f"{hours} ч {minutes:02d} мин {secs:02d} сек"
+
+                    if minutes > 0:
+                        return f"{minutes} мин {secs:02d} сек"
+
+                    return f"{secs} сек"
+
+                def update_spectra_search_timer():
+                    elapsed_seconds = time.perf_counter() - search_started_at
+                    avg_seconds = elapsed_seconds / done_tasks if done_tasks else 0.0
+                    tasks_per_minute = (
+                        done_tasks / (elapsed_seconds / 60.0)
+                        if elapsed_seconds > 0 and done_tasks
+                        else 0.0
+                    )
+
+                    timer_box.info(
+                        "Время поиска: "
+                        f"{format_search_duration(elapsed_seconds)} | "
+                        f"обработано: {done_tasks}/{total_tasks} | "
+                        f"скорость: {tasks_per_minute:.1f} задач/мин | "
+                        f"среднее: {avg_seconds:.1f} сек/задача | "
+                        f"последняя: {last_task_seconds:.1f} сек | "
+                        f"потоки: {max_workers}"
+                    )
 
                 def flush_spectra_search_cache_buffer(force=False):
                     if not cache_write_buffer:
@@ -10844,7 +10884,8 @@ with st.expander(
 
                         future_to_task[future] = (
                             compound_next,
-                            spectrum_type_next
+                            spectrum_type_next,
+                            time.perf_counter()
                         )
 
                         return True
@@ -10863,9 +10904,25 @@ with st.expander(
                         if not submitted:
                             break
 
+                    update_spectra_search_timer()
+
                     while future_to_task:
-                        for future in as_completed(list(future_to_task.keys())):
-                            compound, spectrum_type = future_to_task.pop(future)
+                        done_futures, _ = wait(
+                            list(future_to_task.keys()),
+                            timeout=1.0,
+                            return_when=FIRST_COMPLETED
+                        )
+
+                        if not done_futures:
+                            update_spectra_search_timer()
+                            continue
+
+                        for future in done_futures:
+                            compound, spectrum_type, task_started_at = future_to_task.pop(future)
+                            last_task_seconds = max(
+                                0.0,
+                                time.perf_counter() - task_started_at
+                            )
 
                             try:
                                 result_row = future.result()
@@ -10889,6 +10946,8 @@ with st.expander(
                                     "message": str(e),
                                     "_from_real_search": True,
                                 }
+
+                            result_row["_task_seconds"] = round(last_task_seconds, 3)
 
                             search_results.append(result_row)
                             partial_results = []
@@ -10941,6 +11000,7 @@ with st.expander(
                                 ms_done_tasks += 1
 
                             progress.progress(done_tasks / total_tasks)
+                            update_spectra_search_timer()
 
                             compound_name = str(result_row.get("name", "")).strip() or t('spectra.unnamed')
                             compound_smiles = str(result_row.get("canonical_smiles", "")).strip()
@@ -10951,6 +11011,7 @@ with st.expander(
                             compound_inchikey = str(result_row.get("inchikey", "")).strip()
                             compound_line = result_row.get("source_line_number", "")
                             compound_status = str(result_row.get("spectrum_status", "")).strip()
+                            compound_task_seconds = float(result_row.get("_task_seconds", 0) or 0)
                             compound_source = str(result_row.get("selected_source", "")).strip() or "—"
                             compound_message = str(result_row.get("message", "")).strip() or "—"
                             compound_raw_file = str(result_row.get("raw_file", "")).strip() or "—"
@@ -10965,7 +11026,8 @@ with st.expander(
                                 t('spectra.detail_status') + f" {compound_status}",
                                 t('spectra.detail_message') + f" {compound_message}",
                                 t('spectra.detail_raw_file') + f" `{compound_raw_file}`",
-                                t('spectra.detail_processed_file') + f" `{compound_processed_file}`"
+                                t('spectra.detail_processed_file') + f" `{compound_processed_file}`",
+                                f"Время задачи: {compound_task_seconds:.1f} сек"
                             ]
                             details = "\n\n".join(details_lines)
 
@@ -10985,9 +11047,29 @@ with st.expander(
                             else:
                                 submit_next_task()
 
-                            break
-
                 flush_spectra_search_cache_buffer(force=True)
+                final_elapsed_seconds = time.perf_counter() - search_started_at
+                final_tasks_per_minute = (
+                    done_tasks / (final_elapsed_seconds / 60.0)
+                    if final_elapsed_seconds > 0 and done_tasks
+                    else 0.0
+                )
+                final_avg_seconds = (
+                    final_elapsed_seconds / done_tasks
+                    if done_tasks
+                    else 0.0
+                )
+                st.session_state.spectra_search_timing = {
+                    "elapsed_seconds": final_elapsed_seconds,
+                    "elapsed_text": format_search_duration(final_elapsed_seconds),
+                    "done_tasks": done_tasks,
+                    "total_tasks": total_tasks,
+                    "tasks_per_minute": final_tasks_per_minute,
+                    "avg_seconds_per_task": final_avg_seconds,
+                    "last_task_seconds": last_task_seconds,
+                    "max_workers": max_workers,
+                }
+                update_spectra_search_timer()
 
                 all_results = []
 
@@ -11136,9 +11218,20 @@ with st.expander(
                 no_numeric_spectrum = int(
                     (search_results_df["_spectrum_status_norm"] == "no_numeric_spectrum").sum()
                 )
+                search_timing = st.session_state.get("spectra_search_timing", {}) or {}
+                elapsed_text = str(search_timing.get("elapsed_text", ""))
+                tasks_per_minute = float(search_timing.get("tasks_per_minute", 0) or 0)
+                avg_seconds_per_task = float(search_timing.get("avg_seconds_per_task", 0) or 0)
+                last_task_seconds = float(search_timing.get("last_task_seconds", 0) or 0)
+                timing_workers = int(search_timing.get("max_workers", 0) or 0)
 
                 summary_cards = pd.DataFrame({
                     t('spectra.summary_indicator'): [
+                        "Время поиска",
+                        "Скорость поиска",
+                        "Среднее время задачи",
+                        "Последняя задача",
+                        "Параллельных задач",
                         t('spectra.summary_checked_rows'),
                         t('spectra.summary_downloaded_total'),
                         t('spectra.summary_downloaded_ir'),
@@ -11157,6 +11250,11 @@ with st.expander(
                         t('spectra.summary_skipped_checked'),
                     ],
                     t('spectra.summary_value'): [
+                        elapsed_text or "—",
+                        f"{tasks_per_minute:.1f} задач/мин",
+                        f"{avg_seconds_per_task:.1f} сек",
+                        f"{last_task_seconds:.1f} сек",
+                        timing_workers or "—",
                         total_checked,
                         found_downloaded,
                         found_ir_spectra,
