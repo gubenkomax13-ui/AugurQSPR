@@ -10624,6 +10624,7 @@ with st.expander(
                     )
 
                 progress = st.progress(0)
+                timer_box = st.empty()
                 col_status_ir, col_status_ms = st.columns(2)
 
                 with col_status_ir:
@@ -10794,7 +10795,6 @@ with st.expander(
                 cache_flush_every = 25
                 search_started_at = time.perf_counter()
                 last_task_seconds = 0.0
-                timer_box = st.empty()
 
                 def format_search_duration(seconds):
                     try:
@@ -10814,6 +10814,25 @@ with st.expander(
 
                     return f"{secs} сек"
 
+                def display_spectra_status(status):
+                    status_key = str(status).strip().lower()
+                    status_labels = {
+                        "found_downloaded": "найден и скачан",
+                        "already_in_bank": "уже есть в банке",
+                        "not_found_in_all_sources": "не найден во всех источниках",
+                        "candidate_link_found": "найдена ссылка-кандидат",
+                        "skipped_already_checked": "уже проверен ранее",
+                        "skipped_duplicate_in_current_queue": "дубликат в текущей очереди",
+                        "invalid_structure": "некорректная структура",
+                        "parse_error": "ошибка парсинга",
+                        "download_error": "ошибка скачивания",
+                        "search_error": "ошибка поиска",
+                        "no_numeric_spectrum": "нет численного спектра",
+                        "stopped_by_user": "остановлено пользователем",
+                    }
+
+                    return status_labels.get(status_key, str(status).strip() or "—")
+
                 def update_spectra_search_timer():
                     elapsed_seconds = time.perf_counter() - search_started_at
                     avg_seconds = elapsed_seconds / done_tasks if done_tasks else 0.0
@@ -10822,10 +10841,17 @@ with st.expander(
                         if elapsed_seconds > 0 and done_tasks
                         else 0.0
                     )
+                    remaining_tasks = max(total_tasks - done_tasks, 0)
+                    eta_text = (
+                        format_search_duration((remaining_tasks / tasks_per_minute) * 60.0)
+                        if tasks_per_minute > 0 and remaining_tasks > 0
+                        else ("готово" if remaining_tasks == 0 else "оценивается")
+                    )
 
                     timer_box.info(
                         "Время поиска: "
                         f"{format_search_duration(elapsed_seconds)} | "
+                        f"остаток: {eta_text} | "
                         f"обработано: {done_tasks}/{total_tasks} | "
                         f"скорость: {tasks_per_minute:.1f} задач/мин | "
                         f"среднее: {avg_seconds:.1f} сек/задача | "
@@ -11011,6 +11037,7 @@ with st.expander(
                             compound_inchikey = str(result_row.get("inchikey", "")).strip()
                             compound_line = result_row.get("source_line_number", "")
                             compound_status = str(result_row.get("spectrum_status", "")).strip()
+                            compound_status_display = display_spectra_status(compound_status)
                             compound_task_seconds = float(result_row.get("_task_seconds", 0) or 0)
                             compound_source = str(result_row.get("selected_source", "")).strip() or "—"
                             compound_message = str(result_row.get("message", "")).strip() or "—"
@@ -11023,7 +11050,7 @@ with st.expander(
                                 t('spectra.detail_smiles') + f" `{compound_smiles}`",
                                 t('spectra.detail_inchikey') + f" `{compound_inchikey}`",
                                 t('spectra.detail_source') + f" {compound_source}",
-                                t('spectra.detail_status') + f" {compound_status}",
+                                t('spectra.detail_status') + f" {compound_status_display}",
                                 t('spectra.detail_message') + f" {compound_message}",
                                 t('spectra.detail_raw_file') + f" `{compound_raw_file}`",
                                 t('spectra.detail_processed_file') + f" `{compound_processed_file}`",
@@ -11059,9 +11086,16 @@ with st.expander(
                     if done_tasks
                     else 0.0
                 )
+                final_remaining_tasks = max(total_tasks - done_tasks, 0)
+                final_eta_text = (
+                    format_search_duration((final_remaining_tasks / final_tasks_per_minute) * 60.0)
+                    if final_tasks_per_minute > 0 and final_remaining_tasks > 0
+                    else ("готово" if final_remaining_tasks == 0 else "оценивается")
+                )
                 st.session_state.spectra_search_timing = {
                     "elapsed_seconds": final_elapsed_seconds,
                     "elapsed_text": format_search_duration(final_elapsed_seconds),
+                    "eta_text": final_eta_text,
                     "done_tasks": done_tasks,
                     "total_tasks": total_tasks,
                     "tasks_per_minute": final_tasks_per_minute,
@@ -11220,6 +11254,7 @@ with st.expander(
                 )
                 search_timing = st.session_state.get("spectra_search_timing", {}) or {}
                 elapsed_text = str(search_timing.get("elapsed_text", ""))
+                eta_text = str(search_timing.get("eta_text", ""))
                 tasks_per_minute = float(search_timing.get("tasks_per_minute", 0) or 0)
                 avg_seconds_per_task = float(search_timing.get("avg_seconds_per_task", 0) or 0)
                 last_task_seconds = float(search_timing.get("last_task_seconds", 0) or 0)
@@ -11228,6 +11263,7 @@ with st.expander(
                 summary_cards = pd.DataFrame({
                     t('spectra.summary_indicator'): [
                         "Время поиска",
+                        "Оценка остатка",
                         "Скорость поиска",
                         "Среднее время задачи",
                         "Последняя задача",
@@ -11251,6 +11287,7 @@ with st.expander(
                     ],
                     t('spectra.summary_value'): [
                         elapsed_text or "—",
+                        eta_text or "—",
                         f"{tasks_per_minute:.1f} задач/мин",
                         f"{avg_seconds_per_task:.1f} сек",
                         f"{last_task_seconds:.1f} сек",
@@ -11309,6 +11346,10 @@ with st.expander(
                     .rename(columns={"spectrum_status": t('spectra.status_label')})
                     .sort_values(t('spectra.status_count'), ascending=False)
                 )
+                status_summary[t('spectra.status_label')] = (
+                    status_summary[t('spectra.status_label')]
+                    .apply(display_spectra_status)
+                )
 
                 st.dataframe(status_summary, width="stretch", hide_index=True)
 
@@ -11320,6 +11361,10 @@ with st.expander(
                         .size()
                         .reset_index(name=t('spectra.status_count'))
                         .sort_values(["spectrum_type", t('spectra.status_count')], ascending=[True, False])
+                    )
+                    type_summary["spectrum_status"] = (
+                        type_summary["spectrum_status"]
+                        .apply(display_spectra_status)
                     )
                     st.dataframe(type_summary, width="stretch", hide_index=True)
 
