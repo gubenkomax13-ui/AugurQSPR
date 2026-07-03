@@ -61,6 +61,90 @@ def spectra_get_http_timeout(default=20):
 
     return max(3.0, min(timeout_seconds, 60.0))
 
+
+def spectra_worker_job_dir(job_id):
+    safe_job_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(job_id or "").strip())
+
+    if not safe_job_id:
+        safe_job_id = "unknown"
+
+    return os.path.join(SPECTRA_WORKER_DIR, safe_job_id)
+
+
+def spectra_worker_paths(job_id):
+    job_dir = spectra_worker_job_dir(job_id)
+
+    return {
+        "job_dir": job_dir,
+        "config": os.path.join(job_dir, "job.json"),
+        "tasks": os.path.join(job_dir, "tasks.csv"),
+        "skipped": os.path.join(job_dir, "skipped.csv"),
+        "results": os.path.join(job_dir, "results.csv"),
+        "status": os.path.join(job_dir, "status.json"),
+        "log": os.path.join(job_dir, "worker.log"),
+    }
+
+
+def spectra_write_worker_status(job_id, status):
+    paths = spectra_worker_paths(job_id)
+    os.makedirs(paths["job_dir"], exist_ok=True)
+
+    payload = dict(status or {})
+    payload["job_id"] = str(job_id)
+    payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+    with open(paths["status"], "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    os.makedirs(SPECTRA_WORKER_DIR, exist_ok=True)
+
+    with open(SPECTRA_WORKER_LATEST_FILE, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "job_id": str(job_id),
+                "status_file": paths["status"],
+                "updated_at": payload["updated_at"],
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    return payload
+
+
+def spectra_read_worker_status(job_id=None):
+    if not job_id:
+        try:
+            with open(SPECTRA_WORKER_LATEST_FILE, "r", encoding="utf-8") as f:
+                latest = json.load(f)
+            job_id = latest.get("job_id", "")
+        except Exception:
+            return {}
+
+    paths = spectra_worker_paths(job_id)
+
+    try:
+        with open(paths["status"], "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def spectra_read_worker_results(job_id=None):
+    status = spectra_read_worker_status(job_id)
+    job_id = job_id or status.get("job_id", "")
+
+    if not job_id:
+        return pd.DataFrame()
+
+    paths = spectra_worker_paths(job_id)
+
+    try:
+        return pd.read_csv(paths["results"], dtype=str, low_memory=False)
+    except Exception:
+        return pd.DataFrame()
+
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 # Папки spectra_bank
@@ -81,6 +165,16 @@ SPECTRA_INDEX_FILE = os.path.join(
 SPECTRA_SEARCH_CACHE_FILE = os.path.join(
     SPECTRA_BANK_DIR,
     "spectra_search_cache.csv"
+)
+
+SPECTRA_WORKER_DIR = os.path.join(
+    SPECTRA_BANK_DIR,
+    "worker"
+)
+
+SPECTRA_WORKER_LATEST_FILE = os.path.join(
+    SPECTRA_WORKER_DIR,
+    "latest_job.json"
 )
 
 SPECTRA_REMOTE_INDEX_URL = os.environ.get("AUGUR_SPECTRA_INDEX_URL", "").strip()
@@ -1194,7 +1288,11 @@ def spectra_load_index():
 
     if os.path.exists(SPECTRA_INDEX_FILE):
         try:
-            return pd.read_csv(SPECTRA_INDEX_FILE)
+            return pd.read_csv(
+                SPECTRA_INDEX_FILE,
+                dtype=str,
+                low_memory=False,
+            )
         except Exception:
             return pd.DataFrame()
 
@@ -1326,7 +1424,11 @@ def spectra_load_search_cache():
 
     if os.path.exists(SPECTRA_SEARCH_CACHE_FILE):
         try:
-            cache_df = pd.read_csv(SPECTRA_SEARCH_CACHE_FILE)
+            cache_df = pd.read_csv(
+                SPECTRA_SEARCH_CACHE_FILE,
+                dtype=str,
+                low_memory=False,
+            )
         except Exception:
             cache_df = pd.DataFrame(columns=required_cols)
     else:
@@ -2042,7 +2144,11 @@ def spectra_load_not_found_table(spectrum_type):
 
     if os.path.exists(filepath):
         try:
-            df = pd.read_csv(filepath)
+            df = pd.read_csv(
+                filepath,
+                dtype=str,
+                low_memory=False,
+            )
         except Exception:
             df = pd.DataFrame(columns=required_cols)
     else:
