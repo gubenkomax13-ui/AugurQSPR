@@ -4060,9 +4060,6 @@ def get_admin_password_secret():
 
 
 def get_user_role():
-    if not qspr_is_online_mode():
-        return "admin"
-
     if bool(st.session_state.get("admin_authenticated", False)):
         return "admin"
     return "user"
@@ -4087,10 +4084,6 @@ def show_admin_only_notice(feature):
 
 
 def render_admin_login_controls():
-    if not qspr_is_online_mode():
-        st.session_state.admin_authenticated = True
-        return
-
     with st.sidebar.expander("Администратор", expanded=False):
         if qspr_is_online_mode():
             st.info(ONLINE_LOCK_MESSAGE)
