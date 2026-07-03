@@ -24,7 +24,6 @@ import re
 import sys
 import json
 import io
-import uuid
 import subprocess
 import importlib
 import hmac
@@ -3526,14 +3525,6 @@ def add_event_log(stage, message, level="info", details=None, event=None):
         "details": dict(details or {}),
     }
 
-    st.session_state.log_events.append(entry)
-    st.session_state.logs.append(_log_format_event(entry))
-
-    if len(st.session_state.log_events) > 500:
-        st.session_state.log_events = st.session_state.log_events[-500:]
-    if len(st.session_state.logs) > 500:
-        st.session_state.logs = st.session_state.logs[-500:]
-
 
 def render_spectra_search_results_if_available():
     results = st.session_state.get("spectra_search_results")
@@ -3699,6 +3690,15 @@ def render_spectra_search_results_if_available():
         key="download_current_spectra_search_results",
     )
     return True
+
+    st.session_state.log_events.append(entry)
+    st.session_state.logs.append(_log_format_event(entry))
+
+    if len(st.session_state.log_events) > 500:
+        st.session_state.log_events = st.session_state.log_events[-500:]
+    if len(st.session_state.logs) > 500:
+        st.session_state.logs = st.session_state.logs[-500:]
+
 
 def add_log(
     message,
@@ -4050,219 +4050,6 @@ def load_markdown_help(help_path):
 def show_markdown_help(title, help_path, expanded=False):
     with st.expander(title, expanded=expanded):
         st.markdown(load_markdown_help(help_path))
-
-
-def format_duration_text(seconds):
-    try:
-        seconds = max(0, int(float(seconds)))
-    except Exception:
-        seconds = 0
-
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    secs = seconds % 60
-
-    if hours > 0:
-        return f"{hours} ч {minutes:02d} мин {secs:02d} сек"
-
-    if minutes > 0:
-        return f"{minutes} мин {secs:02d} сек"
-
-    return f"{secs} сек"
-
-
-def launch_spectra_worker_job(
-    tasks,
-    skipped_results,
-    selected_sources,
-    delay_seconds,
-    max_workers,
-    source_timeout_seconds,
-    cache_flush_every=25,
-):
-    job_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
-    paths = spectra_worker_paths(job_id)
-    os.makedirs(paths["job_dir"], exist_ok=True)
-
-    task_rows = []
-
-    for compound, spectrum_type in tasks:
-        row = dict(compound or {})
-        row["_task_spectrum_type"] = spectra_normalize_spectrum_type(spectrum_type)
-        task_rows.append(row)
-
-    pd.DataFrame(task_rows).to_csv(
-        paths["tasks"],
-        index=False,
-        encoding="utf-8-sig",
-    )
-
-    pd.DataFrame(skipped_results or []).to_csv(
-        paths["skipped"],
-        index=False,
-        encoding="utf-8-sig",
-    )
-
-    config = {
-        "job_id": job_id,
-        "selected_sources": list(selected_sources or []),
-        "delay_seconds": float(delay_seconds or 0),
-        "max_workers": int(max_workers or 1),
-        "source_timeout_seconds": float(source_timeout_seconds or 10),
-        "cache_flush_every": int(cache_flush_every or 25),
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    }
-
-    with open(paths["config"], "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
-
-    spectra_write_worker_status(
-        job_id,
-        {
-            "state": "queued",
-            "done_tasks": 0,
-            "total_tasks": len(task_rows),
-            "skipped_tasks": len(skipped_results or []),
-            "result_rows": len(skipped_results or []),
-            "elapsed_seconds": 0,
-            "tasks_per_minute": 0,
-            "avg_seconds_per_task": 0,
-            "max_workers": int(max_workers or 1),
-            "source_timeout_seconds": float(source_timeout_seconds or 10),
-            "selected_sources": list(selected_sources or []),
-            "results_file": paths["results"],
-            "log_file": paths["log"],
-        },
-    )
-
-    worker_script = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "scripts",
-        "spectra_worker.py",
-    )
-    stdout_path = os.path.join(paths["job_dir"], "worker_stdout.log")
-    creationflags = 0
-
-    if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
-        creationflags = subprocess.CREATE_NO_WINDOW
-
-    with open(stdout_path, "a", encoding="utf-8") as worker_stdout:
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                worker_script,
-                "--job-id",
-                job_id,
-            ],
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-            stdout=worker_stdout,
-            stderr=worker_stdout,
-            stdin=subprocess.DEVNULL,
-            creationflags=creationflags,
-        )
-
-    st.session_state.spectra_worker_job_id = job_id
-    st.session_state.spectra_worker_pid = int(process.pid)
-
-    return job_id
-
-
-def render_spectra_worker_monitor(job_id=None, expanded=True):
-    status = spectra_read_worker_status(job_id)
-
-    if not status:
-        return False
-
-    job_id = status.get("job_id", job_id or "")
-    state = str(status.get("state", "")).strip() or "unknown"
-    done_tasks = int(float(status.get("done_tasks", 0) or 0))
-    total_tasks = int(float(status.get("total_tasks", 0) or 0))
-    skipped_tasks = int(float(status.get("skipped_tasks", 0) or 0))
-    elapsed_seconds = float(status.get("elapsed_seconds", 0) or 0)
-    tasks_per_minute = float(status.get("tasks_per_minute", 0) or 0)
-    avg_seconds = float(status.get("avg_seconds_per_task", 0) or 0)
-    max_workers = int(float(status.get("max_workers", 0) or 0))
-    source_timeout = float(status.get("source_timeout_seconds", 0) or 0)
-    status_counts = status.get("status_counts", {}) or {}
-    remaining_tasks = max(total_tasks - done_tasks, 0)
-    eta_text = (
-        format_duration_text((remaining_tasks / tasks_per_minute) * 60.0)
-        if tasks_per_minute > 0 and remaining_tasks > 0
-        else ("готово" if remaining_tasks == 0 else "оценивается")
-    )
-
-    with st.expander("Фоновый поиск спектров", expanded=expanded):
-        if state in {"running", "queued"}:
-            st.info(
-                f"Job `{job_id}`: {state}. "
-                f"Время: {format_duration_text(elapsed_seconds)} | "
-                f"остаток: {eta_text} | "
-                f"обработано: {done_tasks}/{total_tasks} | "
-                f"пропущено заранее: {skipped_tasks} | "
-                f"скорость: {tasks_per_minute:.1f} задач/мин | "
-                f"среднее: {avg_seconds:.1f} сек | "
-                f"потоки: {max_workers} | "
-                f"таймаут: {source_timeout:.0f} сек"
-            )
-        elif state == "completed":
-            st.success(
-                f"Job `{job_id}` завершён. Обработано: {done_tasks}/{total_tasks}. "
-                f"Время: {format_duration_text(elapsed_seconds)}."
-            )
-        elif state == "stopped_by_user":
-            st.warning(
-                f"Job `{job_id}` остановлен. Обработано: {done_tasks}/{total_tasks}."
-            )
-        else:
-            st.warning(f"Job `{job_id}`: {state}")
-
-        if total_tasks > 0:
-            st.progress(min(max(done_tasks / total_tasks, 0.0), 1.0))
-
-        if status_counts:
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {"Статус": key, "Количество": value}
-                        for key, value in sorted(status_counts.items())
-                    ]
-                ),
-                width="stretch",
-                hide_index=True,
-            )
-
-        col_worker_1, col_worker_2 = st.columns(2)
-
-        with col_worker_1:
-            if st.button("Остановить фоновый поиск", key=f"stop_worker_{job_id}", disabled=state not in {"running", "queued"}):
-                spectra_request_stop()
-                st.warning("Запрошена остановка фонового поиска.")
-
-        with col_worker_2:
-            if st.button("Загрузить результаты worker", key=f"load_worker_results_{job_id}"):
-                worker_results = spectra_read_worker_results(job_id)
-
-                if worker_results.empty:
-                    st.warning("Файл результатов worker пока пуст.")
-                else:
-                    st.session_state.spectra_search_results = worker_results
-                    st.session_state.spectra_search_status = state
-                    st.session_state.spectra_search_total_tasks = int(
-                        status.get("result_rows", len(worker_results)) or len(worker_results)
-                    )
-                    st.success(f"Загружены результаты worker: {len(worker_results)} строк.")
-                    st.rerun()
-
-        results_file = str(status.get("results_file", "")).strip()
-        log_file = str(status.get("log_file", "")).strip()
-
-        if results_file:
-            st.caption(f"Результаты: `{results_file}`")
-
-        if log_file:
-            st.caption(f"Лог: `{log_file}`")
-
-    return True
 
 
 def get_admin_password_secret():
@@ -7297,7 +7084,6 @@ if uploaded_file is not None:
         st.rerun()
         
 if st.session_state.data is None:
-    render_spectra_worker_monitor(expanded=True)
     st.info(t('upload.example_header'))
     st.code("SMILES;BoilingPoint\nC;-161.5\nCC;-88.6\nCCC;-42.1", language="csv")
     sample_alkanes_path = os.path.join(
@@ -10417,14 +10203,6 @@ with st.expander(
             help="Быстрый режим: 8-12 сек. Полный режим: 20-40 сек. Короткий таймаут ускоряет поиск, но может пропустить медленные ответы."
         )
 
-        use_background_spectra_worker = st.checkbox(
-            "Запускать поиск в фоновом worker",
-            value=not qspr_is_online_mode(),
-            disabled=qspr_is_online_mode(),
-            key="use_background_spectra_worker",
-            help="Для долгих локальных прогонов: поиск идёт отдельным процессом и не зависит от обновления страницы Streamlit."
-        )
-
         if st.button(t('spectra.stop_search_button'), key="stop_spectra_search"):
             st.session_state.stop_spectra_search_requested = True
             st.session_state.spectra_search_status = "stopped_by_user"
@@ -10436,8 +10214,6 @@ with st.expander(
 
             time.sleep(5)
             stop_msg_placeholder.empty()
-
-        render_spectra_worker_monitor(expanded=False)
 
         spectra_results_rendered_this_run = False
 
@@ -10871,23 +10647,6 @@ with st.expander(
                         width="stretch",
                         hide_index=True
                     )
-
-                if use_background_spectra_worker and not qspr_is_online_mode():
-                    job_id = launch_spectra_worker_job(
-                        tasks=tasks,
-                        skipped_results=skipped_results,
-                        selected_sources=selected_sources,
-                        delay_seconds=delay_seconds,
-                        max_workers=spectra_search_workers,
-                        source_timeout_seconds=active_source_timeout,
-                        cache_flush_every=25,
-                    )
-                    st.success(
-                        f"Фоновый поиск спектров запущен: `{job_id}`. "
-                        "Можно обновлять страницу или закрывать вкладку; worker продолжит работу."
-                    )
-                    render_spectra_worker_monitor(job_id=job_id, expanded=True)
-                    st.stop()
 
                 progress = st.progress(0)
                 timer_box = st.empty()
