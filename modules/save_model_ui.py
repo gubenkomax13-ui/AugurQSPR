@@ -9,6 +9,7 @@ import numpy as np
 import streamlit as st
 
 from modules.i18n import t
+from modules.module_explain_ui import render_module_explanation
 
 
 ONLINE_LOCK_MESSAGE = (
@@ -85,6 +86,7 @@ def render_verified_model_save(
 ):
     """Показывает сохранение модели только после независимой валидации."""
     st.header(t("save_model.verified_header"))
+    render_module_explanation("save_model")
 
     if not validation_completed:
         st.info(t("save_model.validation_required"))

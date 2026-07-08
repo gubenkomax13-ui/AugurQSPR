@@ -9,6 +9,7 @@ import streamlit as st
 from scipy.stats import norm
 
 from modules.i18n import t
+from modules.module_explain_ui import render_module_explanation
 
 
 def render_training_section(context):
@@ -18,6 +19,7 @@ def render_training_section(context):
     # Model selection
     
     st.header(t('model_selection.header'))
+    render_module_explanation("training")
     
     MODEL_FILTER_OPTIONS = {
         "small_datasets": t("model_catalog.filter_small_datasets"),

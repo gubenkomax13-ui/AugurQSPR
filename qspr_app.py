@@ -34,6 +34,8 @@ from html import escape
 from sklearn.linear_model import LinearRegression
 from modules.applicability_domain_core import *
 from modules.methodology_generator import generate_methodology_text
+from modules.module_explain_ui import render_module_explanation
+from modules.module_registry import module_overview_markdown
 from modules.report_generator import generate_full_report
 from modules.save_model_ui import render_verified_model_save
 from modules.validation_ui import render_validation_section
@@ -44,6 +46,7 @@ from modules.diagnostics_ui import render_model_diagnostics_section
 from modules.training_ui import render_training_section
 from modules.report_ui import render_report_section
 from modules.statistics_summary_ui import render_final_statistics_summary
+from modules.chemical_diversity_ui import render_chemical_diversity_section
 import time
 
 import streamlit as st
@@ -689,7 +692,7 @@ try:
     except Exception as morfeus_e:
         morfeus_available = False
         morfeus_import_error = str(morfeus_e)
-        
+
     try:
         from modules.dscribe_descriptor_core import *
         dscribe_available, dscribe_import_error = dscribe_is_available()
@@ -785,6 +788,13 @@ st.markdown(
 
 # ------------------------------------------------------------------
 # UI helpers
+
+def render_tool_badge(label=None):
+    st.markdown(
+        f'<div class="tool-badge">{escape(label or t("data_prep.tool_badge"))}</div>',
+        unsafe_allow_html=True
+    )
+
 
 def show_molecule_viewer(data, target_col, smiles_col="SMILES"):
     """
@@ -952,7 +962,7 @@ def show_molecule_grid_from_table(
         st.write(t('molecule_grid.compounds_count', count=n_available))
 
         col_1, col_2, col_3 = st.columns(3)
-      
+
         with col_1:
 
             max_allowed = min(
@@ -1697,7 +1707,7 @@ def show_saod_molecule_grid(
                 width="stretch",
                 hide_index=True
             )
-            
+
 def saod2_add_smiles_for_visualization(table_df, processed):
     """
     Добавляет колонку SMILES в SAOD-таблицу для визуализации структур.
@@ -1792,7 +1802,7 @@ def saod2_add_smiles_for_visualization(table_df, processed):
         return out
 
     return out
- 
+
 def qspr_standardize_molecule_dataset(
     input_df,
     smiles_col,
@@ -2251,7 +2261,7 @@ def qspr_analyze_dataset_for_qspr(data, smiles_col, target_col):
     invalid_smiles_df = pd.DataFrame(invalid_smiles_rows)
 
     return diagnostics_table, class_summary, invalid_smiles_df, conflict_duplicates
- 
+
 def qspr_make_dataset_passport(
     data,
     smiles_col,
@@ -4281,7 +4291,7 @@ def qspr_connect_spectral_descriptors_to_session(
         status_label=t('spectra.status_calculated_included'),
         expanded=False,
         key_prefix="spectral_descriptor_meanings"
-    )    
+    )
 
     add_log(
         t('spectra.log_matrix_connected',
@@ -6085,7 +6095,7 @@ def descriptor_source_message():
         st.info(t('desc_source.custom', n_desc=n_desc, n_obj=n_obj))
     else:
         st.info(t('desc_source.default', n_desc=n_desc, n_obj=n_obj))
-    
+
 def qspr_guess_descriptor_source(desc_name):
     """
     Грубо определяет источник дескриптора по имени.
@@ -6094,10 +6104,10 @@ def qspr_guess_descriptor_source(desc_name):
 
     if name.startswith("xtb_"):
         return "xTB"
-        
+
     if name.startswith("morfeus_"):
         return "morfeus"
-        
+
     if name.startswith("SPEC_") or name.startswith("spectral_"):
         return "Spectra"
 
@@ -6805,7 +6815,7 @@ def reset_project_state_for_new_file():
         # Пользовательские дескрипторы / МНК
         "incremental_result",
         "incremental_cols",
-        
+
         # xTB
         "xtb_descriptors_df",
         "xtb_descriptors_report",
@@ -6823,7 +6833,7 @@ def reset_project_state_for_new_file():
             st.session_state[key] = SESSION_DEFAULTS[key]
         elif key in st.session_state:
             del st.session_state[key]
-            
+
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 # Sidebar
@@ -6879,7 +6889,7 @@ if not is_admin() and not qspr_is_online_mode():
 
 with st.sidebar:
     st.header(t('sidebar.title'))
-    
+
     # --- Переключатель языка ---
     lang = st.selectbox(
         t('sidebar.language_select'),
@@ -6894,7 +6904,7 @@ with st.sidebar:
         _remember_lang_in_url(lang)
         set_language(lang)
         st.rerun()
-    # --- конец переключателя ---    
+    # --- конец переключателя ---
 
     if app_mode != "prediction":
         padel_unique_count = len(qspr_load_padel_unique_from_file())
@@ -6937,6 +6947,9 @@ with st.sidebar:
         else:
             st.warning(t('sidebar.lists_not_created'))
 
+        with st.expander("Карта модулей", expanded=False):
+            st.markdown(module_overview_markdown())
+
         if is_admin():
             with st.expander(t('sidebar.show_log')):
                 show_logs()
@@ -6964,6 +6977,9 @@ if app_mode == "prediction":
 st.header(t('header.qspr'))
 st.markdown(t('data_upload.instruction'))
 
+st.header(t('data_prep.header'))
+render_module_explanation("data_preparation")
+st.caption(t('data_prep.caption'))
 if app_mode != "prediction" and is_admin() and st.session_state.get("show_data_bank_panel", False):
     with st.expander(t('sidebar.manage_data_bank'), expanded=True):
         manage_data_bank()
@@ -7040,7 +7056,7 @@ if uploaded_file is not None:
             except Exception as e:
                 st.error(t('upload.csv_read_error', error=e))
                 st.stop()
-    
+
         elif file_ext == "xlsx":
             data = pd.read_excel(uploaded_file)
         else:
@@ -7082,7 +7098,7 @@ if uploaded_file is not None:
         )
 
         st.rerun()
-        
+
 if st.session_state.data is None:
     st.info(t('upload.example_header'))
     st.code("SMILES;BoilingPoint\nC;-161.5\nCC;-88.6\nCCC;-42.1", language="csv")
@@ -7102,13 +7118,6 @@ if st.session_state.data is None:
     st.stop()
 # ------------------------------------------------------------------
 # Basic data preparation
-
-# ------------------------------------------------------------------
-# Data is loaded: show data-preparation module header
-
-st.header(t('data_prep.header'))
-
-st.caption(t('data_prep.caption'))
 
 data = st.session_state.data.copy()
 
@@ -7253,7 +7262,7 @@ data[target_col] = pd.to_numeric(
     errors="coerce"
 )
 
-st.subheader(t('data_prep.data_subheader'))
+st.markdown("#### Блок: 📄 Контроль чтения файла и просмотр структур")
 
 if st.session_state.get("data_source_note"):
     st.success(st.session_state.data_source_note)
@@ -7287,15 +7296,12 @@ show_molecule_viewer(
     smiles_col=smiles_col_current
 )
 
-st.markdown(
-    '<div class="tool-badge">' + t('data_prep.tool_badge') + '</div>',
-    unsafe_allow_html=True
-)
-st.markdown(t('data_prep.standardization_title'))
+primary_data_analysis_container = st.container()
 
-st.info(t('data_prep.standardization_info'))
-    
-st.caption(t('data_prep.standardization_caption'))
+st.header("🧪 Модуль химической подготовки структур (Стандартизация представления и нормализация структур)")
+
+render_tool_badge()
+st.subheader("Нормализация и канонизация структур")
 
 if st.button(
     t('standardization_ui.normalize_button'),
@@ -7520,302 +7526,318 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                 st.error(t('standardization_ui.apply_error', error=e))
                 st.exception(e)
 
-## ------------------------------------------------------------------
-# Dataset passport
+with primary_data_analysis_container:
+    st.header("📋 Модуль анализа первичных данных")
+    render_module_explanation("primary_data_analysis")
 
-st.markdown(t('dataset_passport.title'))
+    ## ------------------------------------------------------------------
+    # Dataset passport
 
-try:
-    source_filename = ""
-
-    try:
-        if uploaded_file is not None:
-            source_filename = uploaded_file.name
-    except Exception:
-        source_filename = st.session_state.get("data_source_note", "")
-
-    (
-        dataset_passport_df,
-        suspicious_values_df,
-        duplicate_structures_df,
-        passport_conflict_duplicates_df
-    ) = qspr_make_dataset_passport(
-        data=data,
-        smiles_col=smiles_col_current,
-        target_col=target_col,
-        source_filename=source_filename
-    )
-
-    status_value = ""
+    st.markdown(t('dataset_passport.title'))
 
     try:
-        status_value = str(
-            dataset_passport_df.loc[
-                dataset_passport_df[t('passport.prompt')] == t('passport.final_status'),
-                t('passport.value')
-            ].iloc[0]
+        source_filename = ""
+
+        try:
+            if uploaded_file is not None:
+                source_filename = uploaded_file.name
+        except Exception:
+            source_filename = st.session_state.get("data_source_note", "")
+
+        (
+            dataset_passport_df,
+            suspicious_values_df,
+            duplicate_structures_df,
+            passport_conflict_duplicates_df
+        ) = qspr_make_dataset_passport(
+            data=data,
+            smiles_col=smiles_col_current,
+            target_col=target_col,
+            source_filename=source_filename
         )
-    except Exception:
+
         status_value = ""
 
-    if status_value.startswith("✅"):
-        st.success(status_value)
-    elif status_value.startswith("⚠️"):
-        st.warning(status_value)
+        try:
+            status_value = str(
+                dataset_passport_df.loc[
+                    dataset_passport_df[t('passport.prompt')] == t('passport.final_status'),
+                    t('passport.value')
+                ].iloc[0]
+            )
+        except Exception:
+            status_value = ""
 
-    passport_metric_map = {}
+        if status_value.startswith("✅"):
+            st.success(status_value)
+        elif status_value.startswith("⚠️"):
+            st.warning(status_value)
 
-    for _, row in dataset_passport_df.iterrows():
-        passport_metric_map[str(row[t('passport.prompt')])] = row[t('passport.value')]
+        passport_metric_map = {}
 
-    pass_col_1, pass_col_2, pass_col_3, pass_col_4 = st.columns(4)
+        for _, row in dataset_passport_df.iterrows():
+            passport_metric_map[str(row[t('passport.prompt')])] = row[t('passport.value')]
 
-    with pass_col_1:
-        st.metric(t('passport.rows'), passport_metric_map.get(t('passport.rows'), "—"))
+        pass_col_1, pass_col_2, pass_col_3, pass_col_4 = st.columns(4)
 
-    with pass_col_2:
-        st.metric(t('passport.valid_smiles'), passport_metric_map.get(t('passport.valid_smiles'), "—"))
+        with pass_col_1:
+            st.metric(t('passport.rows'), passport_metric_map.get(t('passport.rows'), "—"))
 
-    with pass_col_3:
-        st.metric(t('passport.unique_structures'), passport_metric_map.get(t('passport.unique_structures'), "—"))
+        with pass_col_2:
+            st.metric(t('passport.valid_smiles'), passport_metric_map.get(t('passport.valid_smiles'), "—"))
 
-    with pass_col_4:
-        st.metric(t('passport.conflict_duplicates'), passport_metric_map.get(t('passport.conflict_duplicates'), "—"))
+        with pass_col_3:
+            st.metric(t('passport.unique_structures'), passport_metric_map.get(t('passport.unique_structures'), "—"))
 
-    pass_col_5, pass_col_6, pass_col_7, pass_col_8 = st.columns(4)
+        with pass_col_4:
+            st.metric(t('passport.conflict_duplicates'), passport_metric_map.get(t('passport.conflict_duplicates'), "—"))
 
-    with pass_col_5:
-        st.metric(t('passport.missing_values'), passport_metric_map.get(t('passport.missing_values'), "—"))
+        pass_col_5, pass_col_6, pass_col_7, pass_col_8 = st.columns(4)
 
-    with pass_col_6:
-        st.metric(t('passport.min'), passport_metric_map.get(t('passport.min'), "—"))
+        with pass_col_5:
+            st.metric(t('passport.missing_values'), passport_metric_map.get(t('passport.missing_values'), "—"))
 
-    with pass_col_7:
-        st.metric(t('passport.max'), passport_metric_map.get(t('passport.max'), "—"))
+        with pass_col_6:
+            st.metric(t('passport.min'), passport_metric_map.get(t('passport.min'), "—"))
 
-    with pass_col_8:
-        st.metric(t('passport.suspicious_count'), passport_metric_map.get(t('passport.suspicious_count'), "—"))
+        with pass_col_7:
+            st.metric(t('passport.max'), passport_metric_map.get(t('passport.max'), "—"))
 
-    with st.expander(t('dataset_passport.full_passport'), expanded=True):
-        st.dataframe(
-            dataset_passport_df,
-            width="stretch",
-            hide_index=True
+        with pass_col_8:
+            st.metric(t('passport.suspicious_count'), passport_metric_map.get(t('passport.suspicious_count'), "—"))
+
+        with st.expander(t('dataset_passport.full_passport'), expanded=True):
+            st.dataframe(
+                dataset_passport_df,
+                width="stretch",
+                hide_index=True
+            )
+
+        if isinstance(suspicious_values_df, pd.DataFrame) and not suspicious_values_df.empty:
+            with st.expander(t('dataset_passport.suspicious_values'), expanded=False):
+                st.dataframe(
+                    suspicious_values_df.head(300),
+                    width="stretch",
+                    hide_index=True
+                )
+
+        if isinstance(duplicate_structures_df, pd.DataFrame) and not duplicate_structures_df.empty:
+            with st.expander(t('dataset_passport.duplicate_structures'), expanded=False):
+                st.dataframe(
+                    duplicate_structures_df.head(300),
+                    width="stretch",
+                    hide_index=True
+                )
+
+        if isinstance(passport_conflict_duplicates_df, pd.DataFrame) and not passport_conflict_duplicates_df.empty:
+            with st.expander(t('dataset_passport.conflict_duplicates'), expanded=False):
+                st.dataframe(
+                    passport_conflict_duplicates_df.head(300),
+                    width="stretch",
+                    hide_index=True
+                )
+
+        # Эти переменные могут уже существовать, если выше вставлена расширенная диагностика.
+        # Если их нет, Excel всё равно будет создан с паспортом и доступными листами.
+        diagnostics_for_excel = locals().get("dataset_diagnostics_table", pd.DataFrame())
+        classes_for_excel = locals().get("molecule_class_summary", pd.DataFrame())
+        invalid_smiles_for_excel = locals().get("invalid_smiles_df", pd.DataFrame())
+
+        passport_excel = qspr_make_dataset_passport_excel(
+            passport_df=dataset_passport_df,
+            diagnostics_df=diagnostics_for_excel,
+            molecule_class_summary=classes_for_excel,
+            suspicious_values_df=suspicious_values_df,
+            duplicate_structures_df=duplicate_structures_df,
+            conflict_duplicates_df=passport_conflict_duplicates_df,
+            invalid_smiles_df=invalid_smiles_for_excel
         )
 
-    if isinstance(suspicious_values_df, pd.DataFrame) and not suspicious_values_df.empty:
-        with st.expander(t('dataset_passport.suspicious_values'), expanded=False):
-            st.dataframe(
-                suspicious_values_df.head(300),
-                width="stretch",
-                hide_index=True
-            )
+        st.download_button(
+            t('dataset_passport.download_excel'),
+            passport_excel,
+            "dataset_passport.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_dataset_passport_excel"
+        )
 
-    if isinstance(duplicate_structures_df, pd.DataFrame) and not duplicate_structures_df.empty:
-        with st.expander(t('dataset_passport.duplicate_structures'), expanded=False):
-            st.dataframe(
-                duplicate_structures_df.head(300),
-                width="stretch",
-                hide_index=True
-            )
+    except Exception as e:
+        st.warning(t('dataset_passport.error', error=e))
 
-    if isinstance(passport_conflict_duplicates_df, pd.DataFrame) and not passport_conflict_duplicates_df.empty:
-        with st.expander(t('dataset_passport.conflict_duplicates'), expanded=False):
-            st.dataframe(
-                passport_conflict_duplicates_df.head(300),
-                width="stretch",
-                hide_index=True
-            )
+    col_hist, col_box = st.columns(2)
 
-    # Эти переменные могут уже существовать, если выше вставлена расширенная диагностика.
-    # Если их нет, Excel всё равно будет создан с паспортом и доступными листами.
-    diagnostics_for_excel = locals().get("dataset_diagnostics_table", pd.DataFrame())
-    classes_for_excel = locals().get("molecule_class_summary", pd.DataFrame())
-    invalid_smiles_for_excel = locals().get("invalid_smiles_df", pd.DataFrame())
+    with col_hist:
+        fig_hist, ax_hist = plt.subplots(figsize=(4, 3))
+        safe_histplot(ax_hist, data[target_col], kde=True, color='steelblue', edgecolor='black', alpha=0.7)
+        ax_hist.set_title(t('dataset_passport.hist_title', col=target_col))
+        st.pyplot(fig_hist)
 
-    passport_excel = qspr_make_dataset_passport_excel(
-        passport_df=dataset_passport_df,
-        diagnostics_df=diagnostics_for_excel,
-        molecule_class_summary=classes_for_excel,
-        suspicious_values_df=suspicious_values_df,
-        duplicate_structures_df=duplicate_structures_df,
-        conflict_duplicates_df=passport_conflict_duplicates_df,
-        invalid_smiles_df=invalid_smiles_for_excel
+    with col_box:
+        fig_box, ax_box = plt.subplots(figsize=(4, 2.5))
+        sns.boxplot(x=data[target_col].dropna(), ax=ax_box)
+        ax_box.set_title(t('dataset_passport.boxplot_title', col=target_col))
+        st.pyplot(fig_box)
+
+    st.subheader(t('dataset_passport.diagnostics_title'))
+
+    diagnostics_found = False
+
+    duplicate_summary = (
+        data
+        .groupby(smiles_col_current)[target_col]
+        .agg(
+            n_records="size",
+            n_unique_values=lambda x: x.dropna().nunique(),
+            min_value="min",
+            max_value="max"
+        )
+        .reset_index()
     )
 
-    st.download_button(
-        t('dataset_passport.download_excel'),
-        passport_excel,
-        "dataset_passport.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="download_dataset_passport_excel"
-    )
-
-except Exception as e:
-    st.warning(t('dataset_passport.error', error=e))
-
-col_hist, col_box = st.columns(2)
-
-with col_hist:
-    fig_hist, ax_hist = plt.subplots(figsize=(4, 3))
-    safe_histplot(ax_hist, data[target_col], kde=True, color='steelblue', edgecolor='black', alpha=0.7)
-    ax_hist.set_title(t('dataset_passport.hist_title', col=target_col))
-    st.pyplot(fig_hist)
-
-with col_box:
-    fig_box, ax_box = plt.subplots(figsize=(4, 2.5))
-    sns.boxplot(x=data[target_col].dropna(), ax=ax_box)
-    ax_box.set_title(t('dataset_passport.boxplot_title', col=target_col))
-    st.pyplot(fig_box)
-
-st.subheader(t('dataset_passport.diagnostics_title'))
-
-diagnostics_found = False
-
-duplicate_summary = (
-    data
-    .groupby(smiles_col_current)[target_col]
-    .agg(
-        n_records="size",
-        n_unique_values=lambda x: x.dropna().nunique(),
-        min_value="min",
-        max_value="max"
-    )
-    .reset_index()
-)
-
-conflict_smiles = duplicate_summary[
-    (duplicate_summary["n_records"] > 1) &
-    (duplicate_summary["n_unique_values"] > 1)
-].copy()
-
-if not conflict_smiles.empty:
-    diagnostics_found = True
-
-    conflict_rows = data[
-        data[smiles_col_current].isin(conflict_smiles[smiles_col_current])
+    conflict_smiles = duplicate_summary[
+        (duplicate_summary["n_records"] > 1) &
+        (duplicate_summary["n_unique_values"] > 1)
     ].copy()
 
-    conflict_rows.insert(
-        0,
-        t('dataset_passport.original_row'),
-        conflict_rows.index + 1
-    )
-
-    st.warning(t('dataset_passport.conflict_warning', count=len(conflict_smiles)))
-
-    st.dataframe(
-        conflict_rows,
-        width="stretch",
-        hide_index=True
-    )
-
-    conflict_rows_for_view = conflict_rows.copy()
-    conflict_rows_for_view["SMILES"] = conflict_rows_for_view[smiles_col_current]
-
-    show_molecule_grid_from_table(
-        table_df=conflict_rows_for_view,
-        title=t('dataset_passport.conflict_structures_title'),
-        target_col=target_col,
-        smiles_col="SMILES",
-        max_molecules=100,
-        key_prefix="duplicate_smiles_conflicts"
-    )
-
-else:
-    st.success(t('dataset_passport.no_conflict_found'))
-
-target_values = pd.to_numeric(data[target_col], errors="coerce")
-valid_target = target_values.dropna()
-
-target_outlier_rows = pd.DataFrame()
-
-if len(valid_target) >= 4:
-    q1 = valid_target.quantile(0.25)
-    q3 = valid_target.quantile(0.75)
-    iqr = q3 - q1
-
-    lower_iqr = q1 - 1.5 * iqr
-    upper_iqr = q3 + 1.5 * iqr
-
-    mean_y = valid_target.mean()
-    std_y = valid_target.std()
-
-    if std_y > 1e-12:
-        z_scores_all = (target_values - mean_y).abs() / std_y
-    else:
-        z_scores_all = pd.Series(0.0, index=data.index)
-
-    outlier_mask = (
-        (target_values < lower_iqr) |
-        (target_values > upper_iqr) |
-        (z_scores_all > 3)
-    )
-
-    target_outlier_rows = data.loc[outlier_mask].copy()
-
-    if not target_outlier_rows.empty:
+    if not conflict_smiles.empty:
         diagnostics_found = True
 
-        target_outlier_rows.insert(
+        conflict_rows = data[
+            data[smiles_col_current].isin(conflict_smiles[smiles_col_current])
+        ].copy()
+
+        conflict_rows.insert(
             0,
-            t('outliers.col_original_row'),
-            target_outlier_rows.index + 1
+            t('dataset_passport.original_row'),
+            conflict_rows.index + 1
         )
 
-        target_outlier_rows[t('outliers.col_reason')] = ""
+        st.warning(t('dataset_passport.conflict_warning', count=len(conflict_smiles)))
 
-        target_outlier_rows.loc[
-            target_values.loc[target_outlier_rows.index] < lower_iqr,
-            t('outliers.col_reason')
-        ] += t('outliers.reason_below_iqr') + "; "
-
-        target_outlier_rows.loc[
-            target_values.loc[target_outlier_rows.index] > upper_iqr,
-            t('outliers.col_reason')
-        ] += t('outliers.reason_above_iqr') + "; "
-
-        target_outlier_rows.loc[
-            z_scores_all.loc[target_outlier_rows.index] > 3,
-            t('outliers.col_reason')
-        ] += t('outliers.reason_zscore') + "; "
-
-        target_outlier_rows[t('outliers.col_iqr_lower')] = lower_iqr
-        target_outlier_rows[t('outliers.col_iqr_upper')] = upper_iqr
-        target_outlier_rows[t('outliers.col_zscore')] = z_scores_all.loc[target_outlier_rows.index].values
-
-        st.warning(t('outliers.count_warning', count=len(target_outlier_rows)))
-        st.info(t('outliers.diagnostic_info'))
-
-        show_molecule_grid_from_table(
-            table_df=target_outlier_rows,
-            title=t('outliers.structures_title'),
-            target_col=target_col,
-            smiles_col=smiles_col_current,
-            max_molecules=100,
-            key_prefix="target_property_outliers"
-        )
         st.dataframe(
-            target_outlier_rows,
+            conflict_rows,
             width="stretch",
             hide_index=True
         )
+
+        conflict_rows_for_view = conflict_rows.copy()
+        conflict_rows_for_view["SMILES"] = conflict_rows_for_view[smiles_col_current]
+
+        show_molecule_grid_from_table(
+            table_df=conflict_rows_for_view,
+            title=t('dataset_passport.conflict_structures_title'),
+            target_col=target_col,
+            smiles_col="SMILES",
+            max_molecules=100,
+            key_prefix="duplicate_smiles_conflicts"
+        )
+
     else:
-        st.success(t('outliers.no_outliers'))
-else:
-    st.info(t('outliers.insufficient_data'))
+        st.success(t('dataset_passport.no_conflict_found'))
 
-if not diagnostics_found:
-    st.info(t('outliers.no_gross_issues'))
+    target_values = pd.to_numeric(data[target_col], errors="coerce")
+    valid_target = target_values.dropna()
 
-st.info(t('outliers.multivariate_info'))
+    target_outlier_rows = pd.DataFrame()
+
+    if len(valid_target) >= 4:
+        q1 = valid_target.quantile(0.25)
+        q3 = valid_target.quantile(0.75)
+        iqr = q3 - q1
+
+        lower_iqr = q1 - 1.5 * iqr
+        upper_iqr = q3 + 1.5 * iqr
+
+        mean_y = valid_target.mean()
+        std_y = valid_target.std()
+
+        if std_y > 1e-12:
+            z_scores_all = (target_values - mean_y).abs() / std_y
+        else:
+            z_scores_all = pd.Series(0.0, index=data.index)
+
+        outlier_mask = (
+            (target_values < lower_iqr) |
+            (target_values > upper_iqr) |
+            (z_scores_all > 3)
+        )
+
+        target_outlier_rows = data.loc[outlier_mask].copy()
+
+        if not target_outlier_rows.empty:
+            diagnostics_found = True
+
+            target_outlier_rows.insert(
+                0,
+                t('outliers.col_original_row'),
+                target_outlier_rows.index + 1
+            )
+
+            target_outlier_rows[t('outliers.col_reason')] = ""
+
+            target_outlier_rows.loc[
+                target_values.loc[target_outlier_rows.index] < lower_iqr,
+                t('outliers.col_reason')
+            ] += t('outliers.reason_below_iqr') + "; "
+
+            target_outlier_rows.loc[
+                target_values.loc[target_outlier_rows.index] > upper_iqr,
+                t('outliers.col_reason')
+            ] += t('outliers.reason_above_iqr') + "; "
+
+            target_outlier_rows.loc[
+                z_scores_all.loc[target_outlier_rows.index] > 3,
+                t('outliers.col_reason')
+            ] += t('outliers.reason_zscore') + "; "
+
+            target_outlier_rows[t('outliers.col_iqr_lower')] = lower_iqr
+            target_outlier_rows[t('outliers.col_iqr_upper')] = upper_iqr
+            target_outlier_rows[t('outliers.col_zscore')] = z_scores_all.loc[target_outlier_rows.index].values
+
+            st.warning(t('outliers.count_warning', count=len(target_outlier_rows)))
+            st.info(t('outliers.diagnostic_info'))
+
+            show_molecule_grid_from_table(
+                table_df=target_outlier_rows,
+                title=t('outliers.structures_title'),
+                target_col=target_col,
+                smiles_col=smiles_col_current,
+                max_molecules=100,
+                key_prefix="target_property_outliers"
+            )
+            st.dataframe(
+                target_outlier_rows,
+                width="stretch",
+                hide_index=True
+            )
+        else:
+            st.success(t('outliers.no_outliers'))
+    else:
+        st.info(t('outliers.insufficient_data'))
+
+    if not diagnostics_found:
+        st.info(t('outliers.no_gross_issues'))
+
+    st.info(t('outliers.multivariate_info'))
+
+st.header("🧭 Модуль химического пространства")
+render_module_explanation("chemical_space")
+
+render_chemical_diversity_section(
+    data=data,
+    smiles_col=smiles_col_current,
+    label_col=None,
+    target_col=target_col,
+    descriptor_df=st.session_state.get("df_desc"),
+    expanded=False,
+)
 
 # ------------------------------------------------------------------
 # Structural dataset filter
-st.markdown(
-    '<div class="tool-badge">' + t('struct_filter.tool_badge') + '</div>',
-    unsafe_allow_html=True
-)
+st.header("🧱 Модуль структурного аудита и фильтров")
+render_module_explanation("structural_audit")
+
+render_tool_badge()
 with st.expander(t('struct_filter.expander_title'), expanded=False):
     show_markdown_help(
         t('struct_filter.help_title_structural'),
@@ -8190,10 +8212,7 @@ if filtered_result is not None:
 
 # ------------------------------------------------------------------
 # SAOD UI
-st.markdown(
-    '<div class="tool-badge">' + t('saod_ui.tool_badge') + '</div>',
-    unsafe_allow_html=True
-)
+render_tool_badge()
 with st.expander(t('saod_ui.expander_title'), expanded=False):
     st.markdown(t('saod_ui.description'))
 
@@ -8310,7 +8329,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
 
                 st.subheader(t('saod_ui.summary_subheader'))
                 saod2_show_table(summary)
-                
+
                 st.subheader(t('saod_ui.review_subheader'))
 
                 review_df = saod2_make_review_dataset(
@@ -8384,7 +8403,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                     "saod2_review_dataset.xlsx",
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-                
+
                 col_saod_use_1, col_saod_use_2 = st.columns(2)
                 cleaning_already_applied = st.session_state.get("saod2_cleaning_applied", False)
 
@@ -8526,7 +8545,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                 with tab_v2_2:
                     show_markdown_help(t('saod_tabs.help_checkability'), os.path.join(HELP_DIR, "saod2_checkability.md"), expanded=False)
                     saod2_show_table(checkability)
-                    
+
                     if not checkability.empty:
                         low_checkability = checkability.copy()
 
@@ -8629,7 +8648,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         st.success(t('saod_tabs.no_broken_edges'))
                     else:
                         saod2_show_table(broken_edges)
-                        
+
                         broken_mols_rows = []
 
                         def add_broken_smiles_rows(row, smiles_value, name_value, prop_value, role_value):
@@ -8703,7 +8722,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         if not suspicious_only.empty:
                             st.subheader(t('saod_tabs.manual_check_subheader'))
                             saod2_show_table(suspicious_only)
-                            
+
                             suspicious_vis = saod2_add_smiles_for_visualization(
                                 suspicious_only,
                                 processed
@@ -8737,7 +8756,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         else:
                             st.warning(t('saod_tabs.isolated_warning'))
                             saod2_show_table(isolated)
-                            
+
                             isolated_vis = saod2_add_smiles_for_visualization(
                                 isolated,
                                 processed
@@ -8770,15 +8789,16 @@ spectra_expander_should_be_open = (
     or st.session_state.get("pending_qspr_descriptor_bundle_ready", False)
 )
 
-st.markdown(
-    '<div class="tool-badge">' + t('spectra.tool_badge') + '</div>',
-    unsafe_allow_html=True
+st.header("🧩 Модуль источников дескрипторов")
+st.caption(
+    "Здесь выбираются источники признаков, настраиваются типы дескрипторов "
+    "и собирается итоговая матрица X/y для QSPR-моделирования."
 )
+render_module_explanation("feature_sources")
 
-with st.expander(
-    t('spectra.expander_title'),
-    expanded=spectra_expander_should_be_open
-):
+def render_spectra_descriptor_workbench():
+    st.subheader(t('spectra.expander_title'))
+
     show_markdown_help(
         t('spectra.help_search'),
         os.path.join(HELP_DIR, "spectra_search_help.md"),
@@ -8975,7 +8995,7 @@ with st.expander(
                     "text/csv",
                     key="download_raw_jdx_reindex_report"
                 )
-               
+
 
     else:
         st.info(
@@ -10355,14 +10375,14 @@ with st.expander(
                         cache_type = str(row_dict.get("_spectrum_type_norm", "")).strip()
                         cache_inchikey = str(row_dict.get("inchikey", "")).strip()
                         cache_smiles = str(row_dict.get("canonical_smiles", "")).strip()
-                        
+
                         if not str(row_dict.get("selected_sources_key", "")).strip():
                             row_dict["selected_sources_key"] = (
                                 str(row_dict.get("selected_sources", ""))
                                 .replace(" | ", "|")
                                 .strip()
                             )
-                        
+
                         if cache_inchikey and cache_type:
                             cache_by_inchikey[(cache_inchikey, cache_type)] = row_dict
 
@@ -11227,7 +11247,7 @@ with st.expander(
                         st.dataframe(search_results_df, width="stretch")
                     else:
                         total_checked = len(search_results_df)
-            
+
 
                 for col in [
                     "spectrum_status",
@@ -11733,7 +11753,7 @@ with st.expander(
         selected_intensity_types_for_desc = available_intensity_types
         experimental_only_for_desc = True
         prefer_quantitative_for_desc = False
-        
+
     # ------------------------------------------------------------
     # Сетка и нормировка
 
@@ -12667,7 +12687,7 @@ with st.expander(
                         "проверьте выбранный тип спектра, режим фазы, источники, "
                         "экспериментальность и наличие этих InChIKey/SMILES в индексе."
                     )
-                    
+
         if rep.get("used_phases"):
             st.markdown(t('spectra_report.used_phases_title'))
 
@@ -12694,7 +12714,7 @@ with st.expander(
 
             if isinstance(used_phases_dict, dict) and len(used_phases_dict) > 1:
                 st.warning(t('spectra_report.warning_mixed_phases'))
-                    
+
         if rep.get("spectrum_selection_reasons"):
             st.markdown(t('spectra_report.reasons_title'))
 
@@ -12762,72 +12782,46 @@ with st.expander(
                 t('spectra_report.transfer_button'),
                 type="primary",
                 key="use_selected_descriptors_for_qspr"
-            ):          
+            ):
                 try:
-                    bundle = qspr_build_descriptor_matrix_from_sources(
-                        current_df=current_df,
-                        target_col=target_col,
-                        use_molecular=False,
-                        molecular_desc_df=None,
-                        molecular_valid_indices=None,
-                        use_spectral=True,
-                        spectral_desc_df=spectral_df,
-                        smiles_col=smiles_col_current,
-                        restrict_to_spectral_subset=True,
-                    )
-
-                    store_descriptor_bundle(
-                        bundle,
-                        bundle["report"]["descriptor_source"]
-                    )
-
-                    st.session_state.desc_calculated = True
-                    st.session_state.X_all = bundle["X_all"]
-                    st.session_state.y_all = bundle["y_all"]
-                    st.session_state.valid_indices = bundle["valid_indices"]
-                    st.session_state.desc_names = bundle["desc_names"]
-                    st.session_state.df_desc = bundle["df_desc"]
-                    st.session_state.custom_descriptor_source = bundle["report"]["descriptor_source"]
-                    st.session_state.custom_descriptors_used = True
-
-                    st.session_state.pending_qspr_descriptor_bundle = bundle
-                    st.session_state.pending_qspr_descriptor_bundle_ready = False
                     st.session_state.spectral_descriptors_transferred_ready = True
-                    st.session_state.use_spectral_descriptors_source = True
+                    st.session_state.spectral_source_autoselect_requested = True
                     st.session_state.keep_spectra_expander_open = True
-                    st.session_state.descriptor_calculation_mode = "spectral_or_combined"
+                    st.session_state.qspr_descriptor_matrix_ready_message = ""
+                    st.session_state.pending_qspr_descriptor_bundle = None
+                    st.session_state.pending_qspr_descriptor_bundle_ready = False
+                    st.session_state.pending_qspr_descriptor_bundle_message = ""
 
-                    st.session_state.qspr_descriptor_matrix_ready_message = t('spectra_report.matrix_ready',
-                        rows=bundle['X_all'].shape[0],
-                        cols=bundle['X_all'].shape[1],
-                        source=bundle['report']['descriptor_source']
+                    st.session_state.desc_calculated = False
+                    st.session_state.validation_done = False
+                    st.session_state.X_all = None
+                    st.session_state.y_all = None
+                    st.session_state.valid_indices = None
+                    st.session_state.desc_names = None
+                    st.session_state.df_desc = None
+                    st.session_state.trained_models = {}
+                    st.session_state.holdout_results_dict = {}
+                    st.session_state.kfold_results_dict = {}
+                    st.session_state.loo_results_dict = {}
+
+                    add_log(
+                        t('spectra_report.transfer_log',
+                            rows=spectral_df.shape[0],
+                            cols=spectral_df.shape[1]
+                        )
                     )
 
-                    st.session_state.pending_qspr_descriptor_bundle_message = (
-                        st.session_state.qspr_descriptor_matrix_ready_message
-                    )
-
-                    st.session_state.spectral_qspr_match_info = bundle.get(
-                        "match_info",
-                        pd.DataFrame()
-                    )
-
-                    add_log(t('spectra_report.matrix_log',
-                        source=bundle['report']['descriptor_source'],
-                        rows=bundle['X_all'].shape[0],
-                        cols=bundle['X_all'].shape[1]
+                    st.success(t('spectra_report.transfer_ready',
+                        rows=spectral_df.shape[0],
+                        cols=spectral_df.shape[1]
                     ))
-
-                    st.success(st.session_state.qspr_descriptor_matrix_ready_message)
                     st.rerun()
 
                 except Exception as e:
-                    st.error(t('spectra_report.matrix_error', error=e))
+                    st.error(t('spectra_report.transfer_error', error=e))
 
-st.header(t('modeling.header'))
 if st.session_state.get("qspr_descriptor_matrix_ready_message"):
     st.success(st.session_state.qspr_descriptor_matrix_ready_message)
-st.caption(t('modeling.caption'))
 
 # ------------------------------------------------------------------
 # Descriptor source
@@ -12990,7 +12984,11 @@ if descriptor_source_mode == "file":
             st.error(t('descriptor_source.use_error', error=e))
 
 else:
-    st.subheader(t('descriptor_settings.subheader'))
+    st.subheader("Сборка дескрипторной матрицы")
+    st.caption(
+        "Чекбоксы выбирают, какие типы дескрипторов войдут в итоговую матрицу. "
+        "Вкладки ниже отвечают за настройку каждого источника."
+    )
 
     spectral_ready_for_source = (
         st.session_state.get("spectral_descriptors_transferred_ready", False)
@@ -13000,6 +12998,12 @@ else:
         )
         or isinstance(st.session_state.get("spectral_descriptors_df"), pd.DataFrame)
     )
+
+    if (
+        st.session_state.pop("spectral_source_autoselect_requested", False)
+        and not qspr_is_online_mode()
+    ):
+        st.session_state.use_spectral_descriptors_source = True
 
     col_desc_source_1, col_desc_source_2, col_desc_source_3 = st.columns(3)
 
@@ -13021,12 +13025,9 @@ else:
             st.caption(ONLINE_LOCK_MESSAGE)
 
     with col_desc_source_3:
-        if not spectral_ready_for_source:
-            st.session_state.use_spectral_descriptors_source = False
-
         use_spectral_descriptors_source = st.checkbox(
             t('descriptor_settings.checkbox_spectral'),
-            disabled=(not spectral_ready_for_source) or qspr_is_online_mode(),
+            disabled=qspr_is_online_mode(),
             key="use_spectral_descriptors_source"
         )
         if qspr_is_online_mode():
@@ -13041,223 +13042,235 @@ else:
         use_quantum_descriptors_source = False
         use_spectral_descriptors_source = False
 
+    (
+        descriptor_tab_molecular,
+        descriptor_tab_quantum,
+        descriptor_tab_spectral,
+    ) = st.tabs([
+        "Молекулярные",
+        "Квантово-химические",
+        "Спектральные",
+    ])
+
+    descriptor_matrix_container = st.container()
+
     if use_morfeus_descriptors_source and not morfeus_available:
         st.warning(t('descriptor_settings.morfeus_not_available', error=morfeus_import_error))
 
-    if use_quantum_descriptors_source:
-        with st.expander(t('descriptor_settings.quantum_expander'), expanded=True):
-            st.markdown(t('descriptor_settings.quantum_sources_title'))
+    with descriptor_tab_quantum:
+        if use_quantum_descriptors_source:
+            with st.expander(t('descriptor_settings.quantum_expander'), expanded=True):
+                st.markdown(t('descriptor_settings.quantum_sources_title'))
 
-            col_q_1, col_q_2, col_q_3 = st.columns(3)
+                col_q_1, col_q_2, col_q_3 = st.columns(3)
 
-            with col_q_1:
-                use_xtb_descriptors_source = st.checkbox(
-                    t('descriptor_settings.xtb_checkbox'),
-                    value=True,
-                    key="use_xtb_descriptors_source"
-                )
-
-            with col_q_2:
-                use_morfeus_descriptors_source = st.checkbox(
-                    t('descriptor_settings.morfeus_checkbox'),
-                    value=False,
-                    key="use_morfeus_descriptors_source"
-                )
-
-            with col_q_3:
-                use_dscribe_descriptors_source = st.checkbox(
-                    t('descriptor_settings.dscribe_checkbox'),
-                    value=False,
-                    key="use_dscribe_descriptors_source"
-                )
-                
-            if use_morfeus_descriptors_source and not morfeus_available:
-                st.warning(t('descriptor_settings.morfeus_not_available', error=morfeus_import_error))
-            if use_dscribe_descriptors_source and not dscribe_available:
-                st.warning(t('descriptor_settings.dscribe_not_available', error=dscribe_import_error))
-
-            with st.expander(t('descriptor_settings.bank_expander'), expanded=False):
-                use_descriptor_bank = st.checkbox(
-                    t('descriptor_settings.bank_use_checkbox'),
-                    value=True,
-                    key="use_descriptor_bank",
-                )
-
-                save_descriptor_bank = st.checkbox(
-                    t('descriptor_settings.bank_save_checkbox'),
-                    value=True,
-                    key="save_descriptor_bank",
-                )
-
-                st.caption(t('descriptor_settings.bank_caption'))
-
-            # ------------------------------------------------------------
-            # xTB settings
-
-            if use_xtb_descriptors_source:
-                st.markdown(t('descriptor_settings.xtb_title'))
-
-                col_xtb_1, col_xtb_2, col_xtb_3 = st.columns(3)
-
-                with col_xtb_1:
-                    xtb_method = st.selectbox(
-                        t('descriptor_settings.xtb_method_label'),
-                        ["GFN2-xTB", "GFN1-xTB", "GFN0-xTB"],
-                        index=0,
-                        key="xtb_method"
+                with col_q_1:
+                    use_xtb_descriptors_source = st.checkbox(
+                        t('descriptor_settings.xtb_checkbox'),
+                        value=True,
+                        key="use_xtb_descriptors_source"
                     )
 
-                    xtb_accuracy = st.number_input(
-                        t('descriptor_settings.xtb_accuracy_label'),
-                        min_value=0.01,
-                        max_value=10.0,
-                        value=1.0,
-                        step=0.1,
-                        key="xtb_accuracy"
+                with col_q_2:
+                    use_morfeus_descriptors_source = st.checkbox(
+                        t('descriptor_settings.morfeus_checkbox'),
+                        value=False,
+                        key="use_morfeus_descriptors_source"
                     )
 
-                with col_xtb_2:
-                    xtb_charge = st.number_input(
-                        t('descriptor_settings.xtb_charge_label'),
-                        min_value=-10,
-                        max_value=10,
-                        value=0,
-                        step=1,
-                        key="xtb_charge"
+                with col_q_3:
+                    use_dscribe_descriptors_source = st.checkbox(
+                        t('descriptor_settings.dscribe_checkbox'),
+                        value=False,
+                        key="use_dscribe_descriptors_source"
                     )
 
-                    xtb_etemp = st.number_input(
-                        t('descriptor_settings.xtb_temp_label'),
-                        min_value=0.0,
-                        max_value=10000.0,
-                        value=300.0,
-                        step=50.0,
-                        key="xtb_etemp"
+                if use_morfeus_descriptors_source and not morfeus_available:
+                    st.warning(t('descriptor_settings.morfeus_not_available', error=morfeus_import_error))
+                if use_dscribe_descriptors_source and not dscribe_available:
+                    st.warning(t('descriptor_settings.dscribe_not_available', error=dscribe_import_error))
+
+                with st.expander(t('descriptor_settings.bank_expander'), expanded=False):
+                    use_descriptor_bank = st.checkbox(
+                        t('descriptor_settings.bank_use_checkbox'),
+                        value=True,
+                        key="use_descriptor_bank",
                     )
 
-                with col_xtb_3:
-                    xtb_uhf = st.number_input(
-                        t('descriptor_settings.xtb_uhf_label'),
+                    save_descriptor_bank = st.checkbox(
+                        t('descriptor_settings.bank_save_checkbox'),
+                        value=True,
+                        key="save_descriptor_bank",
+                    )
+
+                    st.caption(t('descriptor_settings.bank_caption'))
+
+                # ------------------------------------------------------------
+                # xTB settings
+
+                if use_xtb_descriptors_source:
+                    st.markdown(t('descriptor_settings.xtb_title'))
+
+                    col_xtb_1, col_xtb_2, col_xtb_3 = st.columns(3)
+
+                    with col_xtb_1:
+                        xtb_method = st.selectbox(
+                            t('descriptor_settings.xtb_method_label'),
+                            ["GFN2-xTB", "GFN1-xTB", "GFN0-xTB"],
+                            index=0,
+                            key="xtb_method"
+                        )
+
+                        xtb_accuracy = st.number_input(
+                            t('descriptor_settings.xtb_accuracy_label'),
+                            min_value=0.01,
+                            max_value=10.0,
+                            value=1.0,
+                            step=0.1,
+                            key="xtb_accuracy"
+                        )
+
+                    with col_xtb_2:
+                        xtb_charge = st.number_input(
+                            t('descriptor_settings.xtb_charge_label'),
+                            min_value=-10,
+                            max_value=10,
+                            value=0,
+                            step=1,
+                            key="xtb_charge"
+                        )
+
+                        xtb_etemp = st.number_input(
+                            t('descriptor_settings.xtb_temp_label'),
+                            min_value=0.0,
+                            max_value=10000.0,
+                            value=300.0,
+                            step=50.0,
+                            key="xtb_etemp"
+                        )
+
+                    with col_xtb_3:
+                        xtb_uhf = st.number_input(
+                            t('descriptor_settings.xtb_uhf_label'),
+                            min_value=0,
+                            max_value=20,
+                            value=0,
+                            step=1,
+                            key="xtb_uhf"
+                        )
+
+                        xtb_max_iter = st.number_input(
+                            t('descriptor_settings.xtb_iter_label'),
+                            min_value=50,
+                            max_value=2000,
+                            value=250,
+                            step=50,
+                            key="xtb_max_iter"
+                        )
+
+                    xtb_optimize_rdkit = st.checkbox(
+                        t('descriptor_settings.xtb_optimize_checkbox'),
+                        value=True,
+                        key="xtb_optimize_rdkit"
+                    )
+
+                    xtb_limit = st.number_input(
+                        t('descriptor_settings.xtb_limit_label'),
                         min_value=0,
-                        max_value=20,
                         value=0,
-                        step=1,
-                        key="xtb_uhf"
+                        step=10,
+                        key="xtb_limit"
                     )
 
-                    xtb_max_iter = st.number_input(
-                        t('descriptor_settings.xtb_iter_label'),
-                        min_value=50,
-                        max_value=2000,
-                        value=250,
-                        step=50,
-                        key="xtb_max_iter"
+                    show_markdown_help(
+                        t('descriptor_settings.xtb_help_title'),
+                        os.path.join(HELP_DIR, "xtb_settings_help.md"),
+                        expanded=False
                     )
 
-                xtb_optimize_rdkit = st.checkbox(
-                    t('descriptor_settings.xtb_optimize_checkbox'),
-                    value=True,
-                    key="xtb_optimize_rdkit"
-                )
+                # ------------------------------------------------------------
+                # morfeus settings
 
-                xtb_limit = st.number_input(
-                    t('descriptor_settings.xtb_limit_label'),
-                    min_value=0,
-                    value=0,
-                    step=10,
-                    key="xtb_limit"
-                )
+                if use_morfeus_descriptors_source:
+                    st.markdown(t('descriptor_settings.morfeus_title'))
 
-                show_markdown_help(
-                    t('descriptor_settings.xtb_help_title'),
-                    os.path.join(HELP_DIR, "xtb_settings_help.md"),
-                    expanded=False
-                )
+                    morfeus_calc_sasa = st.checkbox(
+                        t('descriptor_settings.morfeus_sasa_checkbox'),
+                        value=True,
+                        key="morfeus_calc_sasa"
+                    )
 
-            # ------------------------------------------------------------
-            # morfeus settings
+                    morfeus_calc_dispersion = st.checkbox(
+                        t('descriptor_settings.morfeus_dispersion_checkbox'),
+                        value=True,
+                        key="morfeus_calc_dispersion"
+                    )
 
-            if use_morfeus_descriptors_source:
-                st.markdown(t('descriptor_settings.morfeus_title'))
+                    morfeus_calc_xtb = st.checkbox(
+                        t('descriptor_settings.morfeus_xtb_checkbox'),
+                        value=True,
+                        key="morfeus_calc_xtb"
+                    )
 
-                morfeus_calc_sasa = st.checkbox(
-                    t('descriptor_settings.morfeus_sasa_checkbox'),
-                    value=True,
-                    key="morfeus_calc_sasa"
-                )
+                    morfeus_optimize_3d = st.checkbox(
+                        t('descriptor_settings.morfeus_optimize_checkbox'),
+                        value=True,
+                        key="morfeus_optimize_3d"
+                    )
 
-                morfeus_calc_dispersion = st.checkbox(
-                    t('descriptor_settings.morfeus_dispersion_checkbox'),
-                    value=True,
-                    key="morfeus_calc_dispersion"
-                )
+                    morfeus_limit = st.number_input(
+                        t('descriptor_settings.morfeus_limit_label'),
+                        min_value=0,
+                        value=0,
+                        step=10,
+                        key="morfeus_limit"
+                    )
 
-                morfeus_calc_xtb = st.checkbox(
-                    t('descriptor_settings.morfeus_xtb_checkbox'),
-                    value=True,
-                    key="morfeus_calc_xtb"
-                )
+                    st.caption(t('descriptor_settings.morfeus_caption'))
 
-                morfeus_optimize_3d = st.checkbox(
-                    t('descriptor_settings.morfeus_optimize_checkbox'),
-                    value=True,
-                    key="morfeus_optimize_3d"
-                )
+                # ------------------------------------------------------------
+                # DScribe settings
 
-                morfeus_limit = st.number_input(
-                    t('descriptor_settings.morfeus_limit_label'),
-                    min_value=0,
-                    value=0,
-                    step=10,
-                    key="morfeus_limit"
-                )
+                if use_dscribe_descriptors_source:
+                    st.markdown(t('descriptor_settings.dscribe_title'))
 
-                st.caption(t('descriptor_settings.morfeus_caption'))
+                    dscribe_descriptor_type = st.selectbox(
+                        t('descriptor_settings.dscribe_type_label'),
+                        [t('descriptor_settings.dscribe_type_coulomb')],
+                        index=0,
+                        key="dscribe_descriptor_type"
+                    )
 
-            # ------------------------------------------------------------
-            # DScribe settings
+                    dscribe_max_atoms = st.number_input(
+                        t('descriptor_settings.dscribe_max_atoms_label'),
+                        min_value=5,
+                        max_value=300,
+                        value=60,
+                        step=5,
+                        key="dscribe_max_atoms"
+                    )
 
-            if use_dscribe_descriptors_source:
-                st.markdown(t('descriptor_settings.dscribe_title'))
+                    dscribe_optimize_3d = st.checkbox(
+                        t('descriptor_settings.dscribe_optimize_checkbox'),
+                        value=True,
+                        key="dscribe_optimize_3d"
+                    )
 
-                dscribe_descriptor_type = st.selectbox(
-                    t('descriptor_settings.dscribe_type_label'),
-                    [t('descriptor_settings.dscribe_type_coulomb')],
-                    index=0,
-                    key="dscribe_descriptor_type"
-                )
+                    dscribe_limit = st.number_input(
+                        t('descriptor_settings.dscribe_limit_label'),
+                        min_value=0,
+                        value=0,
+                        step=10,
+                        key="dscribe_limit"
+                    )
 
-                dscribe_max_atoms = st.number_input(
-                    t('descriptor_settings.dscribe_max_atoms_label'),
-                    min_value=5,
-                    max_value=300,
-                    value=60,
-                    step=5,
-                    key="dscribe_max_atoms"
-                )
-
-                dscribe_optimize_3d = st.checkbox(
-                    t('descriptor_settings.dscribe_optimize_checkbox'),
-                    value=True,
-                    key="dscribe_optimize_3d"
-                )
-
-                dscribe_limit = st.number_input(
-                    t('descriptor_settings.dscribe_limit_label'),
-                    min_value=0,
-                    value=0,
-                    step=10,
-                    key="dscribe_limit"
-                )
-
-                st.caption(t('descriptor_settings.dscribe_caption'))
-                
-    if not spectral_ready_for_source:
-        st.caption(t('descriptor_settings.spectral_not_ready_caption'))
+                    st.caption(t('descriptor_settings.dscribe_caption'))
 
     if (
         not use_molecular_descriptors_source
         and not use_xtb_descriptors_source
+        and not use_morfeus_descriptors_source
+        and not use_dscribe_descriptors_source
         and not use_spectral_descriptors_source
     ):
         st.warning(t('descriptor_settings.warning_select_descriptor_type'))
@@ -13267,161 +13280,274 @@ else:
     allowed_mordred_names = []
     allowed_padel_names = []
 
-if use_molecular_descriptors_source:
-    DESCRIPTOR_MODE_OPTIONS = {
-        "rdkit_fast": "descriptor_mode.speed",
-        "mordred": "descriptor_mode.extended",
-        "mordred_padel_unique": "descriptor_mode.smart",
-        "max_accuracy": "descriptor_mode.accuracy",
-    }
+if (
+    use_molecular_descriptors_source
+    or use_xtb_descriptors_source
+    or use_morfeus_descriptors_source
+    or use_dscribe_descriptors_source
+    or use_spectral_descriptors_source
+):
+    online_heavy_descriptor_mode = False
+    with descriptor_tab_molecular:
+        if use_molecular_descriptors_source:
+            DESCRIPTOR_MODE_OPTIONS = {
+                "rdkit_fast": "descriptor_mode.speed",
+                "mordred": "descriptor_mode.extended",
+                "mordred_padel_unique": "descriptor_mode.smart",
+                "max_accuracy": "descriptor_mode.accuracy",
+            }
 
-    DESCRIPTOR_MODE_HELP = {
-        "rdkit_fast": "descriptor_mode.help_speed",
-        "mordred": "descriptor_mode.help_extended",
-        "mordred_padel_unique": "descriptor_mode.help_smart",
-        "max_accuracy": "descriptor_mode.help_accuracy",
-    }
+            DESCRIPTOR_MODE_HELP = {
+                "rdkit_fast": "descriptor_mode.help_speed",
+                "mordred": "descriptor_mode.help_extended",
+                "mordred_padel_unique": "descriptor_mode.help_smart",
+                "max_accuracy": "descriptor_mode.help_accuracy",
+            }
 
-    mode = st.radio(
-        t("descriptor_mode.radio_label"),
-        options=list(DESCRIPTOR_MODE_OPTIONS.keys()),
-        index=0 if qspr_is_online_mode() else 1,
-        format_func=lambda key: t(DESCRIPTOR_MODE_OPTIONS[key]),
-        key="descriptor_mode_radio_v2"
-    )
+            mode = st.radio(
+                t("descriptor_mode.radio_label"),
+                options=list(DESCRIPTOR_MODE_OPTIONS.keys()),
+                index=0 if qspr_is_online_mode() else 1,
+                format_func=lambda key: t(DESCRIPTOR_MODE_OPTIONS[key]),
+                key="descriptor_mode_radio_v2"
+            )
 
-    st.caption(
-        t("descriptor_mode.help_prefix") + " " + t(DESCRIPTOR_MODE_HELP[mode])
-    )
+            st.caption(
+                t("descriptor_mode.help_prefix") + " " + t(DESCRIPTOR_MODE_HELP[mode])
+            )
 
-    online_heavy_descriptor_mode = qspr_is_online_mode() and mode != "rdkit_fast"
-    if online_heavy_descriptor_mode:
-        qspr_online_lock_notice("Mordred, PaDEL and maximum-accuracy descriptor modes")
+            online_heavy_descriptor_mode = qspr_is_online_mode() and mode != "rdkit_fast"
+            if online_heavy_descriptor_mode:
+                qspr_online_lock_notice("Mordred, PaDEL and maximum-accuracy descriptor modes")
 
-    (
-        allowed_rdkit_names,
-        allowed_mordred_names,
-        allowed_padel_names
-    ) = qspr_descriptor_group_selection_ui(
-        mode=mode,
-        desc_lists=st.session_state.desc_lists
-    )
+            (
+                allowed_rdkit_names,
+                allowed_mordred_names,
+                allowed_padel_names
+            ) = qspr_descriptor_group_selection_ui(
+                mode=mode,
+                desc_lists=st.session_state.desc_lists
+            )
 
-    if (
-        use_molecular_descriptors_source
-        or use_xtb_descriptors_source
-        or use_morfeus_descriptors_source
-        or use_dscribe_descriptors_source
-    ):
+        else:
+            st.info("Молекулярные дескрипторы выключены чекбоксом сверху.")
 
-        if st.button(
-            t('descriptor_calc.calculate_button'),
-            type="primary",
-            disabled=online_heavy_descriptor_mode,
+    with descriptor_tab_spectral:
+        if use_spectral_descriptors_source:
+            render_spectra_descriptor_workbench()
+
+            spectral_df_for_status = st.session_state.get("spectral_descriptors_df")
+            if isinstance(spectral_df_for_status, pd.DataFrame) and not spectral_df_for_status.empty:
+                st.success(f"Спектральные дескрипторы готовы: {spectral_df_for_status.shape[0]} веществ, {spectral_df_for_status.shape[1]} колонок.")
+            else:
+                st.warning("Спектральный источник включён, но таблица спектральных дескрипторов ещё не рассчитана.")
+        else:
+            st.info("Спектральные дескрипторы выключены чекбоксом сверху.")
+
+    with descriptor_matrix_container:
+        st.subheader("Итоговая матрица X/y")
+        selected_summary = []
+        if use_molecular_descriptors_source:
+            selected_summary.append("молекулярные")
+        if use_xtb_descriptors_source or use_morfeus_descriptors_source or use_dscribe_descriptors_source:
+            selected_summary.append("квантово-химические")
+        if use_spectral_descriptors_source:
+            selected_summary.append("спектральные")
+        st.caption("Выбрано для сборки: " + (", ".join(selected_summary) if selected_summary else "ничего не выбрано"))
+        if (
+            use_molecular_descriptors_source
+            or use_xtb_descriptors_source
+            or use_morfeus_descriptors_source
+            or use_dscribe_descriptors_source
+            or use_spectral_descriptors_source
         ):
-            try:
-                bundle = None
-                source_label = ""
-                selected_descriptor_sources = []
 
-                if use_molecular_descriptors_source:
-                    selected_descriptor_sources.append(t('descriptor_calc.source_molecular'))
+            if st.button(
+                t('descriptor_calc.calculate_button'),
+                type="primary",
+                disabled=online_heavy_descriptor_mode,
+            ):
+                try:
+                    current_df = data.copy()
+                    bundle = None
+                    source_label = ""
+                    selected_descriptor_sources = []
 
-                if use_xtb_descriptors_source:
-                    selected_descriptor_sources.append(t('descriptor_calc.source_xtb'))
+                    if use_molecular_descriptors_source:
+                        selected_descriptor_sources.append(t('descriptor_calc.source_molecular'))
 
-                if use_morfeus_descriptors_source:
-                    selected_descriptor_sources.append(t('descriptor_calc.source_morfeus'))
+                    if use_xtb_descriptors_source:
+                        selected_descriptor_sources.append(t('descriptor_calc.source_xtb'))
 
-                if use_dscribe_descriptors_source:
-                    selected_descriptor_sources.append(t('descriptor_calc.source_dscribe'))
+                    if use_morfeus_descriptors_source:
+                        selected_descriptor_sources.append(t('descriptor_calc.source_morfeus'))
 
-                total_descriptor_sources = len(selected_descriptor_sources)
-                current_descriptor_source_step = [0]
+                    if use_dscribe_descriptors_source:
+                        selected_descriptor_sources.append(t('descriptor_calc.source_dscribe'))
 
-                overall_progress_bar = st.progress(0)
-                overall_progress_text = st.empty()
+                    if use_spectral_descriptors_source:
+                        selected_descriptor_sources.append("Спектральные дескрипторы")
 
-                def update_overall_descriptor_progress(source_name):
-                    current_descriptor_source_step[0] += 1
+                    total_descriptor_sources = len(selected_descriptor_sources)
+                    current_descriptor_source_step = [0]
 
-                    if total_descriptor_sources > 0:
-                        overall_progress_bar.progress(
-                            min(
-                                current_descriptor_source_step[0] / total_descriptor_sources,
-                                1.0
+                    overall_progress_bar = st.progress(0)
+                    overall_progress_text = st.empty()
+
+                    def update_overall_descriptor_progress(source_name):
+                        current_descriptor_source_step[0] += 1
+
+                        if total_descriptor_sources > 0:
+                            overall_progress_bar.progress(
+                                min(
+                                    current_descriptor_source_step[0] / total_descriptor_sources,
+                                    1.0
+                                )
                             )
-                        )
 
-                    overall_progress_text.caption(t('descriptor_calc.progress_text',
-                        done=current_descriptor_source_step[0],
-                        total=total_descriptor_sources,
-                        source=source_name
-                    ))
-                    
+                        overall_progress_text.caption(t('descriptor_calc.progress_text',
+                            done=current_descriptor_source_step[0],
+                            total=total_descriptor_sources,
+                            source=source_name
+                        ))
 
-                if use_molecular_descriptors_source:
-                    with st.spinner(t('descriptor_calc.spinner_molecular')):
-                        bundle = qspr_calculate_molecular_descriptors(
-                            data=data,
-                            smiles_col=smiles_col_current,
-                            target_col=target_col,
-                            mode=mode,
-                            desc_lists=st.session_state.desc_lists,
-                            allowed_rdkit_names=allowed_rdkit_names,
-                            allowed_mordred_names=allowed_mordred_names,
-                            allowed_padel_names=allowed_padel_names
-                        )
 
-                    source_label = "molecular_calculated"
-                    update_overall_descriptor_progress(t('descriptor_calc.source_molecular'))
-
-                if use_xtb_descriptors_source:
-                    if not xtb_python_available:
-                        st.error(t('descriptor_calc.error_xtb_not_available'))
-                        st.stop()
-
-                    xtb_max_molecules = None if int(xtb_limit) <= 0 else int(xtb_limit)
-
-                    use_descriptor_bank = bool(st.session_state.get("use_descriptor_bank", True))
-                    save_descriptor_bank = bool(st.session_state.get("save_descriptor_bank", True))
-
-                    xtb_use_bank_default_profile = (
-                        use_descriptor_bank
-                        and str(xtb_method) == "GFN2-xTB"
-                        and int(xtb_charge) == 0
-                        and int(xtb_uhf) == 0
-                        and abs(float(xtb_accuracy) - 1.0) < 1e-12
-                        and abs(float(xtb_etemp) - 300.0) < 1e-12
-                        and int(xtb_max_iter) == 250
-                        and bool(xtb_optimize_rdkit) is True
-                    )
-
-                    if use_descriptor_bank and not xtb_use_bank_default_profile:
-                        st.warning(t('descriptor_calc.warning_xtb_bank_profile'))
-
-                        if xtb_use_bank_default_profile:
-                            cached_xtb_df, xtb_missing_df, bank_report = descriptor_bank_get_cached_and_missing(
-                                df=data,
+                    if use_molecular_descriptors_source:
+                        with st.spinner(t('descriptor_calc.spinner_molecular')):
+                            bundle = qspr_calculate_molecular_descriptors(
+                                data=data,
                                 smiles_col=smiles_col_current,
-                                descriptor_family="quantum",
-                                descriptor_source="xtb",
-                                descriptor_profile="default",
-                                max_molecules=xtb_max_molecules,
+                                target_col=target_col,
+                                mode=mode,
+                                desc_lists=st.session_state.desc_lists,
+                                allowed_rdkit_names=allowed_rdkit_names,
+                                allowed_mordred_names=allowed_mordred_names,
+                                allowed_padel_names=allowed_padel_names
                             )
 
-                            descriptor_bank_show_report(
-                                bank_report,
-                                title=t('descriptor_calc.bank_xtb_title'),
-                            )
+                        source_label = "molecular_calculated"
+                        update_overall_descriptor_progress(t('descriptor_calc.source_molecular'))
 
-                            calculated_xtb_df = pd.DataFrame()
-                            calculated_xtb_report = {}
+                    if use_xtb_descriptors_source:
+                        if not xtb_python_available:
+                            st.error(t('descriptor_calc.error_xtb_not_available'))
+                            st.stop()
 
-                            if not xtb_missing_df.empty:
-                                with st.spinner(t('descriptor_calc.spinner_xtb_missing')):                                    
-                                    calculated_xtb_df, calculated_xtb_report = qspr_calc_xtb_descriptors_dataframe(
-                                        data=xtb_missing_df,
+                        xtb_max_molecules = None if int(xtb_limit) <= 0 else int(xtb_limit)
+
+                        use_descriptor_bank = bool(st.session_state.get("use_descriptor_bank", True))
+                        save_descriptor_bank = bool(st.session_state.get("save_descriptor_bank", True))
+
+                        xtb_use_bank_default_profile = (
+                            use_descriptor_bank
+                            and str(xtb_method) == "GFN2-xTB"
+                            and int(xtb_charge) == 0
+                            and int(xtb_uhf) == 0
+                            and abs(float(xtb_accuracy) - 1.0) < 1e-12
+                            and abs(float(xtb_etemp) - 300.0) < 1e-12
+                            and int(xtb_max_iter) == 250
+                            and bool(xtb_optimize_rdkit) is True
+                        )
+
+                        if use_descriptor_bank and not xtb_use_bank_default_profile:
+                            st.warning(t('descriptor_calc.warning_xtb_bank_profile'))
+
+                            if xtb_use_bank_default_profile:
+                                cached_xtb_df, xtb_missing_df, bank_report = descriptor_bank_get_cached_and_missing(
+                                    df=data,
+                                    smiles_col=smiles_col_current,
+                                    descriptor_family="quantum",
+                                    descriptor_source="xtb",
+                                    descriptor_profile="default",
+                                    max_molecules=xtb_max_molecules,
+                                )
+
+                                descriptor_bank_show_report(
+                                    bank_report,
+                                    title=t('descriptor_calc.bank_xtb_title'),
+                                )
+
+                                calculated_xtb_df = pd.DataFrame()
+                                calculated_xtb_report = {}
+
+                                if not xtb_missing_df.empty:
+                                    with st.spinner(t('descriptor_calc.spinner_xtb_missing')):
+                                        calculated_xtb_df, calculated_xtb_report = qspr_calc_xtb_descriptors_dataframe(
+                                            data=xtb_missing_df,
+                                            smiles_col=smiles_col_current,
+                                            target_col=target_col,
+                                            method=xtb_method,
+                                            charge=int(xtb_charge),
+                                            uhf=int(xtb_uhf),
+                                            accuracy=float(xtb_accuracy),
+                                            electronic_temperature=float(xtb_etemp),
+                                            max_iterations=int(xtb_max_iter),
+                                            random_seed=1,
+                                            optimize_with_rdkit=bool(xtb_optimize_rdkit),
+                                            max_molecules=None,
+                                        )
+
+                                    if save_descriptor_bank and calculated_xtb_df is not None and not calculated_xtb_df.empty:
+                                        try:
+                                            calculated_xtb_df["descriptor_profile"] = "default"
+                                            calculated_xtb_df["xtb_method"] = str(xtb_method)
+                                            calculated_xtb_df["xtb_charge_setting"] = int(xtb_charge)
+                                            calculated_xtb_df["xtb_uhf_setting"] = int(xtb_uhf)
+                                            calculated_xtb_df["xtb_accuracy_setting"] = float(xtb_accuracy)
+                                            calculated_xtb_df["xtb_electronic_temperature_setting"] = float(xtb_etemp)
+                                            calculated_xtb_df["xtb_max_iterations_setting"] = int(xtb_max_iter)
+                                            calculated_xtb_df["xtb_rdkit_optimize_setting"] = bool(xtb_optimize_rdkit)
+                                            calculated_xtb_df["xtb_random_seed_setting"] = 1
+
+                                            descriptor_bank_append(
+                                                desc_df=calculated_xtb_df,
+                                                descriptor_family="quantum",
+                                                descriptor_source="xtb",
+                                                descriptor_profile="default",
+                                                target_col=target_col,
+                                            )
+                                            st.success(t('descriptor_calc.xtb_bank_success'))
+                                        except Exception as e:
+                                            st.warning(t('descriptor_calc.xtb_bank_error', error=e))
+
+                                if cached_xtb_df is not None and not cached_xtb_df.empty:
+                                    cached_xtb_df = descriptor_bank_attach_target(
+                                        df=cached_xtb_df,
+                                        source_df=data,
+                                        target_col=target_col,
+                                    )
+
+                                if calculated_xtb_df is not None and not calculated_xtb_df.empty:
+                                    calculated_xtb_df = descriptor_bank_attach_target(
+                                        df=calculated_xtb_df,
+                                        source_df=data,
+                                        target_col=target_col,
+                                    )
+
+                                xtb_parts = []
+
+                                if cached_xtb_df is not None and not cached_xtb_df.empty:
+                                    xtb_parts.append(cached_xtb_df)
+
+                                if calculated_xtb_df is not None and not calculated_xtb_df.empty:
+                                    xtb_parts.append(calculated_xtb_df)
+
+                                if xtb_parts:
+                                    xtb_df = pd.concat(xtb_parts, ignore_index=True, sort=False)
+
+                                    if "_original_index" in xtb_df.columns:
+                                        xtb_df = xtb_df.sort_values("_original_index").reset_index(drop=True)
+
+                                    xtb_report = dict(calculated_xtb_report or {})
+                                    xtb_report["descriptor_bank"] = bank_report
+                                else:
+                                    xtb_df = pd.DataFrame()
+                                    xtb_report = {"descriptor_bank": bank_report}
+
+                            else:
+                                with st.spinner(t('descriptor_calc.spinner_xtb_calculating')):
+                                    xtb_df, xtb_report = qspr_calc_xtb_descriptors_dataframe(
+                                        data=data,
                                         smiles_col=smiles_col_current,
                                         target_col=target_col,
                                         method=xtb_method,
@@ -13432,158 +13558,194 @@ if use_molecular_descriptors_source:
                                         max_iterations=int(xtb_max_iter),
                                         random_seed=1,
                                         optimize_with_rdkit=bool(xtb_optimize_rdkit),
-                                        max_molecules=None,
+                                        max_molecules=xtb_max_molecules,
                                     )
 
-                                if save_descriptor_bank and calculated_xtb_df is not None and not calculated_xtb_df.empty:
+                            st.session_state.xtb_descriptors_df = xtb_df
+                            st.session_state.xtb_descriptors_report = xtb_report
+                            with st.expander(t('descriptor_calc.xtb_table_expander'), expanded=True):
+                                st.caption(t('descriptor_calc.xtb_table_caption'))
+
+                                st.dataframe(
+                                    xtb_df,
+                                    width="stretch",
+                                    hide_index=True
+                                )
+
+                            if use_molecular_descriptors_source:
+                                bundle = qspr_append_xtb_to_bundle(
+                                    base_bundle=bundle,
+                                    xtb_df=xtb_df,
+                                    target_col=target_col
+                                )
+                                source_label = "molecular_plus_xtb"
+                            else:
+                                bundle = qspr_make_xtb_bundle_from_dataframe(
+                                    xtb_df=xtb_df,
+                                    target_col=target_col
+                                )
+                                source_label = "xtb_quantum_descriptors"
+
+                            st.download_button(
+                                t('descriptor_calc.xtb_download_button'),
+                                xtb_df.to_csv(index=False).encode("utf-8-sig"),
+                                "xtb_descriptors.csv",
+                                "text/csv",
+                                key="download_xtb_descriptors_csv_after_calc"
+                            )
+                            update_overall_descriptor_progress(t('descriptor_calc.source_xtb'))
+
+                    if use_morfeus_descriptors_source:
+                        if not morfeus_available:
+                            st.error(t('descriptor_calc.morfeus_not_available', error=morfeus_import_error))
+                            st.stop()
+
+                        morfeus_max_molecules = (
+                            None if int(morfeus_limit) <= 0 else int(morfeus_limit)
+                        )
+
+                        use_descriptor_bank = bool(st.session_state.get("use_descriptor_bank", True))
+                        save_descriptor_bank = bool(st.session_state.get("save_descriptor_bank", True))
+
+                        morfeus_use_bank_default_profile = (
+                            use_descriptor_bank
+                            and bool(morfeus_calc_sasa) is True
+                            and bool(morfeus_calc_dispersion) is True
+                            and bool(morfeus_calc_xtb) is True
+                            and bool(morfeus_optimize_3d) is True
+                        )
+
+                        if use_descriptor_bank and not morfeus_use_bank_default_profile:
+                            st.warning(t('descriptor_calc.morfeus_bank_profile_warning'))
+
+                        if morfeus_use_bank_default_profile:
+                            cached_morfeus_df, morfeus_missing_df, bank_report = descriptor_bank_get_cached_and_missing(
+                                df=data,
+                                smiles_col=smiles_col_current,
+                                descriptor_family="3d",
+                                descriptor_source="morfeus",
+                                descriptor_profile="default",
+                                max_molecules=morfeus_max_molecules,
+                            )
+
+                            descriptor_bank_show_report(
+                                bank_report,
+                                title=t('descriptor_calc.morfeus_bank_title'),
+                            )
+
+                            calculated_morfeus_df = pd.DataFrame()
+
+                            if not morfeus_missing_df.empty:
+                                progress_bar = st.progress(0)
+                                progress_text = st.empty()
+
+                                def morfeus_progress(done, total, message):
+                                    if total > 0:
+                                        progress_bar.progress(min(done / total, 1.0))
+                                    progress_text.caption(message)
+
+                                with st.spinner(t('descriptor_calc.spinner_morfeus_missing')):
+                                    calculated_morfeus_df = calculate_morfeus_descriptors_for_dataframe(
+                                        df=morfeus_missing_df,
+                                        smiles_col=smiles_col_current,
+                                        id_col=None,
+                                        random_seed=42,
+                                        optimize=bool(morfeus_optimize_3d),
+                                        calc_sasa=bool(morfeus_calc_sasa),
+                                        calc_dispersion=bool(morfeus_calc_dispersion),
+                                        calc_xtb=bool(morfeus_calc_xtb),
+                                        max_molecules=None,
+                                        progress_callback=morfeus_progress
+                                    )
+
+                                progress_bar.empty()
+                                progress_text.empty()
+
+                                if save_descriptor_bank and calculated_morfeus_df is not None and not calculated_morfeus_df.empty:
                                     try:
-                                        calculated_xtb_df["descriptor_profile"] = "default"
-                                        calculated_xtb_df["xtb_method"] = str(xtb_method)
-                                        calculated_xtb_df["xtb_charge_setting"] = int(xtb_charge)
-                                        calculated_xtb_df["xtb_uhf_setting"] = int(xtb_uhf)
-                                        calculated_xtb_df["xtb_accuracy_setting"] = float(xtb_accuracy)
-                                        calculated_xtb_df["xtb_electronic_temperature_setting"] = float(xtb_etemp)
-                                        calculated_xtb_df["xtb_max_iterations_setting"] = int(xtb_max_iter)
-                                        calculated_xtb_df["xtb_rdkit_optimize_setting"] = bool(xtb_optimize_rdkit)
-                                        calculated_xtb_df["xtb_random_seed_setting"] = 1
-                                        
+                                        _morfeus_key_table = descriptor_bank_make_input_key_table(
+                                            df=morfeus_missing_df,
+                                            smiles_col=smiles_col_current,
+                                            max_molecules=None,
+                                        )
+
+                                        calculated_morfeus_df = calculated_morfeus_df.copy()
+
+                                        if "row_index" in calculated_morfeus_df.columns:
+                                            calculated_morfeus_df["_original_index"] = pd.to_numeric(
+                                                calculated_morfeus_df["row_index"],
+                                                errors="coerce",
+                                            ).astype("Int64")
+                                        else:
+                                            calculated_morfeus_df["_original_index"] = calculated_morfeus_df.index.astype("int64")
+
+                                        calculated_morfeus_df = calculated_morfeus_df.merge(
+                                            _morfeus_key_table[
+                                                [
+                                                    "_original_index",
+                                                    "canonical_smiles",
+                                                    "inchikey",
+                                                    "bank_key",
+                                                    "bank_key_status",
+                                                ]
+                                            ],
+                                            on="_original_index",
+                                            how="left",
+                                        )
+
+                                        calculated_morfeus_df["descriptor_profile"] = "default"
+                                        calculated_morfeus_df["morfeus_calc_sasa_setting"] = bool(morfeus_calc_sasa)
+                                        calculated_morfeus_df["morfeus_calc_dispersion_setting"] = bool(morfeus_calc_dispersion)
+                                        calculated_morfeus_df["morfeus_calc_xtb_setting"] = bool(morfeus_calc_xtb)
+                                        calculated_morfeus_df["morfeus_optimize_3d_setting"] = bool(morfeus_optimize_3d)
+                                        calculated_morfeus_df["morfeus_random_seed_setting"] = 42
+
                                         descriptor_bank_append(
-                                            desc_df=calculated_xtb_df,
-                                            descriptor_family="quantum",
-                                            descriptor_source="xtb",
+                                            desc_df=calculated_morfeus_df,
+                                            descriptor_family="3d",
+                                            descriptor_source="morfeus",
                                             descriptor_profile="default",
                                             target_col=target_col,
                                         )
-                                        st.success(t('descriptor_calc.xtb_bank_success'))
+
+                                        st.success(t('descriptor_calc.morfeus_bank_success'))
+
                                     except Exception as e:
-                                        st.warning(t('descriptor_calc.xtb_bank_error', error=e))
+                                        st.warning(t('descriptor_calc.morfeus_bank_error', error=e))
 
-                            if cached_xtb_df is not None and not cached_xtb_df.empty:
-                                cached_xtb_df = descriptor_bank_attach_target(
-                                    df=cached_xtb_df,
+                            if cached_morfeus_df is not None and not cached_morfeus_df.empty:
+                                cached_morfeus_df = descriptor_bank_attach_target(
+                                    df=cached_morfeus_df,
                                     source_df=data,
                                     target_col=target_col,
                                 )
 
-                            if calculated_xtb_df is not None and not calculated_xtb_df.empty:
-                                calculated_xtb_df = descriptor_bank_attach_target(
-                                    df=calculated_xtb_df,
+                            if calculated_morfeus_df is not None and not calculated_morfeus_df.empty:
+                                calculated_morfeus_df = descriptor_bank_attach_target(
+                                    df=calculated_morfeus_df,
                                     source_df=data,
                                     target_col=target_col,
                                 )
 
-                            xtb_parts = []
+                            morfeus_parts = []
 
-                            if cached_xtb_df is not None and not cached_xtb_df.empty:
-                                xtb_parts.append(cached_xtb_df)
+                            if cached_morfeus_df is not None and not cached_morfeus_df.empty:
+                                morfeus_parts.append(cached_morfeus_df)
 
-                            if calculated_xtb_df is not None and not calculated_xtb_df.empty:
-                                xtb_parts.append(calculated_xtb_df)
+                            if calculated_morfeus_df is not None and not calculated_morfeus_df.empty:
+                                morfeus_parts.append(calculated_morfeus_df)
 
-                            if xtb_parts:
-                                xtb_df = pd.concat(xtb_parts, ignore_index=True, sort=False)
+                            if morfeus_parts:
+                                morfeus_df = pd.concat(morfeus_parts, ignore_index=True, sort=False)
 
-                                if "_original_index" in xtb_df.columns:
-                                    xtb_df = xtb_df.sort_values("_original_index").reset_index(drop=True)
-
-                                xtb_report = dict(calculated_xtb_report or {})
-                                xtb_report["descriptor_bank"] = bank_report
+                                if "_original_index" in morfeus_df.columns:
+                                    morfeus_df = morfeus_df.sort_values("_original_index").reset_index(drop=True)
+                                elif "row_index" in morfeus_df.columns:
+                                    morfeus_df = morfeus_df.sort_values("row_index").reset_index(drop=True)
                             else:
-                                xtb_df = pd.DataFrame()
-                                xtb_report = {"descriptor_bank": bank_report}
+                                morfeus_df = pd.DataFrame()
 
                         else:
-                            with st.spinner(t('descriptor_calc.spinner_xtb_calculating')):
-                                xtb_df, xtb_report = qspr_calc_xtb_descriptors_dataframe(
-                                    data=data,
-                                    smiles_col=smiles_col_current,
-                                    target_col=target_col,
-                                    method=xtb_method,
-                                    charge=int(xtb_charge),
-                                    uhf=int(xtb_uhf),
-                                    accuracy=float(xtb_accuracy),
-                                    electronic_temperature=float(xtb_etemp),
-                                    max_iterations=int(xtb_max_iter),
-                                    random_seed=1,
-                                    optimize_with_rdkit=bool(xtb_optimize_rdkit),
-                                    max_molecules=xtb_max_molecules,
-                                )
-
-                        st.session_state.xtb_descriptors_df = xtb_df
-                        st.session_state.xtb_descriptors_report = xtb_report
-                        with st.expander(t('descriptor_calc.xtb_table_expander'), expanded=True):
-                            st.caption(t('descriptor_calc.xtb_table_caption'))
-
-                            st.dataframe(
-                                xtb_df,
-                                width="stretch",
-                                hide_index=True
-                            )
-
-                        if use_molecular_descriptors_source:
-                            bundle = qspr_append_xtb_to_bundle(
-                                base_bundle=bundle,
-                                xtb_df=xtb_df,
-                                target_col=target_col
-                            )
-                            source_label = "molecular_plus_xtb"
-                        else:
-                            bundle = qspr_make_xtb_bundle_from_dataframe(
-                                xtb_df=xtb_df,
-                                target_col=target_col
-                            )
-                            source_label = "xtb_quantum_descriptors"
-
-                        st.download_button(
-                            t('descriptor_calc.xtb_download_button'),
-                            xtb_df.to_csv(index=False).encode("utf-8-sig"),
-                            "xtb_descriptors.csv",
-                            "text/csv",
-                            key="download_xtb_descriptors_csv_after_calc"
-                        )
-                        update_overall_descriptor_progress(t('descriptor_calc.source_xtb'))
-                        
-                if use_morfeus_descriptors_source:
-                    if not morfeus_available:
-                        st.error(t('descriptor_calc.morfeus_not_available', error=morfeus_import_error))
-                        st.stop()
-
-                    morfeus_max_molecules = (
-                        None if int(morfeus_limit) <= 0 else int(morfeus_limit)
-                    )
-
-                    use_descriptor_bank = bool(st.session_state.get("use_descriptor_bank", True))
-                    save_descriptor_bank = bool(st.session_state.get("save_descriptor_bank", True))
-
-                    morfeus_use_bank_default_profile = (
-                        use_descriptor_bank
-                        and bool(morfeus_calc_sasa) is True
-                        and bool(morfeus_calc_dispersion) is True
-                        and bool(morfeus_calc_xtb) is True
-                        and bool(morfeus_optimize_3d) is True
-                    )
-
-                    if use_descriptor_bank and not morfeus_use_bank_default_profile:
-                        st.warning(t('descriptor_calc.morfeus_bank_profile_warning'))
-
-                    if morfeus_use_bank_default_profile:
-                        cached_morfeus_df, morfeus_missing_df, bank_report = descriptor_bank_get_cached_and_missing(
-                            df=data,
-                            smiles_col=smiles_col_current,
-                            descriptor_family="3d",
-                            descriptor_source="morfeus",
-                            descriptor_profile="default",
-                            max_molecules=morfeus_max_molecules,
-                        )
-
-                        descriptor_bank_show_report(
-                            bank_report,
-                            title=t('descriptor_calc.morfeus_bank_title'),
-                        )
-
-                        calculated_morfeus_df = pd.DataFrame()
-
-                        if not morfeus_missing_df.empty:
                             progress_bar = st.progress(0)
                             progress_text = st.empty()
 
@@ -13592,9 +13754,9 @@ if use_molecular_descriptors_source:
                                     progress_bar.progress(min(done / total, 1.0))
                                 progress_text.caption(message)
 
-                            with st.spinner(t('descriptor_calc.spinner_morfeus_missing')):
-                                calculated_morfeus_df = calculate_morfeus_descriptors_for_dataframe(
-                                    df=morfeus_missing_df,
+                            with st.spinner(t('descriptor_calc.spinner_morfeus_3d')):
+                                morfeus_df = calculate_morfeus_descriptors_for_dataframe(
+                                    df=data,
                                     smiles_col=smiles_col_current,
                                     id_col=None,
                                     random_seed=42,
@@ -13602,247 +13764,241 @@ if use_molecular_descriptors_source:
                                     calc_sasa=bool(morfeus_calc_sasa),
                                     calc_dispersion=bool(morfeus_calc_dispersion),
                                     calc_xtb=bool(morfeus_calc_xtb),
-                                    max_molecules=None,
+                                    max_molecules=morfeus_max_molecules,
                                     progress_callback=morfeus_progress
                                 )
 
                             progress_bar.empty()
                             progress_text.empty()
 
-                            if save_descriptor_bank and calculated_morfeus_df is not None and not calculated_morfeus_df.empty:
-                                try:
-                                    _morfeus_key_table = descriptor_bank_make_input_key_table(
-                                        df=morfeus_missing_df,
-                                        smiles_col=smiles_col_current,
-                                        max_molecules=None,
-                                    )
-
-                                    calculated_morfeus_df = calculated_morfeus_df.copy()
-
-                                    if "row_index" in calculated_morfeus_df.columns:
-                                        calculated_morfeus_df["_original_index"] = pd.to_numeric(
-                                            calculated_morfeus_df["row_index"],
-                                            errors="coerce",
-                                        ).astype("Int64")
-                                    else:
-                                        calculated_morfeus_df["_original_index"] = calculated_morfeus_df.index.astype("int64")
-
-                                    calculated_morfeus_df = calculated_morfeus_df.merge(
-                                        _morfeus_key_table[
-                                            [
-                                                "_original_index",
-                                                "canonical_smiles",
-                                                "inchikey",
-                                                "bank_key",
-                                                "bank_key_status",
-                                            ]
-                                        ],
-                                        on="_original_index",
-                                        how="left",
-                                    )
-
-                                    calculated_morfeus_df["descriptor_profile"] = "default"
-                                    calculated_morfeus_df["morfeus_calc_sasa_setting"] = bool(morfeus_calc_sasa)
-                                    calculated_morfeus_df["morfeus_calc_dispersion_setting"] = bool(morfeus_calc_dispersion)
-                                    calculated_morfeus_df["morfeus_calc_xtb_setting"] = bool(morfeus_calc_xtb)
-                                    calculated_morfeus_df["morfeus_optimize_3d_setting"] = bool(morfeus_optimize_3d)
-                                    calculated_morfeus_df["morfeus_random_seed_setting"] = 42
-
-                                    descriptor_bank_append(
-                                        desc_df=calculated_morfeus_df,
-                                        descriptor_family="3d",
-                                        descriptor_source="morfeus",
-                                        descriptor_profile="default",
-                                        target_col=target_col,
-                                    )
-
-                                    st.success(t('descriptor_calc.morfeus_bank_success'))
-
-                                except Exception as e:
-                                    st.warning(t('descriptor_calc.morfeus_bank_error', error=e))
-
-                        if cached_morfeus_df is not None and not cached_morfeus_df.empty:
-                            cached_morfeus_df = descriptor_bank_attach_target(
-                                df=cached_morfeus_df,
-                                source_df=data,
-                                target_col=target_col,
+                        # Добавляем целевое свойство в morfeus_df.
+                        # row_index хранит исходный индекс строки data.
+                        if "row_index" in morfeus_df.columns:
+                            morfeus_row_indices = pd.to_numeric(
+                                morfeus_df["row_index"],
+                                errors="coerce"
                             )
 
-                        if calculated_morfeus_df is not None and not calculated_morfeus_df.empty:
-                            calculated_morfeus_df = descriptor_bank_attach_target(
-                                df=calculated_morfeus_df,
-                                source_df=data,
-                                target_col=target_col,
+                            valid_row_mask = morfeus_row_indices.notna()
+                            morfeus_df = morfeus_df.loc[valid_row_mask].copy()
+                            morfeus_row_indices = morfeus_row_indices.loc[valid_row_mask].astype(int)
+
+                            morfeus_df[target_col] = pd.to_numeric(
+                                data.loc[morfeus_row_indices, target_col].values,
+                                errors="coerce"
                             )
-
-                        morfeus_parts = []
-
-                        if cached_morfeus_df is not None and not cached_morfeus_df.empty:
-                            morfeus_parts.append(cached_morfeus_df)
-
-                        if calculated_morfeus_df is not None and not calculated_morfeus_df.empty:
-                            morfeus_parts.append(calculated_morfeus_df)
-
-                        if morfeus_parts:
-                            morfeus_df = pd.concat(morfeus_parts, ignore_index=True, sort=False)
-
-                            if "_original_index" in morfeus_df.columns:
-                                morfeus_df = morfeus_df.sort_values("_original_index").reset_index(drop=True)
-                            elif "row_index" in morfeus_df.columns:
-                                morfeus_df = morfeus_df.sort_values("row_index").reset_index(drop=True)
                         else:
-                            morfeus_df = pd.DataFrame()
+                            morfeus_df[target_col] = pd.to_numeric(
+                                data[target_col].values[:len(morfeus_df)],
+                                errors="coerce"
+                            )
 
-                    else:
-                        progress_bar = st.progress(0)
-                        progress_text = st.empty()
+                        st.session_state.morfeus_descriptors_df = morfeus_df
 
-                        def morfeus_progress(done, total, message):
-                            if total > 0:
-                                progress_bar.progress(min(done / total, 1.0))
-                            progress_text.caption(message)
+                        with st.expander(t('descriptor_calc.morfeus_table_expander'), expanded=True):
+                            st.caption(t('descriptor_calc.morfeus_table_caption'))
 
-                        with st.spinner(t('descriptor_calc.spinner_morfeus_3d')):
-                            morfeus_df = calculate_morfeus_descriptors_for_dataframe(
+                            st.dataframe(
+                                morfeus_df,
+                                width="stretch",
+                                hide_index=True
+                            )
+
+                            status_cols = [
+                                c for c in [
+                                    "morfeus_status",
+                                    "morfeus_3d_status",
+                                    "morfeus_sasa_status",
+                                    "morfeus_dispersion_status",
+                                    "morfeus_xtb_status",
+                                ]
+                                if c in morfeus_df.columns
+                            ]
+
+                            if status_cols:
+                                st.markdown(t('descriptor_calc.morfeus_status_title'))
+
+                                for status_col in status_cols:
+                                    st.write(f"**{status_col}**")
+                                    st.dataframe(
+                                        morfeus_df[status_col].astype(str).value_counts().reset_index().rename(
+                                            columns={
+                                                "index": t('descriptor_calc.status_column'),
+                                                status_col: t('descriptor_calc.count_column')
+                                            }
+                                        ),
+                                        width="stretch",
+                                        hide_index=True
+                                    )
+
+                        # Собираем или расширяем общий descriptor bundle.
+                        if bundle is None:
+                            bundle = qspr_make_morfeus_bundle_from_dataframe(
+                                morfeus_df=morfeus_df,
+                                target_col=target_col
+                            )
+                            source_label = "morfeus_3d_descriptors"
+                        else:
+                            bundle = qspr_append_morfeus_to_bundle(
+                                base_bundle=bundle,
+                                morfeus_df=morfeus_df,
+                                target_col=target_col
+                            )
+                            source_label = bundle["report"]["descriptor_source"]
+
+                        st.download_button(
+                            t('descriptor_calc.morfeus_download_button'),
+                            morfeus_df.to_csv(index=False).encode("utf-8-sig"),
+                            "morfeus_descriptors.csv",
+                            "text/csv",
+                            key="download_morfeus_descriptors_csv_after_calc"
+                        )
+                        update_overall_descriptor_progress(t('descriptor_calc.source_morfeus'))
+
+                    if use_dscribe_descriptors_source:
+                        if not dscribe_available:
+                            st.error(t('descriptor_calc.dscribe_not_available', error=dscribe_import_error))
+                            st.stop()
+
+                        dscribe_max_molecules = (
+                            None if int(dscribe_limit) <= 0 else int(dscribe_limit)
+                        )
+
+                        use_descriptor_bank = bool(st.session_state.get("use_descriptor_bank", True))
+                        save_descriptor_bank = bool(st.session_state.get("save_descriptor_bank", True))
+
+                        dscribe_use_bank_default_profile = (
+                            use_descriptor_bank
+                            and str(dscribe_descriptor_type) == "Coulomb Matrix eigenspectrum"
+                            and bool(dscribe_optimize_3d) is True
+                            and int(dscribe_max_atoms) == 60
+                        )
+
+                        if use_descriptor_bank and not dscribe_use_bank_default_profile:
+                            st.warning(t('descriptor_calc.dscribe_bank_profile_warning'))
+
+                        if dscribe_use_bank_default_profile:
+                            cached_dscribe_df, dscribe_missing_df, bank_report = descriptor_bank_get_cached_and_missing(
                                 df=data,
                                 smiles_col=smiles_col_current,
-                                id_col=None,
-                                random_seed=42,
-                                optimize=bool(morfeus_optimize_3d),
-                                calc_sasa=bool(morfeus_calc_sasa),
-                                calc_dispersion=bool(morfeus_calc_dispersion),
-                                calc_xtb=bool(morfeus_calc_xtb),
-                                max_molecules=morfeus_max_molecules,
-                                progress_callback=morfeus_progress
+                                descriptor_family="atomistic",
+                                descriptor_source="dscribe",
+                                descriptor_profile="default",
+                                max_molecules=dscribe_max_molecules,
                             )
 
-                        progress_bar.empty()
-                        progress_text.empty()
+                            descriptor_bank_show_report(
+                                bank_report,
+                                title=t('descriptor_calc.dscribe_bank_title'),
+                            )
 
-                    # Добавляем целевое свойство в morfeus_df.
-                    # row_index хранит исходный индекс строки data.
-                    if "row_index" in morfeus_df.columns:
-                        morfeus_row_indices = pd.to_numeric(
-                            morfeus_df["row_index"],
-                            errors="coerce"
-                        )
+                            calculated_dscribe_df = pd.DataFrame()
 
-                        valid_row_mask = morfeus_row_indices.notna()
-                        morfeus_df = morfeus_df.loc[valid_row_mask].copy()
-                        morfeus_row_indices = morfeus_row_indices.loc[valid_row_mask].astype(int)
+                            if not dscribe_missing_df.empty:
+                                progress_bar = st.progress(0)
+                                progress_text = st.empty()
 
-                        morfeus_df[target_col] = pd.to_numeric(
-                            data.loc[morfeus_row_indices, target_col].values,
-                            errors="coerce"
-                        )
-                    else:
-                        morfeus_df[target_col] = pd.to_numeric(
-                            data[target_col].values[:len(morfeus_df)],
-                            errors="coerce"
-                        )
+                                def dscribe_progress(done, total, message):
+                                    if total > 0:
+                                        progress_bar.progress(min(done / total, 1.0))
+                                    progress_text.caption(message)
 
-                    st.session_state.morfeus_descriptors_df = morfeus_df
+                                with st.spinner(t('descriptor_calc.spinner_dscribe_missing')):
+                                    calculated_dscribe_df = calculate_dscribe_descriptors_for_dataframe(
+                                        df=dscribe_missing_df,
+                                        smiles_col=smiles_col_current,
+                                        id_col=None,
+                                        random_seed=42,
+                                        optimize=bool(dscribe_optimize_3d),
+                                        max_atoms=int(dscribe_max_atoms),
+                                        calc_coulomb=True,
+                                        max_molecules=None,
+                                        progress_callback=dscribe_progress
+                                    )
 
-                    with st.expander(t('descriptor_calc.morfeus_table_expander'), expanded=True):
-                        st.caption(t('descriptor_calc.morfeus_table_caption'))
+                                progress_bar.empty()
+                                progress_text.empty()
 
-                        st.dataframe(
-                            morfeus_df,
-                            width="stretch",
-                            hide_index=True
-                        )
+                                if save_descriptor_bank and calculated_dscribe_df is not None and not calculated_dscribe_df.empty:
+                                    try:
+                                        _dscribe_key_table = descriptor_bank_make_input_key_table(
+                                            df=dscribe_missing_df,
+                                            smiles_col=smiles_col_current,
+                                            max_molecules=None,
+                                        )
 
-                        status_cols = [
-                            c for c in [
-                                "morfeus_status",
-                                "morfeus_3d_status",
-                                "morfeus_sasa_status",
-                                "morfeus_dispersion_status",
-                                "morfeus_xtb_status",
-                            ]
-                            if c in morfeus_df.columns
-                        ]
+                                        calculated_dscribe_df = calculated_dscribe_df.copy()
 
-                        if status_cols:
-                            st.markdown(t('descriptor_calc.morfeus_status_title'))
+                                        if "row_index" in calculated_dscribe_df.columns:
+                                            calculated_dscribe_df["_original_index"] = pd.to_numeric(
+                                                calculated_dscribe_df["row_index"],
+                                                errors="coerce",
+                                            ).astype("Int64")
 
-                            for status_col in status_cols:
-                                st.write(f"**{status_col}**")
-                                st.dataframe(
-                                    morfeus_df[status_col].astype(str).value_counts().reset_index().rename(
-                                        columns={
-                                            "index": t('descriptor_calc.status_column'),
-                                            status_col: t('descriptor_calc.count_column')
-                                        }
-                                    ),
-                                    width="stretch",
-                                    hide_index=True
+                                        calculated_dscribe_df = calculated_dscribe_df.merge(
+                                            _dscribe_key_table[
+                                                [
+                                                    "_original_index",
+                                                    "canonical_smiles",
+                                                    "inchikey",
+                                                    "bank_key",
+                                                    "bank_key_status",
+                                                ]
+                                            ],
+                                            on="_original_index",
+                                            how="left",
+                                        )
+                                        calculated_dscribe_df["descriptor_profile"] = "default"
+                                        calculated_dscribe_df["dscribe_descriptor_type_setting"] = str(dscribe_descriptor_type)
+                                        calculated_dscribe_df["dscribe_optimize_3d_setting"] = bool(dscribe_optimize_3d)
+                                        calculated_dscribe_df["dscribe_max_atoms_setting"] = int(dscribe_max_atoms)
+                                        calculated_dscribe_df["dscribe_calc_coulomb_setting"] = True
+                                        calculated_dscribe_df["dscribe_random_seed_setting"] = 42
+
+                                        descriptor_bank_append(
+                                            desc_df=calculated_dscribe_df,
+                                            descriptor_family="atomistic",
+                                            descriptor_source="dscribe",
+                                            descriptor_profile="default",
+                                            target_col=target_col,
+                                        )
+                                        st.success(t('descriptor_calc.dscribe_bank_success'))
+                                    except Exception as e:
+                                        st.warning(t('descriptor_calc.dscribe_bank_error', error=e))
+
+                            if cached_dscribe_df is not None and not cached_dscribe_df.empty:
+                                cached_dscribe_df = descriptor_bank_attach_target(
+                                    df=cached_dscribe_df,
+                                    source_df=data,
+                                    target_col=target_col,
                                 )
 
-                    # Собираем или расширяем общий descriptor bundle.
-                    if bundle is None:
-                        bundle = qspr_make_morfeus_bundle_from_dataframe(
-                            morfeus_df=morfeus_df,
-                            target_col=target_col
-                        )
-                        source_label = "morfeus_3d_descriptors"
-                    else:
-                        bundle = qspr_append_morfeus_to_bundle(
-                            base_bundle=bundle,
-                            morfeus_df=morfeus_df,
-                            target_col=target_col
-                        )
-                        source_label = bundle["report"]["descriptor_source"]
+                            if calculated_dscribe_df is not None and not calculated_dscribe_df.empty:
+                                calculated_dscribe_df = descriptor_bank_attach_target(
+                                    df=calculated_dscribe_df,
+                                    source_df=data,
+                                    target_col=target_col,
+                                )
 
-                    st.download_button(
-                        t('descriptor_calc.morfeus_download_button'),
-                        morfeus_df.to_csv(index=False).encode("utf-8-sig"),
-                        "morfeus_descriptors.csv",
-                        "text/csv",
-                        key="download_morfeus_descriptors_csv_after_calc"
-                    )
-                    update_overall_descriptor_progress(t('descriptor_calc.source_morfeus'))
-                    
-                if use_dscribe_descriptors_source:
-                    if not dscribe_available:
-                        st.error(t('descriptor_calc.dscribe_not_available', error=dscribe_import_error))
-                        st.stop()
+                            dscribe_parts = []
 
-                    dscribe_max_molecules = (
-                        None if int(dscribe_limit) <= 0 else int(dscribe_limit)
-                    )
+                            if cached_dscribe_df is not None and not cached_dscribe_df.empty:
+                                dscribe_parts.append(cached_dscribe_df)
 
-                    use_descriptor_bank = bool(st.session_state.get("use_descriptor_bank", True))
-                    save_descriptor_bank = bool(st.session_state.get("save_descriptor_bank", True))
+                            if calculated_dscribe_df is not None and not calculated_dscribe_df.empty:
+                                dscribe_parts.append(calculated_dscribe_df)
 
-                    dscribe_use_bank_default_profile = (
-                        use_descriptor_bank
-                        and str(dscribe_descriptor_type) == "Coulomb Matrix eigenspectrum"
-                        and bool(dscribe_optimize_3d) is True
-                        and int(dscribe_max_atoms) == 60
-                    )
+                            if dscribe_parts:
+                                dscribe_df = pd.concat(dscribe_parts, ignore_index=True, sort=False)
 
-                    if use_descriptor_bank and not dscribe_use_bank_default_profile:
-                        st.warning(t('descriptor_calc.dscribe_bank_profile_warning'))
+                                if "_original_index" in dscribe_df.columns:
+                                    dscribe_df = dscribe_df.sort_values("_original_index").reset_index(drop=True)
+                                elif "row_index" in dscribe_df.columns:
+                                    dscribe_df = dscribe_df.sort_values("row_index").reset_index(drop=True)
+                            else:
+                                dscribe_df = pd.DataFrame()
 
-                    if dscribe_use_bank_default_profile:
-                        cached_dscribe_df, dscribe_missing_df, bank_report = descriptor_bank_get_cached_and_missing(
-                            df=data,
-                            smiles_col=smiles_col_current,
-                            descriptor_family="atomistic",
-                            descriptor_source="dscribe",
-                            descriptor_profile="default",
-                            max_molecules=dscribe_max_molecules,
-                        )
-
-                        descriptor_bank_show_report(
-                            bank_report,
-                            title=t('descriptor_calc.dscribe_bank_title'),
-                        )
-
-                        calculated_dscribe_df = pd.DataFrame()
-
-                        if not dscribe_missing_df.empty:
+                        else:
                             progress_bar = st.progress(0)
                             progress_text = st.empty()
 
@@ -13851,343 +14007,274 @@ if use_molecular_descriptors_source:
                                     progress_bar.progress(min(done / total, 1.0))
                                 progress_text.caption(message)
 
-                            with st.spinner(t('descriptor_calc.spinner_dscribe_missing')):
-                                calculated_dscribe_df = calculate_dscribe_descriptors_for_dataframe(
-                                    df=dscribe_missing_df,
+                            with st.spinner(t('descriptor_calc.spinner_dscribe_atomistic')):
+                                dscribe_df = calculate_dscribe_descriptors_for_dataframe(
+                                    df=data,
                                     smiles_col=smiles_col_current,
                                     id_col=None,
                                     random_seed=42,
                                     optimize=bool(dscribe_optimize_3d),
                                     max_atoms=int(dscribe_max_atoms),
                                     calc_coulomb=True,
-                                    max_molecules=None,
+                                    max_molecules=dscribe_max_molecules,
                                     progress_callback=dscribe_progress
                                 )
 
-                            progress_bar.empty()
-                            progress_text.empty()
+                        progress_bar.empty()
+                        progress_text.empty()
 
-                            if save_descriptor_bank and calculated_dscribe_df is not None and not calculated_dscribe_df.empty:
-                                try:
-                                    _dscribe_key_table = descriptor_bank_make_input_key_table(
-                                        df=dscribe_missing_df,
-                                        smiles_col=smiles_col_current,
-                                        max_molecules=None,
-                                    )
-
-                                    calculated_dscribe_df = calculated_dscribe_df.copy()
-
-                                    if "row_index" in calculated_dscribe_df.columns:
-                                        calculated_dscribe_df["_original_index"] = pd.to_numeric(
-                                            calculated_dscribe_df["row_index"],
-                                            errors="coerce",
-                                        ).astype("Int64")
-
-                                    calculated_dscribe_df = calculated_dscribe_df.merge(
-                                        _dscribe_key_table[
-                                            [
-                                                "_original_index",
-                                                "canonical_smiles",
-                                                "inchikey",
-                                                "bank_key",
-                                                "bank_key_status",
-                                            ]
-                                        ],
-                                        on="_original_index",
-                                        how="left",
-                                    )
-                                    calculated_dscribe_df["descriptor_profile"] = "default"
-                                    calculated_dscribe_df["dscribe_descriptor_type_setting"] = str(dscribe_descriptor_type)
-                                    calculated_dscribe_df["dscribe_optimize_3d_setting"] = bool(dscribe_optimize_3d)
-                                    calculated_dscribe_df["dscribe_max_atoms_setting"] = int(dscribe_max_atoms)
-                                    calculated_dscribe_df["dscribe_calc_coulomb_setting"] = True
-                                    calculated_dscribe_df["dscribe_random_seed_setting"] = 42
-
-                                    descriptor_bank_append(
-                                        desc_df=calculated_dscribe_df,
-                                        descriptor_family="atomistic",
-                                        descriptor_source="dscribe",
-                                        descriptor_profile="default",
-                                        target_col=target_col,
-                                    )
-                                    st.success(t('descriptor_calc.dscribe_bank_success'))
-                                except Exception as e:
-                                    st.warning(t('descriptor_calc.dscribe_bank_error', error=e))
-
-                        if cached_dscribe_df is not None and not cached_dscribe_df.empty:
-                            cached_dscribe_df = descriptor_bank_attach_target(
-                                df=cached_dscribe_df,
-                                source_df=data,
-                                target_col=target_col,
+                        if "row_index" in dscribe_df.columns:
+                            dscribe_row_indices = pd.to_numeric(
+                                dscribe_df["row_index"],
+                                errors="coerce"
                             )
 
-                        if calculated_dscribe_df is not None and not calculated_dscribe_df.empty:
-                            calculated_dscribe_df = descriptor_bank_attach_target(
-                                df=calculated_dscribe_df,
-                                source_df=data,
-                                target_col=target_col,
+                            valid_row_mask = dscribe_row_indices.notna()
+
+                            dscribe_df = dscribe_df.loc[valid_row_mask].copy()
+                            dscribe_row_indices = (
+                                dscribe_row_indices
+                                .loc[valid_row_mask]
+                                .astype(int)
                             )
 
-                        dscribe_parts = []
-
-                        if cached_dscribe_df is not None and not cached_dscribe_df.empty:
-                            dscribe_parts.append(cached_dscribe_df)
-
-                        if calculated_dscribe_df is not None and not calculated_dscribe_df.empty:
-                            dscribe_parts.append(calculated_dscribe_df)
-
-                        if dscribe_parts:
-                            dscribe_df = pd.concat(dscribe_parts, ignore_index=True, sort=False)
-
-                            if "_original_index" in dscribe_df.columns:
-                                dscribe_df = dscribe_df.sort_values("_original_index").reset_index(drop=True)
-                            elif "row_index" in dscribe_df.columns:
-                                dscribe_df = dscribe_df.sort_values("row_index").reset_index(drop=True)
+                            dscribe_df[target_col] = pd.to_numeric(
+                                data.loc[dscribe_row_indices, target_col].values,
+                                errors="coerce"
+                            )
                         else:
-                            dscribe_df = pd.DataFrame()
-
-                    else:
-                        progress_bar = st.progress(0)
-                        progress_text = st.empty()
-
-                        def dscribe_progress(done, total, message):
-                            if total > 0:
-                                progress_bar.progress(min(done / total, 1.0))
-                            progress_text.caption(message)
-
-                        with st.spinner(t('descriptor_calc.spinner_dscribe_atomistic')):
-                            dscribe_df = calculate_dscribe_descriptors_for_dataframe(
-                                df=data,
-                                smiles_col=smiles_col_current,
-                                id_col=None,
-                                random_seed=42,
-                                optimize=bool(dscribe_optimize_3d),
-                                max_atoms=int(dscribe_max_atoms),
-                                calc_coulomb=True,
-                                max_molecules=dscribe_max_molecules,
-                                progress_callback=dscribe_progress
+                            dscribe_df[target_col] = pd.to_numeric(
+                                data[target_col].values[:len(dscribe_df)],
+                                errors="coerce"
                             )
 
-                    progress_bar.empty()
-                    progress_text.empty()
+                        st.session_state.dscribe_descriptors_df = dscribe_df
 
-                    if "row_index" in dscribe_df.columns:
-                        dscribe_row_indices = pd.to_numeric(
-                            dscribe_df["row_index"],
-                            errors="coerce"
-                        )
+                        with st.expander(t('descriptor_calc.dscribe_table_expander'), expanded=True):
+                            st.caption(t('descriptor_calc.dscribe_table_caption'))
 
-                        valid_row_mask = dscribe_row_indices.notna()
+                            st.dataframe(
+                                dscribe_df,
+                                width="stretch",
+                                hide_index=True
+                            )
 
-                        dscribe_df = dscribe_df.loc[valid_row_mask].copy()
-                        dscribe_row_indices = (
-                            dscribe_row_indices
-                            .loc[valid_row_mask]
-                            .astype(int)
-                        )
-
-                        dscribe_df[target_col] = pd.to_numeric(
-                            data.loc[dscribe_row_indices, target_col].values,
-                            errors="coerce"
-                        )
-                    else:
-                        dscribe_df[target_col] = pd.to_numeric(
-                            data[target_col].values[:len(dscribe_df)],
-                            errors="coerce"
-                        )
-
-                    st.session_state.dscribe_descriptors_df = dscribe_df
-
-                    with st.expander(t('descriptor_calc.dscribe_table_expander'), expanded=True):
-                        st.caption(t('descriptor_calc.dscribe_table_caption'))
-
-                        st.dataframe(
-                            dscribe_df,
-                            width="stretch",
-                            hide_index=True
-                        )
-
-                        status_cols = [
-                            c for c in [
-                                "dscribe_status",
-                                "dscribe_3d_status",
-                                "dscribe_coulomb_status",
-                            ]
-                            if c in dscribe_df.columns
-                        ]
-
-                        if status_cols:
-                            st.markdown(t('descriptor_calc.dscribe_status_title'))
-
-                            for status_col in status_cols:
-                                status_table = (
-                                    dscribe_df[status_col]
-                                    .astype(str)
-                                    .value_counts()
-                                    .reset_index()
-                                )
-
-                                status_table.columns = [
-                                    t('descriptor_calc.status_column'),
-                                    t('descriptor_calc.count_column')
+                            status_cols = [
+                                c for c in [
+                                    "dscribe_status",
+                                    "dscribe_3d_status",
+                                    "dscribe_coulomb_status",
                                 ]
+                                if c in dscribe_df.columns
+                            ]
 
-                                st.write(f"**{status_col}**")
-                                st.dataframe(
-                                    status_table,
-                                    width="stretch",
-                                    hide_index=True
-                                )
+                            if status_cols:
+                                st.markdown(t('descriptor_calc.dscribe_status_title'))
 
-                    if bundle is None:
-                        bundle = qspr_make_dscribe_bundle_from_dataframe(
-                            dscribe_df=dscribe_df,
-                            target_col=target_col
-                        )
-                        source_label = "dscribe_atomistic_descriptors"
-                    else:
-                        bundle = qspr_append_dscribe_to_bundle(
-                            base_bundle=bundle,
-                            dscribe_df=dscribe_df,
-                            target_col=target_col
-                        )
-                        source_label = bundle["report"]["descriptor_source"]
+                                for status_col in status_cols:
+                                    status_table = (
+                                        dscribe_df[status_col]
+                                        .astype(str)
+                                        .value_counts()
+                                        .reset_index()
+                                    )
 
-                    st.download_button(
-                        t('descriptor_calc.dscribe_download_button'),
-                        dscribe_df.to_csv(index=False).encode("utf-8-sig"),
-                        "dscribe_descriptors.csv",
-                        "text/csv",
-                        key="download_dscribe_descriptors_csv_after_calc"
-                    )    
-                    update_overall_descriptor_progress(t('descriptor_calc.source_dscribe'))
+                                    status_table.columns = [
+                                        t('descriptor_calc.status_column'),
+                                        t('descriptor_calc.count_column')
+                                    ]
 
-                # ------------------------------------------------------------------
-                # КЛЮЧЕВОЕ МЕСТО: выбор ветки (спектральная или нет)
-                if bundle is None:
-                    st.warning(t('descriptor_calc.no_descriptor_sources'))
-                    st.stop()
+                                    st.write(f"**{status_col}**")
+                                    st.dataframe(
+                                        status_table,
+                                        width="stretch",
+                                        hide_index=True
+                                    )
 
-                if use_spectral_descriptors_source:
-                    # --- Ветка со спектральными дескрипторами ---
-                    spectral_df_for_bundle = st.session_state.get("spectral_descriptors_df")
-
-                    if (
-                        spectral_df_for_bundle is None
-                        or not isinstance(spectral_df_for_bundle, pd.DataFrame)
-                        or spectral_df_for_bundle.empty
-                    ):
-                        st.warning(t('descriptor_calc.spectral_not_found_warning'))
-                        
                         if bundle is None:
-                            st.error("bundle is None – расчёт дескрипторов не удался!")
+                            bundle = qspr_make_dscribe_bundle_from_dataframe(
+                                dscribe_df=dscribe_df,
+                                target_col=target_col
+                            )
+                            source_label = "dscribe_atomistic_descriptors"
+                        else:
+                            bundle = qspr_append_dscribe_to_bundle(
+                                base_bundle=bundle,
+                                dscribe_df=dscribe_df,
+                                target_col=target_col
+                            )
+                            source_label = bundle["report"]["descriptor_source"]
+
+                        st.download_button(
+                            t('descriptor_calc.dscribe_download_button'),
+                            dscribe_df.to_csv(index=False).encode("utf-8-sig"),
+                            "dscribe_descriptors.csv",
+                            "text/csv",
+                            key="download_dscribe_descriptors_csv_after_calc"
+                        )
+                        update_overall_descriptor_progress(t('descriptor_calc.source_dscribe'))
+
+                    # ------------------------------------------------------------------
+                    # КЛЮЧЕВОЕ МЕСТО: сборка X/y из выбранных источников
+                    spectral_only_source = (
+                        use_spectral_descriptors_source
+                        and not use_molecular_descriptors_source
+                        and not use_xtb_descriptors_source
+                        and not use_morfeus_descriptors_source
+                        and not use_dscribe_descriptors_source
+                    )
+
+                    if bundle is None and spectral_only_source:
+                        spectral_df_for_bundle = st.session_state.get("spectral_descriptors_df")
+
+                        if (
+                            spectral_df_for_bundle is None
+                            or not isinstance(spectral_df_for_bundle, pd.DataFrame)
+                            or spectral_df_for_bundle.empty
+                        ):
+                            st.warning(t('descriptor_calc.spectral_not_found_warning'))
                             st.stop()
-                        
-                        store_descriptor_bundle(bundle, source_label)
-                    else:
+
                         bundle = qspr_build_descriptor_matrix_from_sources(
                             current_df=current_df,
                             target_col=target_col,
-                            use_molecular=True,
-                            molecular_desc_df=bundle["df_desc"],
-                            molecular_valid_indices=bundle["valid_indices"],
+                            use_molecular=False,
+                            molecular_desc_df=None,
+                            molecular_valid_indices=None,
                             use_spectral=True,
                             spectral_desc_df=spectral_df_for_bundle,
                             smiles_col=smiles_col_current,
                             restrict_to_spectral_subset=True,
                         )
+                        bundle["report"]["descriptor_source"] = "spectral_descriptors"
+                        source_label = "spectral_descriptors"
+                        update_overall_descriptor_progress("Спектральные дескрипторы")
 
-                        if source_label == "molecular_plus_xtb":
-                            bundle["report"]["descriptor_source"] = "molecular_xtb_plus_spectral"
-                        elif source_label == "xtb_quantum_descriptors":
-                            bundle["report"]["descriptor_source"] = "xtb_plus_spectral"
-                        elif source_label == "morfeus_3d_descriptors":
-                            bundle["report"]["descriptor_source"] = "morfeus_plus_spectral"
-                        elif "morfeus" in str(source_label):
-                            bundle["report"]["descriptor_source"] = f"{source_label}_plus_spectral"
-
-                        source_label = bundle["report"]["descriptor_source"]
-                        store_descriptor_bundle(bundle, source_label)
-
-                        st.session_state.descriptor_calculation_mode = "spectral_or_combined"
-                        st.session_state.custom_descriptor_source = source_label
-                        st.session_state.custom_descriptors_used = True
-                    pass
-                else:
-                    # --- ОСНОВНОЙ ПУТЬ (без спектральных дескрипторов) ---
                     if bundle is None:
-                        st.error("Ошибка: bundle is None – расчёт дескрипторов не удался!")
+                        st.warning(t('descriptor_calc.no_descriptor_sources'))
                         st.stop()
 
+                    if use_spectral_descriptors_source and not spectral_only_source:
+                        # --- Ветка со спектральными дескрипторами ---
+                        spectral_df_for_bundle = st.session_state.get("spectral_descriptors_df")
 
-                    store_descriptor_bundle(bundle, source_label)
-                    st.session_state.molecular_descriptors_ready = True
-                    st.session_state.molecular_df_desc = bundle["df_desc"].copy()
-                    st.session_state.molecular_valid_indices = list(bundle["valid_indices"])
-                    st.session_state.molecular_desc_names = list(bundle["desc_names"])
-                    st.session_state.molecular_X_all = np.array(bundle["X_all"], copy=True)
-                    st.session_state.molecular_y_all = np.array(bundle["y_all"], copy=True)
-                    st.session_state.molecular_descriptor_source = source_label
-                    
-                    st.session_state.descriptor_calculation_mode = source_label
-                    st.session_state.molecular_descriptor_calculation_mode = (
-                        mode if mode is not None else source_label
+                        if (
+                            spectral_df_for_bundle is None
+                            or not isinstance(spectral_df_for_bundle, pd.DataFrame)
+                            or spectral_df_for_bundle.empty
+                        ):
+                            st.warning(t('descriptor_calc.spectral_not_found_warning'))
+
+                            if bundle is None:
+                                st.error("bundle is None – расчёт дескрипторов не удался!")
+                                st.stop()
+
+                            store_descriptor_bundle(bundle, source_label)
+                        else:
+                            bundle = qspr_build_descriptor_matrix_from_sources(
+                                current_df=current_df,
+                                target_col=target_col,
+                                use_molecular=True,
+                                molecular_desc_df=bundle["df_desc"],
+                                molecular_valid_indices=bundle["valid_indices"],
+                                use_spectral=True,
+                                spectral_desc_df=spectral_df_for_bundle,
+                                smiles_col=smiles_col_current,
+                                restrict_to_spectral_subset=True,
+                            )
+
+                            if source_label == "molecular_plus_xtb":
+                                bundle["report"]["descriptor_source"] = "molecular_xtb_plus_spectral"
+                            elif source_label == "xtb_quantum_descriptors":
+                                bundle["report"]["descriptor_source"] = "xtb_plus_spectral"
+                            elif source_label == "morfeus_3d_descriptors":
+                                bundle["report"]["descriptor_source"] = "morfeus_plus_spectral"
+                            elif "morfeus" in str(source_label):
+                                bundle["report"]["descriptor_source"] = f"{source_label}_plus_spectral"
+
+                            source_label = bundle["report"]["descriptor_source"]
+                            store_descriptor_bundle(bundle, source_label)
+
+                            st.session_state.descriptor_calculation_mode = "spectral_or_combined"
+                            st.session_state.custom_descriptor_source = source_label
+                            st.session_state.custom_descriptors_used = True
+                        pass
+                    else:
+                        # --- ОСНОВНОЙ ПУТЬ (без спектральных дескрипторов) ---
+                        if bundle is None:
+                            st.error("Ошибка: bundle is None – расчёт дескрипторов не удался!")
+                            st.stop()
+
+
+                        store_descriptor_bundle(bundle, source_label)
+                        st.session_state.molecular_descriptors_ready = True
+                        st.session_state.molecular_df_desc = bundle["df_desc"].copy()
+                        st.session_state.molecular_valid_indices = list(bundle["valid_indices"])
+                        st.session_state.molecular_desc_names = list(bundle["desc_names"])
+                        st.session_state.molecular_X_all = np.array(bundle["X_all"], copy=True)
+                        st.session_state.molecular_y_all = np.array(bundle["y_all"], copy=True)
+                        st.session_state.molecular_descriptor_source = source_label
+
+                        st.session_state.descriptor_calculation_mode = source_label
+                        st.session_state.molecular_descriptor_calculation_mode = (
+                            mode if mode is not None else source_label
+                        )
+
+                        # Проверка, что флаг установлен (дополнительная защита)
+                        if not st.session_state.desc_calculated:
+                            st.error("Не удалось установить флаг desc_calculated. Проверьте функцию store_descriptor_bundle.")
+                            st.stop()
+
+                    # ---- ОБЩИЙ КОД (выполняется в обеих ветках) ----
+                    descriptors_df = bundle["df_desc"].copy()
+                    descriptors_df["SMILES"] = data[smiles_col_current].iloc[
+                        bundle["valid_indices"]
+                    ].values
+                    descriptors_df[target_col] = bundle["y_all"]
+
+                    cols = ["SMILES", target_col] + [
+                        c for c in descriptors_df.columns
+                        if c not in ["SMILES", target_col]
+                    ]
+
+                    descriptors_df = descriptors_df[cols]
+
+                    qspr_save_results_auto(
+                        descriptors_df,
+                        "descriptors",
+                        target_col,
+                        len(bundle["y_all"])
                     )
-                    
-                    # Проверка, что флаг установлен (дополнительная защита)
-                    if not st.session_state.desc_calculated:
-                        st.error("Не удалось установить флаг desc_calculated. Проверьте функцию store_descriptor_bundle.")
-                        st.stop()
+                    overall_progress_bar.progress(1.0)
+                    overall_progress_text.caption(t('descriptor_calc.progress_all_done'))
 
-                # ---- ОБЩИЙ КОД (выполняется в обеих ветках) ----
-                descriptors_df = bundle["df_desc"].copy()
-                descriptors_df["SMILES"] = data[smiles_col_current].iloc[
-                    bundle["valid_indices"]
-                ].values
-                descriptors_df[target_col] = bundle["y_all"]
+                    st.success(t('descriptor_calc.success_collected',
+                        n_desc=len(bundle['desc_names']),
+                        n_compounds=len(bundle['y_all']),
+                        source=source_label
+                    ))
 
-                cols = ["SMILES", target_col] + [
-                    c for c in descriptors_df.columns
-                    if c not in ["SMILES", target_col]
-                ]
+                    qspr_show_descriptor_meaning_table(
+                        desc_names=bundle["desc_names"],
+                        title=t('descriptor_calc.meaning_table_title'),
+                        status_label=t('descriptor_calc.meaning_table_status'),
+                        expanded=False,
+                        key_prefix="calculated_descriptor_meanings"
+                    )
 
-                descriptors_df = descriptors_df[cols]
+                    add_log(t('descriptor_calc.log_collected',
+                        source=source_label,
+                        n_desc=len(bundle['desc_names'])
+                    ))
 
-                qspr_save_results_auto(
-                    descriptors_df,
-                    "descriptors",
-                    target_col,
-                    len(bundle["y_all"])
-                )
-                overall_progress_bar.progress(1.0)
-                overall_progress_text.caption(t('descriptor_calc.progress_all_done'))
-
-                st.success(t('descriptor_calc.success_collected',
-                    n_desc=len(bundle['desc_names']),
-                    n_compounds=len(bundle['y_all']),
-                    source=source_label
-                ))
-
-                qspr_show_descriptor_meaning_table(
-                    desc_names=bundle["desc_names"],
-                    title=t('descriptor_calc.meaning_table_title'),
-                    status_label=t('descriptor_calc.meaning_table_status'),
-                    expanded=False,
-                    key_prefix="calculated_descriptor_meanings"
-                )
-
-                add_log(t('descriptor_calc.log_collected',
-                    source=source_label,
-                    n_desc=len(bundle['desc_names'])
-                ))
-
-            except Exception as e:
-                st.error(t('descriptor_calc.error_calculation', error=e))
+                except Exception as e:
+                    st.error(t('descriptor_calc.error_calculation', error=e))
 
 
 # ------------------------------------------------------------------
 # Пользовательские дескрипторы / МНК
 
+render_tool_badge()
 with st.expander(t('incremental.expander_title'), expanded=False):
     st.markdown(t('incremental.description'))
 
@@ -14941,7 +15028,7 @@ if mahal_table_for_view is not None and not mahal_table_for_view.empty:
         max_molecules=100,
         key_prefix="mahalanobis_outliers_full_width"
     )
-    
+
 remove_outliers_choice = st.checkbox(
     t('outliers_remove.checkbox_label'),
     help=t('outliers_remove.help_text')
@@ -15068,7 +15155,3 @@ with st.expander(t("final_stats.expander_title"), expanded=False):
 # Report
 
 render_report_section({**globals(), **locals()})
-
-
-
-

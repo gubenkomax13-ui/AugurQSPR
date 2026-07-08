@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from modules.i18n import t
+from modules.module_explain_ui import render_module_explanation
 from modules.statistics_summary_ui import (
     build_final_statistics_summary,
     final_statistics_to_flat_dataframe,
@@ -88,6 +89,7 @@ def render_report_section(context):
     )
     
     st.header(t('report.header'))
+    render_module_explanation("report")
     
     st.markdown(t('report.description'))
     

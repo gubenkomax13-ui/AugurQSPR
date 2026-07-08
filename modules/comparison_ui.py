@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from modules.i18n import t
+from modules.module_explain_ui import render_module_explanation
 
 
 def render_model_comparison_section(context):
@@ -16,6 +17,7 @@ def render_model_comparison_section(context):
     # True automatic model comparison
     
     st.header(t('model_comparison.header'))
+    render_module_explanation("model_comparison")
     
     st.markdown(t('model_comparison.description'))
     

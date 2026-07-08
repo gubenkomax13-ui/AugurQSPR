@@ -6,12 +6,14 @@ import pandas as pd
 import streamlit as st
 
 from modules.i18n import t
+from modules.module_explain_ui import render_module_explanation
 
 
 def render_consensus_section(context):
     """Рендерит consensus-прогноз в переданном контексте проекта."""
     globals().update(context)
     st.header(t('consensus.header'))
+    render_module_explanation("consensus")
     st.markdown(t('consensus.description'))
     
     # Проверяем, есть ли обученные модели

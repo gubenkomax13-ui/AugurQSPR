@@ -7,7 +7,9 @@ import pandas as pd
 import streamlit as st
 from scipy.stats import norm
 
+from modules.advanced_validation_ui import render_advanced_validation_section
 from modules.i18n import t
+from modules.module_explain_ui import render_module_explanation
 
 
 def render_validation_section(context):
@@ -17,6 +19,7 @@ def render_validation_section(context):
     # Validation
     
     st.header(t('validation.header'))
+    render_module_explanation("validation")
     
     tab_holdout, tab_kfold, tab_loo, tab_ext = st.tabs([
         t('validation.holdout_tab'),
@@ -1668,4 +1671,6 @@ def render_validation_section(context):
                         key=f"download_y_randomization_{current_model_for_y_rand}"
                     )
     
+    render_advanced_validation_section({**globals(), **locals()})
+
     # ------------------------------------------------------------------

@@ -734,7 +734,55 @@ def _classify_alkane(mol):
         "size": carbon_count,
         "reference_scheme": "none",
         "substituent_count": len(substituents),
+        "main_chain_length": len(path),
+        "branch_count": len(substituents),
+        "branch_positions": ";".join(
+            str(int(position)) for position, _ in substituents
+        ),
+        "branch_types": ";".join(str(name) for _, name in substituents),
+        "substitution_pattern": (
+            "n-alkane" if not substituents else branch_label
+        ),
+        "series_label": _saod_alkane_series_label(substituents),
     }
+
+
+def _saod_alkane_series_label(substituents):
+    if not substituents:
+        return "n-alkanes"
+
+    typed = [(int(position), str(name)) for position, name in substituents]
+    methyl_positions = sorted(
+        position for position, name in typed if name == "methyl"
+    )
+    ethyl_count = sum(1 for _, name in typed if name == "ethyl")
+    methyl_count = len(methyl_positions)
+    branch_count = len(typed)
+
+    if ethyl_count >= 1 and methyl_count >= 1:
+        return "ethyl-methyl alkanes"
+    if ethyl_count >= 1:
+        return "ethyl-substituted alkanes"
+
+    if methyl_count == 1 and branch_count == 1:
+        position = methyl_positions[0]
+        if position in {2, 3, 4}:
+            return f"{position}-methylalkanes"
+        return "methylalkanes"
+
+    if methyl_count == 2 and branch_count == 2:
+        pattern = ",".join(str(position) for position in methyl_positions)
+        if pattern in {"2,2", "2,3", "2,4", "3,3"}:
+            return f"{pattern}-dimethylalkanes"
+        return "dimethylalkanes"
+
+    if methyl_count == 3 and branch_count == 3:
+        return "trimethylalkanes"
+    if methyl_count == 4 and branch_count == 4:
+        return "tetramethylalkanes"
+    if branch_count >= 4:
+        return "highly-branched alkanes"
+    return "branched alkanes"
 
 
 def _ring_substitution_signature(mol, scaffold):
@@ -1192,6 +1240,106 @@ def error_analysis_structural_series_summary(
             na_position="last",
         ).reset_index(drop=True)
     return summary, merged
+
+
+def error_analysis_saod_alkane_series_summary(structural_error_table):
+    """
+    Summarize model residuals by SAOD-style alkane substitution series.
+
+    Residual convention for this table is experimental - predicted.
+    Positive residual means the model underestimated the property.
+    """
+    required = {
+        "family", "series_label", "experimental", "predicted",
+        "carbon_count", "SMILES",
+    }
+    if structural_error_table is None or not required.issubset(
+        set(structural_error_table.columns)
+    ):
+        return pd.DataFrame(), pd.DataFrame()
+
+    table = structural_error_table.copy()
+    table = table[
+        (table["family"] == "alkane")
+        & table["series_label"].astype(str).str.strip().ne("")
+    ].copy()
+    if table.empty:
+        return pd.DataFrame(), table
+
+    table["residual"] = (
+        pd.to_numeric(table["experimental"], errors="coerce")
+        - pd.to_numeric(table["predicted"], errors="coerce")
+    )
+    table["absolute_residual"] = table["residual"].abs()
+    table["carbon_count"] = pd.to_numeric(
+        table["carbon_count"], errors="coerce"
+    )
+    table["main_chain_length"] = pd.to_numeric(
+        table.get("main_chain_length", np.nan), errors="coerce"
+    )
+    table["branch_count"] = pd.to_numeric(
+        table.get("branch_count", np.nan), errors="coerce"
+    )
+    table = table[np.isfinite(table["residual"])].copy()
+    if table.empty:
+        return pd.DataFrame(), table
+
+    rows = []
+    for series_label, group in table.groupby("series_label", sort=False):
+        residual = group["residual"].to_numpy(dtype=float)
+        examples = (
+            group.sort_values("carbon_count")["SMILES"]
+            .astype(str)
+            .head(3)
+            .tolist()
+        )
+        rows.append({
+            "series_label": str(series_label),
+            "n_compounds": int(len(group)),
+            "mean_experimental": float(group["experimental"].mean()),
+            "mean_predicted": float(group["predicted"].mean()),
+            "mean_residual": float(np.mean(residual)),
+            "MAE": float(np.mean(np.abs(residual))),
+            "RMSE": float(np.sqrt(np.mean(residual ** 2))),
+            "bias": float(np.mean(residual)),
+            "min_carbon_count": (
+                int(group["carbon_count"].min())
+                if group["carbon_count"].notna().any() else np.nan
+            ),
+            "max_carbon_count": (
+                int(group["carbon_count"].max())
+                if group["carbon_count"].notna().any() else np.nan
+            ),
+            "example_compounds": "; ".join(examples),
+        })
+
+    summary = pd.DataFrame(rows)
+    if summary.empty:
+        return summary, table
+
+    preferred = {
+        "n-alkanes": 0,
+        "2-methylalkanes": 1,
+        "3-methylalkanes": 2,
+        "4-methylalkanes": 3,
+        "methylalkanes": 4,
+        "2,2-dimethylalkanes": 5,
+        "2,3-dimethylalkanes": 6,
+        "2,4-dimethylalkanes": 7,
+        "3,3-dimethylalkanes": 8,
+        "dimethylalkanes": 9,
+        "ethyl-substituted alkanes": 10,
+        "ethyl-methyl alkanes": 11,
+        "trimethylalkanes": 12,
+        "tetramethylalkanes": 13,
+        "highly-branched alkanes": 14,
+        "branched alkanes": 15,
+    }
+    summary["_order"] = summary["series_label"].map(preferred).fillna(100)
+    summary = summary.sort_values(
+        ["_order", "series_label"]
+    ).drop(columns="_order").reset_index(drop=True)
+    return summary, table
 
 
 def error_analysis_substitution_effects(

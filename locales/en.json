@@ -846,7 +846,10 @@
     "file_saved": "File saved: `{path}`",
     "transfer_title": "### Transfer spectral descriptors to QSPR",
     "transfer_caption": "Here only the calculated spectral descriptors are passed. Which sources to use in the model — molecular, spectral, or both — is selected below in the 'Descriptor source' section.",
-    "transfer_button": "📥 Assemble selected descriptor matrix for QSPR",
+    "transfer_button": "📥 Connect spectral descriptors as a source",
+    "transfer_ready": "Spectral descriptors are connected as a source: {rows} compounds × {cols} columns. The final X/y matrix will be assembled below according to the selected checkboxes.",
+    "transfer_log": "Spectral descriptors connected as a source for X/y assembly: {rows}×{cols}",
+    "transfer_error": "Error connecting spectral descriptors: {error}",
     "matrix_ready": "Spectral matrix connected: {rows} compounds × {cols} descriptors. Source: {source}.",
     "matrix_log": "Assembled spectral matrix for QSPR: {source}, {rows}×{cols}",
     "matrix_error": "Error assembling spectral descriptor matrix: {error}"
@@ -1262,10 +1265,9 @@
     "target_label": "🔶 Property to predict",
     "target_selected_log": "Target property selected: {target}",
     "data_subheader": "📄 Loaded data",
-    "current_dataset": "**Current working dataset:** {count} compounds",
+    "current_dataset": "Current working dataset: {count} compounds",
     "tool_badge": "Tool",
     "standardization_title": "### 🧪 Structure normalisation and canonicalisation",
-    "standardization_info": "This tool does not clean the dataset or remove rows. It brings SMILES to a uniform representation: checks structure, selects the main fragment, normalises the record, neutralises charges, generates canonical SMILES and InChIKey. Duplicates and conflicting records are only diagnosed; removal is performed by separate data quality tools.",
     "standardization_caption": "Check and unify structures before descriptor calculation: salts/mixtures, main fragment, neutralisation, canonical SMILES, InChIKey, and duplicates."
   },
   "standardization_ui": {
@@ -1296,7 +1298,7 @@
     "error": "Could not generate dataset passport: {error}",
     "hist_title": "Distribution of {col}",
     "boxplot_title": "Boxplot of {col}",
-    "diagnostics_title": "🔍 Data quality diagnostics",
+    "diagnostics_title": "🔍 Data consistency and quality",
     "original_row": "Original table number",
     "conflict_warning": "Found {count} duplicate structures with different property values.",
     "conflict_structures_title": "⚛️ Structures of duplicated compounds with different property values",
@@ -1543,7 +1545,6 @@
     "dscribe_optimize_checkbox": "Optimise 3D geometry with UFF before DScribe",
     "dscribe_limit_label": "Limit molecules for DScribe test, 0 = all",
     "dscribe_caption": "The first version of DScribe uses Coulomb Matrix eigenspectrum. The number of descriptors equals the maximum number of atoms. If a molecule has more atoms than this limit, the row will get status too_many_atoms.",
-    "spectral_not_ready_caption": "Spectral descriptors become available after the ‘Assemble selected descriptor matrix for QSPR’ button in the spectral summary block.",
     "warning_select_descriptor_type": "Select at least one descriptor type."
   },
   "descriptor_mode": {
@@ -1611,7 +1612,7 @@
   },
   "desc_calc": {
     "pending_bundle_info": "The assembled descriptor matrix is awaiting connection. Click ‘Connect assembled spectral matrix’ in the ‘Descriptor source’ block.",
-    "spectral_ready_info": "Spectral descriptors calculated, but the matrix for QSPR is not yet assembled. Click ‘Assemble selected descriptor matrix for QSPR’.",
+    "spectral_ready_info": "Spectral descriptors are calculated and available as a source. The final X/y matrix is assembled with the ‘Calculate selected descriptors’ button.",
     "calc_or_connect_info": "Calculate or connect descriptors to proceed to modelling."
   },
   "leakage_control": {
@@ -2478,7 +2479,18 @@
     "no_problem_molecules": "No problem compounds were found.",
     "large_errors_only": "Show large errors only",
     "problem_structures": "Problem-compound structures",
-    "download_problems": "📥 Download problem compounds"
+    "download_problems": "📥 Download problem compounds",
+    "saod_map_expander": "SAOD structural-series map",
+    "saod_map_title": "SAOD map of alkane structural series",
+    "saod_map_caption": "The map shows alkane structural series rather than individual molecules. Node size reflects the number of compounds in the series.",
+    "saod_map_unavailable": "The SAOD structural-series map is available for alkane series after substitution-pattern classification.",
+    "saod_color_mode": "Node coloring",
+    "saod_color_n": "By compound count",
+    "saod_color_mae": "By MAE",
+    "saod_color_bias": "By bias / mean residual",
+    "saod_color_rmse": "By RMSE",
+    "saod_residual_note": "residual = experimental - predicted. Positive residual means the model underestimated the prediction. Negative residual means the model overestimated the prediction.",
+    "saod_download_summary": "📥 Download SAOD series summary"
   },
   "prediction_page": {
     "uncertainty_expander": "📏 Prediction uncertainty assessment",

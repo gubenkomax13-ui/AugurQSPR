@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """Streamlit interface for graph-based QSPR error analysis."""
 
+import io
 import numpy as np
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
 
 from modules.error_analysis_core import (
     error_analysis_chemical_annotations,
@@ -13,12 +15,14 @@ from modules.error_analysis_core import (
     error_analysis_problem_molecules,
     error_analysis_select_cluster_members,
     error_analysis_select_group_members,
+    error_analysis_saod_alkane_series_summary,
     error_analysis_structural_annotations,
     error_analysis_structural_series_summary,
     error_analysis_structure_clusters,
     error_analysis_substitution_effects,
 )
 from modules.i18n import t
+from modules.module_explain_ui import render_module_explanation
 
 
 def _source_payload(context, model_name):
@@ -143,12 +147,206 @@ def _show_molecules(context, table, title, key):
         )
 
 
+def _show_compact_figure(fig, width=900):
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buffer.seek(0)
+    st.image(buffer, width=width)
+
+
+def _saod_series_coordinates(labels):
+    fixed = {
+        "n-alkanes": (0.0, 0.0),
+        "2-methylalkanes": (-3.0, 0.0),
+        "3-methylalkanes": (-1.5, 0.0),
+        "4-methylalkanes": (1.5, 0.0),
+        "methylalkanes": (-3.0, -0.9),
+        "2,2-dimethylalkanes": (-2.1, 1.2),
+        "2,3-dimethylalkanes": (-0.7, 1.7),
+        "2,4-dimethylalkanes": (0.7, 1.7),
+        "3,3-dimethylalkanes": (2.1, 1.2),
+        "dimethylalkanes": (0.0, 1.2),
+        "ethyl-substituted alkanes": (0.0, -1.2),
+        "ethyl-methyl alkanes": (1.8, -1.2),
+        "trimethylalkanes": (0.0, 2.7),
+        "tetramethylalkanes": (1.8, 2.9),
+        "highly-branched alkanes": (3.4, 2.4),
+        "branched alkanes": (3.2, 0.4),
+    }
+    coords = {}
+    unknown = []
+    for label in labels:
+        if label in fixed:
+            coords[label] = fixed[label]
+        else:
+            unknown.append(label)
+    for offset, label in enumerate(unknown):
+        coords[label] = (3.4, -0.7 - 0.75 * offset)
+    return coords
+
+
+def _saod_series_edges(labels):
+    present = set(labels)
+    edges = []
+
+    def add(left, right):
+        if left in present and right in present:
+            edges.append((left, right))
+
+    for label in [
+        "2-methylalkanes", "3-methylalkanes", "4-methylalkanes",
+        "methylalkanes", "dimethylalkanes", "ethyl-substituted alkanes",
+        "branched alkanes",
+    ]:
+        add("n-alkanes", label)
+
+    dimethyl_parent = (
+        "dimethylalkanes" if "dimethylalkanes" in present else "n-alkanes"
+    )
+    for label in [
+        "2,2-dimethylalkanes", "2,3-dimethylalkanes",
+        "2,4-dimethylalkanes", "3,3-dimethylalkanes",
+    ]:
+        add(dimethyl_parent, label)
+
+    add("dimethylalkanes", "trimethylalkanes")
+    add("2,2-dimethylalkanes", "trimethylalkanes")
+    add("2,3-dimethylalkanes", "trimethylalkanes")
+    add("trimethylalkanes", "tetramethylalkanes")
+    add("tetramethylalkanes", "highly-branched alkanes")
+    add("ethyl-substituted alkanes", "ethyl-methyl alkanes")
+    add("ethyl-methyl alkanes", "trimethylalkanes")
+    add("branched alkanes", "highly-branched alkanes")
+    return edges
+
+
+def _plot_saod_series_map(summary, color_mode, color_label):
+    labels = summary["series_label"].astype(str).tolist()
+    coords = _saod_series_coordinates(labels)
+    values = pd.to_numeric(summary[color_mode], errors="coerce").to_numpy(
+        dtype=float
+    )
+    sizes = (
+        260
+        + 1150
+        * np.sqrt(
+            pd.to_numeric(summary["n_compounds"], errors="coerce")
+            .fillna(1)
+            .to_numpy(dtype=float)
+        )
+        / max(1.0, np.sqrt(float(summary["n_compounds"].max())))
+    )
+
+    fig, ax = plt.subplots(figsize=(8.8, 5.2))
+    fig.patch.set_facecolor("#0e1117")
+    ax.set_facecolor("#0e1117")
+
+    for left, right in _saod_series_edges(labels):
+        x1, y1 = coords[left]
+        x2, y2 = coords[right]
+        ax.plot([x1, x2], [y1, y2], color="#7b8794", lw=1.8, alpha=0.65, zorder=1)
+
+    finite = values[np.isfinite(values)]
+    if color_mode in {"mean_residual", "bias"} and finite.size:
+        limit = max(float(np.max(np.abs(finite))), 1e-12)
+        scatter = ax.scatter(
+            [coords[label][0] for label in labels],
+            [coords[label][1] for label in labels],
+            s=sizes,
+            c=values,
+            cmap="coolwarm",
+            vmin=-limit,
+            vmax=limit,
+            edgecolors="white",
+            linewidths=1.2,
+            zorder=3,
+        )
+    else:
+        scatter = ax.scatter(
+            [coords[label][0] for label in labels],
+            [coords[label][1] for label in labels],
+            s=sizes,
+            c=values,
+            cmap="viridis",
+            edgecolors="white",
+            linewidths=1.2,
+            zorder=3,
+        )
+
+    for _, row in summary.iterrows():
+        label = str(row["series_label"])
+        x, y = coords[label]
+        ax.annotate(
+            f"{label}\nn={int(row['n_compounds'])}",
+            (x, y),
+            xytext=(0, -4),
+            textcoords="offset points",
+            ha="center",
+            va="center",
+            fontsize=8.5,
+            color="white",
+            zorder=4,
+        )
+
+    cbar = fig.colorbar(scatter, ax=ax, fraction=0.04, pad=0.02)
+    cbar.set_label(color_label, color="white")
+    cbar.ax.yaxis.set_tick_params(color="white")
+    plt.setp(cbar.ax.get_yticklabels(), color="white")
+    ax.set_title(t("error_analysis.saod_map_title"), color="white", fontsize=13)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.margins(0.18)
+    return fig
+
+
+def _saod_series_map_expander(result, model_name):
+    summary, members = error_analysis_saod_alkane_series_summary(
+        result.get("structural_error_table")
+    )
+    with st.expander(t("error_analysis.saod_map_expander"), expanded=False):
+        st.caption(t("error_analysis.saod_map_caption"))
+        if summary.empty:
+            st.info(t("error_analysis.saod_map_unavailable"))
+            return
+
+        labels = {
+            "n_compounds": t("error_analysis.saod_color_n"),
+            "MAE": t("error_analysis.saod_color_mae"),
+            "bias": t("error_analysis.saod_color_bias"),
+            "RMSE": t("error_analysis.saod_color_rmse"),
+        }
+        color_mode = st.radio(
+            t("error_analysis.saod_color_mode"),
+            list(labels.keys()),
+            format_func=lambda value: labels[value],
+            horizontal=True,
+            key=f"saod_series_color_{model_name}",
+        )
+        fig = _plot_saod_series_map(summary, color_mode, labels[color_mode])
+        _show_compact_figure(fig, width=900)
+        st.caption(t("error_analysis.saod_residual_note"))
+        st.dataframe(summary, width="stretch", hide_index=True)
+        if not members.empty:
+            st.download_button(
+                t("error_analysis.saod_download_summary"),
+                summary.to_csv(index=False).encode("utf-8"),
+                f"saod_alkane_series_error_summary_{model_name}.csv",
+                "text/csv",
+                key=f"download_saod_series_summary_{model_name}",
+            )
+
+
 def _series_tab(context, result, model_name):
     summary = result["series_summary"]
     table = result["structural_error_table"]
     if summary.empty:
         st.info(t("error_analysis.no_series"))
         return
+
+    _saod_series_map_expander(result, model_name)
 
     columns = [
         "family", "scaffold", "substitution_scheme", "structural_series",
@@ -394,6 +592,7 @@ def _problems_tab(context, result, model_name):
 def render_error_analysis_section(context):
     """Render structural-series-first error analysis."""
     st.header(t("error_analysis.title"))
+    render_module_explanation("error_analysis")
     st.markdown(t("error_analysis.description_structural"))
 
     model_name = st.session_state.get("last_model_algorithm", "")

@@ -9,6 +9,7 @@ import streamlit as st
 
 from modules.error_analysis_core import error_analysis_structural_annotations
 from modules.i18n import t
+from modules.module_explain_ui import render_module_explanation
 
 try:
     from scipy.stats import pearsonr, spearmanr
@@ -446,6 +447,7 @@ def render_model_diagnostics_section(context):
     """Рендерит диагностику уже обученной модели после валидации."""
     globals().update(context)
     st.header(t("diagnostics.header"))
+    render_module_explanation("diagnostics")
     # ------------------------------------------------------------
     # Applicability Domain
     

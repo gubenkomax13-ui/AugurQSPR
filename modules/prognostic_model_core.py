@@ -29,12 +29,17 @@ from rdkit import Chem
 
 try:
     from .i18n import t
+    from .module_explain_ui import render_module_explanation
 except Exception:
     try:
         from i18n import t  # type: ignore
+        from module_explain_ui import render_module_explanation  # type: ignore
     except Exception:
         def t(key, **kwargs):
             return key
+
+        def render_module_explanation(module_key, expanded=False):
+            return None
 
 try:
     from streamlit_ketcher import st_ketcher
@@ -2456,6 +2461,7 @@ def qspr_show_new_compound_prediction_section(
     Streamlit-блок прогноза свойства для новых веществ.
     """
     st.header(t("prediction_page.new_compound_header"))
+    render_module_explanation("prediction")
     st.markdown(t("prediction_page.new_compound_description"))
 
     if "prog_model" not in st.session_state:
@@ -3436,6 +3442,7 @@ def qspr_show_standalone_prediction_page():
     2. если пользователь загрузил сохранённый model_prognostic_package.pkl.
     """
     st.header(t("prediction_page.new_compound_header"))
+    render_module_explanation("prediction")
 
     st.markdown(t("prediction_page.standalone_description"))
 

@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from modules.i18n import t
+from modules.module_explain_ui import render_module_explanation
 
 
 def _safe_float(value):
@@ -498,6 +499,8 @@ def _render_table(df, max_rows=None, **kwargs):
 
 
 def render_final_statistics_summary(context):
+    st.header("📊 Модуль итоговой статистики QSPR-анализа")
+    render_module_explanation("final_statistics")
     summary = build_final_statistics_summary(context)
     flat = final_statistics_to_flat_dataframe(summary)
 
