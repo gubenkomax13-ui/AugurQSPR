@@ -515,6 +515,37 @@ def _render_pairs_and_unique(result):
     else:
         st.info(t('chemical_diversity.text_9eefa4a7ca'))
 
+def _localized_diversity_status(status):
+    status_text = str(status or "").strip()
+    status_map = {
+        t('chemical_diversity.text_fc4dc2a373'): t('chemical_diversity.text_fc4dc2a373'),
+        t('chemical_diversity.text_c8571b5d1b'): t('chemical_diversity.text_c8571b5d1b'),
+        t('chemical_diversity.text_b9282269a3'): t('chemical_diversity.text_b9282269a3'),
+        t('chemical_diversity.text_0d428eae71'): t('chemical_diversity.text_0d428eae71'),
+        'низкое разнообразие': t('chemical_diversity.text_fc4dc2a373'),
+        'неоднородный датасет': t('chemical_diversity.text_c8571b5d1b'),
+        'высокое разнообразие': t('chemical_diversity.text_b9282269a3'),
+        'умеренное разнообразие': t('chemical_diversity.text_0d428eae71'),
+        'не рассчитано': t('chemical_diversity.text_de32203cf2'),
+    }
+    return status_map.get(status_text, status_text or t('chemical_diversity.text_de32203cf2'))
+
+
+def _localized_diversity_reasons(reasons):
+    reason_text = str(reasons or "").strip()
+    replacements = {
+        'среднее Tanimoto-сходство высокое': t('chemical_diversity.reason_mean_tanimoto_high'),
+        'среднее Tanimoto-сходство низкое и кластеров много': t('chemical_diversity.reason_mean_tanimoto_low_many_clusters'),
+        'структуры образуют несколько областей без экстремального сходства': t('chemical_diversity.reason_moderate_regions'),
+        'есть крупный кластер и заметная доля одиночных кластеров': t('chemical_diversity.reason_large_cluster_singletons'),
+        'есть почти дублирующиеся или очень близкие пары': t('chemical_diversity.reason_near_duplicates'),
+        'явных причин не выделено': t('chemical_diversity.reason_no_clear_causes'),
+    }
+    for source, localized in replacements.items():
+        reason_text = reason_text.replace(source, localized)
+    return reason_text
+
+
 def render_chemical_diversity_section(data, smiles_col, label_col=None, target_col=None, descriptor_df=None, expanded=False):
     """Render pre-modeling chemical diversity diagnostics."""
     if not isinstance(data, pd.DataFrame) or data.empty or (not smiles_col) or (smiles_col not in data.columns):
@@ -538,9 +569,9 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
     with col_d:
         projection_method = st.selectbox(t('chemical_diversity.text_2a09bff718'), ['auto', 'UMAP', 'MDS', 't-SNE'], index=0, key='chemical_diversity_projection_method')
     with col_e:
-        radius = st.number_input('Morgan radius', min_value=1, max_value=4, value=2, step=1, key='chemical_diversity_morgan_radius')
+        radius = st.number_input(t('chemical_diversity.morgan_radius_label'), min_value=1, max_value=4, value=2, step=1, key='chemical_diversity_morgan_radius')
     with col_f:
-        n_bits = st.selectbox('nBits', [1024, 2048, 4096], index=1, key='chemical_diversity_morgan_n_bits')
+        n_bits = st.selectbox(t('chemical_diversity.morgan_nbits_label'), [1024, 2048, 4096], index=1, key='chemical_diversity_morgan_n_bits')
     with col_g:
         map_top_k = st.number_input(t('chemical_diversity.text_3a641834de'), min_value=1, max_value=20, value=5, step=1, key='chemical_diversity_map_top_k')
     st.caption(t('chemical_diversity.text_8db9159eba'))
@@ -557,11 +588,12 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
         else:
             result = cached
         summary = result.get('summary', {})
-        status = str(summary.get('status', t('chemical_diversity.text_de32203cf2')))
-        reasons = str(summary.get('status_reasons', ''))
-        if status in {'низкое разнообразие', 'неоднородный датасет'}:
+        raw_status = str(summary.get('status', t('chemical_diversity.text_de32203cf2')))
+        status = _localized_diversity_status(raw_status)
+        reasons = _localized_diversity_reasons(summary.get('status_reasons', ''))
+        if raw_status in {'низкое разнообразие', 'неоднородный датасет'}:
             st.warning(t('chemical_diversity.status_message', status=status, reasons=reasons))
-        elif status in {'высокое разнообразие', 'умеренное разнообразие'}:
+        elif raw_status in {'высокое разнообразие', 'умеренное разнообразие'}:
             st.success(t('chemical_diversity.status_message', status=status, reasons=reasons))
         else:
             st.info(t('chemical_diversity.status_message', status=status, reasons=reasons))
@@ -581,7 +613,7 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
             descriptor_space = result.get('descriptor_space', {})
             descriptor_table = _descriptor_summary_table(descriptor_space)
             if not descriptor_table.empty:
-                with st.expander('Descriptor-space diversity', expanded=False):
+                with st.expander(t('chemical_diversity.descriptor_space_expander'), expanded=False):
                     st.dataframe(descriptor_table, width='stretch', hide_index=True)
                     coords = descriptor_space.get('pca_coordinates') if isinstance(descriptor_space, dict) else None
                     if isinstance(coords, pd.DataFrame) and {'PC1', 'PC2'}.issubset(coords.columns):

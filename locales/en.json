@@ -2948,13 +2948,13 @@
     "text_c45333a0db": "### Близость молекул и химическое разнообразие датасета",
     "text_e9cf048210": "Диагностика показывает, является ли выборка однотипной, смешанной, перегруженной близкими аналогами или содержит одиночные структуры.",
     "text_244d21577b": "Модуль химического пространства анализирует структурную организацию датасета до построения модели. Итоговая карта показывает, является ли датасет однородным или разнородным, есть ли в нём плотные группы аналогов, одиночные вещества, структурные выбросы, дубликаты и почти дубликаты.",
-    "text_a3cd2ce9d4": "Порог кластеризации Tanimoto",
-    "text_2eb512500a": "Порог почти дублей",
-    "text_11a8e7a92f": "Порог близких аналогов",
-    "text_2a09bff718": "Метод проекции",
-    "text_3a641834de": "k ближайших рёбер",
-    "text_8db9159eba": "До 2000 валидных структур считается полная матрица пар. Для больших наборов используется воспроизводимая выборка пар, чтобы интерфейс не зависал.",
-    "text_f1c4ac0147": "Рассчитать химическое разнообразие",
+    "text_a3cd2ce9d4": "Tanimoto clustering threshold",
+    "text_2eb512500a": "Near-duplicate threshold",
+    "text_11a8e7a92f": "Close analogue threshold",
+    "text_2a09bff718": "Projection method",
+    "text_3a641834de": "k nearest edges",
+    "text_8db9159eba": "Up to 2000 valid structures, the full pair matrix is calculated. For larger datasets, a reproducible pair sample is used so the interface stays responsive.",
+    "text_f1c4ac0147": "Calculate chemical diversity",
     "text_df201cd4e3": "Считаю Morgan fingerprints, Tanimoto-сходство и кластеры...",
     "text_de32203cf2": "не рассчитано",
     "text_fc4dc2a373": "низкое разнообразие",
@@ -2973,7 +2973,16 @@
     "text_c2a0c6990c": "Пары и одиночные вещества",
     "text_1ea1ac107e": "Невалидные SMILES",
     "final_map_sampled_warning": "The dataset is large, so the final map is built from a reproducible sample: {displayed} of {total} valid structures.",
-    "status_message": "Status: {status}. {reasons}"
+    "status_message": "Status: {status}. {reasons}",
+    "morgan_radius_label": "Morgan radius",
+    "morgan_nbits_label": "nBits",
+    "descriptor_space_expander": "Descriptor-space diversity",
+    "reason_mean_tanimoto_high": "mean Tanimoto similarity is high",
+    "reason_mean_tanimoto_low_many_clusters": "mean Tanimoto similarity is low and there are many clusters",
+    "reason_moderate_regions": "structures form several regions without extreme similarity",
+    "reason_large_cluster_singletons": "there is a large cluster and a visible share of singleton clusters",
+    "reason_near_duplicates": "near-duplicate or very close pairs are present",
+    "reason_no_clear_causes": "no clear causes were isolated"
   },
   "module_explain": {
     "kind_step": "Step",
@@ -3236,20 +3245,20 @@
     "interval_coverage_error": "Prediction interval coverage error: {error}"
   },
   "primary_data_analysis": {
-    "header": "?? Primary data analysis module"
+    "header": "Primary Data Analysis Module"
   },
   "chemical_correctness": {
-    "header": "?? Chemical structure preparation module (representation standardization and structure normalization)",
+    "header": "Chemical Structure Preparation Module",
     "standardization_subheader": "Structure normalization and canonicalization"
   },
   "chemical_space": {
-    "header": "?? Chemical space module"
+    "header": "Chemical Space Module"
   },
   "structural_audit": {
-    "header": "?? Structural audit and filters module"
+    "header": "Structural Audit and Filters Module"
   },
   "feature_sources": {
-    "header": "?? Descriptor sources module",
-    "caption": "Choose feature sources, configure descriptor types, and assemble the final X/y matrix for QSPR modeling here."
+    "header": "Descriptor Sources Module",
+    "caption": "Here feature sources are selected, descriptor types are configured, and the final X/y matrix for QSPR modelling is assembled."
   }
 }
