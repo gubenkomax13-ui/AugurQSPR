@@ -2,6 +2,35 @@
 
 """Human-readable registry of Augur QSPR user-facing modules."""
 
+import copy
+import hashlib
+import re
+
+from modules.i18n import t
+
+
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04ff]")
+
+
+def _registry_text_key(value):
+    digest = hashlib.md5(value.encode("utf-8")).hexdigest()[:10]
+    return f"module_registry.text_{digest}"
+
+
+def _localize_registry_value(value):
+    if isinstance(value, str):
+        if _CYRILLIC_RE.search(value):
+            return t(_registry_text_key(value))
+        return value
+    if isinstance(value, list):
+        return [_localize_registry_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _localize_registry_value(item)
+            for key, item in value.items()
+        }
+    return copy.deepcopy(value)
+
 MODULES = {
     "data_preparation": {
         "title": "Загрузка и выбор первичных данных",
@@ -539,14 +568,15 @@ MODULE_ORDER = [
 
 
 def get_module_description(module_key):
-    return MODULES.get(module_key)
+    item = MODULES.get(module_key)
+    return _localize_registry_value(item) if item else None
 
 
 def iter_module_descriptions():
     for key in MODULE_ORDER:
         item = MODULES.get(key)
         if item:
-            yield key, item
+            yield key, _localize_registry_value(item)
 
 
 def module_anchor_id(module_key):
@@ -600,7 +630,7 @@ def iter_module_blocks(item):
 
 
 def block_display_name(block):
-    return block.get("title") or block.get("name") or "Блок"
+    return block.get("title") or block.get("name") or t("module_registry.fallback_block")
 
 
 def iter_module_tool_names(item):
@@ -612,7 +642,7 @@ def iter_module_tool_names(item):
 
 def module_overview_markdown():
     """Build a compact clickable module map."""
-    lines = ["### Карта модулей", ""]
+    lines = [t("module_registry.overview_title"), ""]
     for module_key, item in iter_module_descriptions():
         lines.append(f"- [{item['title']}](#{module_anchor_id(module_key)})")
         anchor_number = 1

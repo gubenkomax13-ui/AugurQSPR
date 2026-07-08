@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
+from modules.i18n import t
 from modules.validation_extensions_core import (
     group_holdout_validation,
     learning_curve_validation,
@@ -16,25 +17,11 @@ from modules.validation_extensions_core import (
 from modules.module_explain_ui import render_module_explanation
 
 
-TOOL_EXPLANATIONS = {
-    "repeated_kfold": (
-        "**Repeated K-Fold** многократно делит данные на фолды. "
-        "Это показывает, насколько метрики устойчивы к случайному разбиению."
-    ),
-    "group_scaffold": (
-        "**Group / Scaffold split** держит целые группы или химические каркасы "
-        "только в test. Это проверка переноса между семействами, а не запоминания "
-        "близких аналогов."
-    ),
-    "learning_curves": (
-        "**Learning curves** сравнивают train и CV ошибку при разном размере "
-        "обучающей выборки. Они помогают увидеть переобучение и дефицит данных."
-    ),
-    "interval_coverage": (
-        "**Prediction interval coverage** проверяет, честны ли интервалы "
-        "неопределённости: если заявлено 90%, близко ли фактическое покрытие "
-        "на hold-out к 90%."
-    ),
+TOOL_EXPLANATION_KEYS = {
+    "repeated_kfold": "advanced_validation.repeated_kfold_explanation",
+    "group_scaffold": "advanced_validation.group_scaffold_explanation",
+    "learning_curves": "advanced_validation.learning_curves_explanation",
+    "interval_coverage": "advanced_validation.interval_coverage_explanation",
 }
 
 
@@ -76,19 +63,19 @@ def render_advanced_validation_section(context):
     """Render advanced validation tools with plain-language explanations."""
     globals().update(context)
 
-    st.header("Расширенная валидация")
+    st.header(t("advanced_validation.header"))
     render_module_explanation("advanced_validation")
 
     model_name = _advanced_validation_model_name()
     if not model_name or model_name not in st.session_state.get("trained_models", {}):
-        st.info("Train an analytical model first.")
+        st.info(t("advanced_validation.train_model_first"))
         return
 
     params = get_model_params_from_session()
     smiles_values = _advanced_validation_smiles()
 
     with st.expander("Repeated K-Fold", expanded=False):
-        st.markdown(TOOL_EXPLANATIONS["repeated_kfold"])
+        st.markdown(t(TOOL_EXPLANATION_KEYS["repeated_kfold"]))
         col1, col2, col3 = st.columns(3)
         with col1:
             rkf_k = st.slider(
@@ -115,9 +102,9 @@ def render_advanced_validation_section(context):
                 key="advanced_rkf_seed",
             )
 
-        if st.button("Run Repeated K-Fold", type="primary", key="run_advanced_rkf"):
+        if st.button(t("advanced_validation.run_repeated_kfold"), type="primary", key="run_advanced_rkf"):
             try:
-                progress = st.progress(0, text="Preparing Repeated K-Fold...")
+                progress = st.progress(0, text=t("advanced_validation.preparing_repeated_kfold"))
 
                 def _progress(done, total):
                     progress.progress(
@@ -143,10 +130,10 @@ def render_advanced_validation_section(context):
                     model_name,
                     result,
                 )
-                progress.progress(100, text="Repeated K-Fold complete.")
-                st.success("Repeated K-Fold complete.")
+                progress.progress(100, text=t("advanced_validation.repeated_kfold_complete"))
+                st.success(t("advanced_validation.repeated_kfold_complete"))
             except Exception as exc:
-                st.error(f"Repeated K-Fold error: {exc}")
+                st.error(t("advanced_validation.repeated_kfold_error", error=exc))
 
         rkf_result = _advanced_validation_get("repeated_kfold_results_dict", model_name)
         if isinstance(rkf_result, dict):
@@ -173,9 +160,9 @@ def render_advanced_validation_section(context):
                 plt.close(fig_rkf)
 
     with st.expander("Group / Scaffold split", expanded=False):
-        st.markdown(TOOL_EXPLANATIONS["group_scaffold"])
+        st.markdown(t(TOOL_EXPLANATION_KEYS["group_scaffold"]))
         group_mode = st.radio(
-            "Group source",
+            t("advanced_validation.group_source"),
             ["Bemis-Murcko scaffold", "Dataset column"],
             horizontal=True,
             key="advanced_group_mode",
@@ -184,7 +171,7 @@ def render_advanced_validation_section(context):
         if group_mode == "Dataset column":
             candidate_columns = list(getattr(data, "columns", []))
             group_column = st.selectbox(
-                "Group column",
+                t("advanced_validation.group_column"),
                 candidate_columns,
                 key="advanced_group_column",
             )
@@ -207,7 +194,7 @@ def render_advanced_validation_section(context):
                 key="advanced_group_seed",
             )
 
-        if st.button("Run Group / Scaffold split", type="primary", key="run_advanced_group"):
+        if st.button(t("advanced_validation.run_group_scaffold"), type="primary", key="run_advanced_group"):
             try:
                 if group_mode == "Dataset column":
                     groups = (
@@ -247,9 +234,9 @@ def render_advanced_validation_section(context):
                     model_name,
                     result,
                 )
-                st.success("Group / Scaffold split complete.")
+                st.success(t("advanced_validation.group_scaffold_complete"))
             except Exception as exc:
-                st.error(f"Group / Scaffold split error: {exc}")
+                st.error(t("advanced_validation.group_scaffold_error", error=exc))
 
         group_result = _advanced_validation_get("group_split_results_dict", model_name)
         if isinstance(group_result, dict):
@@ -265,15 +252,15 @@ def render_advanced_validation_section(context):
             )
 
     with st.expander("Learning curves", expanded=False):
-        st.markdown(TOOL_EXPLANATIONS["learning_curves"])
+        st.markdown(t(TOOL_EXPLANATION_KEYS["learning_curves"]))
         lc_k = st.slider(
-            "CV folds",
+            t("advanced_validation.cv_folds"),
             min_value=2,
             max_value=max(2, min(10, len(y_all_current))),
             value=min(5, max(2, min(10, len(y_all_current)))),
             key="advanced_lc_k",
         )
-        if st.button("Run learning curves", type="primary", key="run_advanced_lc"):
+        if st.button(t("advanced_validation.run_learning_curves"), type="primary", key="run_advanced_lc"):
             try:
                 result = learning_curve_validation(
                     X=X_all_current,
@@ -289,9 +276,9 @@ def render_advanced_validation_section(context):
                     model_name,
                     result,
                 )
-                st.success("Learning curves complete.")
+                st.success(t("advanced_validation.learning_curves_complete"))
             except Exception as exc:
-                st.error(f"Learning curve error: {exc}")
+                st.error(t("advanced_validation.learning_curve_error", error=exc))
 
         lc_result = _advanced_validation_get("learning_curve_results_dict", model_name)
         if isinstance(lc_result, dict):
@@ -321,7 +308,7 @@ def render_advanced_validation_section(context):
                 st.dataframe(lc_table, width="stretch", hide_index=True)
 
     with st.expander("Prediction interval hold-out coverage", expanded=False):
-        st.markdown(TOOL_EXPLANATIONS["interval_coverage"])
+        st.markdown(t(TOOL_EXPLANATION_KEYS["interval_coverage"]))
         col1, col2, col3 = st.columns(3)
         with col1:
             pi_confidence = st.slider(
@@ -350,7 +337,7 @@ def render_advanced_validation_section(context):
                 key="advanced_pi_cv",
             )
 
-        if st.button("Audit interval coverage", type="primary", key="run_advanced_pi"):
+        if st.button(t("advanced_validation.audit_interval_coverage"), type="primary", key="run_advanced_pi"):
             try:
                 result = prediction_interval_holdout_coverage(
                     X=X_all_current,
@@ -370,9 +357,9 @@ def render_advanced_validation_section(context):
                     model_name,
                     result,
                 )
-                st.success("Prediction interval coverage audit complete.")
+                st.success(t("advanced_validation.interval_coverage_complete"))
             except Exception as exc:
-                st.error(f"Prediction interval coverage error: {exc}")
+                st.error(t("advanced_validation.interval_coverage_error", error=exc))
 
         pi_result = _advanced_validation_get("interval_coverage_results_dict", model_name)
         if isinstance(pi_result, dict):

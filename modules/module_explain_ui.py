@@ -4,6 +4,7 @@
 
 import streamlit as st
 
+from modules.i18n import t
 from modules.module_registry import (
     get_module_description,
     iter_module_blocks,
@@ -16,21 +17,33 @@ def _anchor(anchor_id):
     st.markdown(f'<span id="{anchor_id}"></span>', unsafe_allow_html=True)
 
 
-KIND_LABELS = {
-    "step": "Шаг",
-    "control": "Контроль",
-    "analysis": "Анализ",
-    "procedure": "Процедура",
-    "tool": "Инструмент",
+KIND_LABEL_KEYS = {
+    "step": "module_explain.kind_step",
+    "control": "module_explain.kind_control",
+    "analysis": "module_explain.kind_analysis",
+    "procedure": "module_explain.kind_procedure",
+    "tool": "module_explain.kind_tool",
 }
 
 
 def _render_item(module_key, item, anchor_number):
     _anchor(tool_anchor_id(module_key, anchor_number))
     kind = item.get("kind", "tool")
-    label = KIND_LABELS.get(kind, "Пункт")
-    update_text = f" Обновляет: `{item['updates']}`." if item.get("updates") else ""
-    st.markdown(f"- **{label}: {item['name']}** — {item['purpose']}{update_text}")
+    label = t(KIND_LABEL_KEYS.get(kind, "module_explain.kind_item"))
+    update_text = (
+        t("module_explain.updates", updates=item["updates"])
+        if item.get("updates")
+        else ""
+    )
+    st.markdown(
+        t(
+            "module_explain.item_line",
+            label=label,
+            name=item["name"],
+            purpose=item["purpose"],
+            updates=update_text,
+        )
+    )
 
 
 def render_module_explanation(module_key, expanded=False):
@@ -40,10 +53,10 @@ def render_module_explanation(module_key, expanded=False):
         return
 
     _anchor(module_anchor_id(module_key))
-    title = info.get("title") or "модуль"
+    title = info.get("title") or t("module_explain.fallback_module")
 
-    with st.expander(f"Что делает модуль: {title}", expanded=expanded):
-        st.markdown(f"**Назначение модуля:** {info['goal']}")
+    with st.expander(t("module_explain.expander_title", title=title), expanded=expanded):
+        st.markdown(t("module_explain.goal_line", goal=info["goal"]))
 
         anchor_number = 1
         for block in iter_module_blocks(info):
@@ -51,9 +64,15 @@ def render_module_explanation(module_key, expanded=False):
             block_name = block.get("title") or block.get("name")
             purpose = block.get("purpose")
             if purpose:
-                st.markdown(f"**Блок: {block_name}** — {purpose}")
+                st.markdown(
+                    t(
+                        "module_explain.block_line",
+                        block_name=block_name,
+                        purpose=purpose,
+                    )
+                )
             else:
-                st.markdown(f"**Блок: {block_name}**")
+                st.markdown(t("module_explain.block_title", block_name=block_name))
             anchor_number += 1
 
             for item in block.get("items", []):
