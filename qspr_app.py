@@ -6947,7 +6947,7 @@ with st.sidebar:
         else:
             st.warning(t('sidebar.lists_not_created'))
 
-        with st.expander("Карта модулей", expanded=False):
+        with st.expander(t("module_registry.map_expander"), expanded=False):
             st.markdown(module_overview_markdown())
 
         if is_admin():
@@ -7262,7 +7262,7 @@ data[target_col] = pd.to_numeric(
     errors="coerce"
 )
 
-st.markdown("#### Блок: 📄 Контроль чтения файла и просмотр структур")
+st.markdown(t("data_prep.reading_block_title"))
 
 if st.session_state.get("data_source_note"):
     st.success(st.session_state.data_source_note)
@@ -7298,10 +7298,10 @@ show_molecule_viewer(
 
 primary_data_analysis_container = st.container()
 
-st.header("🧪 Модуль химической подготовки структур (Стандартизация представления и нормализация структур)")
+st.header(t("chemical_correctness.header"))
 
 render_tool_badge()
-st.subheader("Нормализация и канонизация структур")
+st.subheader(t("chemical_correctness.standardization_subheader"))
 
 if st.button(
     t('standardization_ui.normalize_button'),
@@ -7527,7 +7527,7 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                 st.exception(e)
 
 with primary_data_analysis_container:
-    st.header("📋 Модуль анализа первичных данных")
+    st.header(t("primary_data_analysis.header"))
     render_module_explanation("primary_data_analysis")
 
     ## ------------------------------------------------------------------
@@ -7820,7 +7820,7 @@ with primary_data_analysis_container:
 
     st.info(t('outliers.multivariate_info'))
 
-st.header("🧭 Модуль химического пространства")
+st.header(t("chemical_space.header"))
 render_module_explanation("chemical_space")
 
 render_chemical_diversity_section(
@@ -7834,7 +7834,7 @@ render_chemical_diversity_section(
 
 # ------------------------------------------------------------------
 # Structural dataset filter
-st.header("🧱 Модуль структурного аудита и фильтров")
+st.header(t("structural_audit.header"))
 render_module_explanation("structural_audit")
 
 render_tool_badge()
@@ -8789,11 +8789,8 @@ spectra_expander_should_be_open = (
     or st.session_state.get("pending_qspr_descriptor_bundle_ready", False)
 )
 
-st.header("🧩 Модуль источников дескрипторов")
-st.caption(
-    "Здесь выбираются источники признаков, настраиваются типы дескрипторов "
-    "и собирается итоговая матрица X/y для QSPR-моделирования."
-)
+st.header(t("feature_sources.header"))
+st.caption(t("feature_sources.caption"))
 render_module_explanation("feature_sources")
 
 def render_spectra_descriptor_workbench():

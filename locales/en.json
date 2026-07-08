@@ -1268,7 +1268,8 @@
     "current_dataset": "Current working dataset: {count} compounds",
     "tool_badge": "Tool",
     "standardization_title": "### 🧪 Structure normalisation and canonicalisation",
-    "standardization_caption": "Check and unify structures before descriptor calculation: salts/mixtures, main fragment, neutralisation, canonical SMILES, InChIKey, and duplicates."
+    "standardization_caption": "Check and unify structures before descriptor calculation: salts/mixtures, main fragment, neutralisation, canonical SMILES, InChIKey, and duplicates.",
+    "reading_block_title": "#### Block: ?? File reading control and structure preview"
   },
   "standardization_ui": {
     "normalize_button": "🧶 Normalise and canonicalise SMILES",
@@ -3207,7 +3208,8 @@
     "text_450fafbf0a": "Отделяют дефицит данных от переобучения.",
     "text_641a391792": "Интерпретация и область применимости",
     "text_7b8d263690": "Помогает убедиться, что файл прочитан так, как ожидалось.",
-    "text_557b0307c3": "Стандартные split-проверки"
+    "text_557b0307c3": "Стандартные split-проверки",
+    "map_expander": "Module map"
   },
   "advanced_validation": {
     "header": "Advanced validation",
@@ -3232,5 +3234,22 @@
     "audit_interval_coverage": "Audit interval coverage",
     "interval_coverage_complete": "Prediction interval coverage audit complete.",
     "interval_coverage_error": "Prediction interval coverage error: {error}"
+  },
+  "primary_data_analysis": {
+    "header": "?? Primary data analysis module"
+  },
+  "chemical_correctness": {
+    "header": "?? Chemical structure preparation module (representation standardization and structure normalization)",
+    "standardization_subheader": "Structure normalization and canonicalization"
+  },
+  "chemical_space": {
+    "header": "?? Chemical space module"
+  },
+  "structural_audit": {
+    "header": "?? Structural audit and filters module"
+  },
+  "feature_sources": {
+    "header": "?? Descriptor sources module",
+    "caption": "Choose feature sources, configure descriptor types, and assemble the final X/y matrix for QSPR modeling here."
   }
 }
