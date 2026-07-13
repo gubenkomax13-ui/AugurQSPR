@@ -40,7 +40,7 @@ DEFAULT_TEMPLATES = {
             "holdout": "На тестовой выборке (доля {test_size:.0%}) получены следующие метрики: R² = {r2:.3f}, RMSE = {rmse:.2f}, MAE = {mae:.2f}.",
             "loo": "Методом Leave-One-Out получены: Q² = {q2:.3f}, RMSE = {rmse:.2f}.",
             "bootstrap": "Bootstrap-валидация ({n_iter} итераций) показала средний R² OOB = {r2_mean:.3f} ± {r2_std:.3f}.",
-            "external": "External Validation (наиболее удалённые вещества, доля {fraction:.0%}) дала R² = {r2_mean:.3f} ± {r2_std:.3f}."
+            "external": "Стресс-тест на структурно удалённых объектах (distance-based hold-out, доля {fraction:.0%}) дал R² = {r2_mean:.3f} ± {r2_std:.3f}. Это не строгая внешняя валидация на независимом наборе."
         },
         "ad": "Применимую область модели оценивали по рычаговому расстоянию (leverage). Порог h* = {threshold:.4f}. Выявлено {n_out} веществ ({pct:.1f}%) вне применимой области.",
         "conclusion": {
@@ -74,7 +74,7 @@ DEFAULT_TEMPLATES = {
             "holdout": "On the test set ({test_size:.0%} fraction), the following metrics were obtained: R² = {r2:.3f}, RMSE = {rmse:.2f}, MAE = {mae:.2f}.",
             "loo": "Leave-One-Out cross-validation gave Q² = {q2:.3f}, RMSE = {rmse:.2f}.",
             "bootstrap": "Bootstrap validation ({n_iter} iterations) showed mean OOB R² = {r2_mean:.3f} ± {r2_std:.3f}.",
-            "external": "External validation (on the most distant compounds, fraction {fraction:.0%}) gave R² = {r2_mean:.3f} ± {r2_std:.3f}."
+            "external": "Distance-based hold-out stress test (fraction {fraction:.0%}) gave R² = {r2_mean:.3f} ± {r2_std:.3f}. This is not strict external validation on an independent dataset."
         },
         "ad": "Applicability domain was estimated using leverage. The threshold h* = {threshold:.4f}. {n_out} compounds ({pct:.1f}%) were found outside the domain.",
         "conclusion": {

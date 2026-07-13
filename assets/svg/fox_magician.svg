@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 720" role="img" aria-labelledby="title desc">
+  <title id="title">Fox magician coloring template</title>
+  <desc id="desc">A clipped SVG coloring template. Fills are clipped to regions and outlines are drawn on top.</desc>
+  <defs>
+    <style>
+      :root {
+        --outline: #34251f;
+        --fox-orange: #e87722;
+        --fox-light: #fff0d7;
+        --fox-dark: #9f3f18;
+        --hat: #4c2a7a;
+        --hat-band: #f4c542;
+        --cape: #2452a4;
+        --cape-lining: #8b1e3f;
+        --wand: #3b2f2f;
+        --spark: #f8d84a;
+      }
+      .region-fill { stroke: none; }
+      .outline { fill: none; stroke: var(--outline); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+      .detail { fill: none; stroke: var(--outline); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+      .thin { fill: none; stroke: var(--outline); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+
+    <path id="path-tail" d="M126 438 C58 398 52 309 119 262 C171 226 229 250 256 301 C283 354 268 426 209 458 C181 473 151 456 126 438 Z"/>
+    <path id="path-body" d="M253 362 C235 444 257 560 357 590 C455 619 522 553 511 459 C503 389 457 339 389 327 C326 316 268 333 253 362 Z"/>
+    <path id="path-belly" d="M315 414 C296 468 309 543 366 563 C423 544 442 474 413 424 C390 385 338 380 315 414 Z"/>
+    <path id="path-head" d="M213 185 C226 118 290 89 342 121 C374 86 431 96 446 157 C483 186 494 239 473 284 C447 341 379 363 318 345 C247 325 201 259 213 185 Z"/>
+    <path id="path-face-mask" d="M257 205 C285 183 329 188 352 225 C376 188 421 185 448 211 C457 276 414 321 354 326 C292 330 249 276 257 205 Z"/>
+    <path id="path-left-ear" d="M234 179 C221 116 239 67 290 42 C313 94 305 142 276 188 Z"/>
+    <path id="path-right-ear" d="M369 129 C396 80 444 59 488 80 C482 139 455 179 412 195 Z"/>
+    <path id="path-left-inner-ear" d="M248 154 C244 116 255 90 281 72 C291 106 287 134 266 164 Z"/>
+    <path id="path-right-inner-ear" d="M402 141 C423 110 449 93 472 94 C466 128 448 154 420 174 Z"/>
+    <path id="path-hat-crown" d="M296 111 C315 48 392 29 435 75 C448 91 449 127 437 162 C391 180 337 165 296 111 Z"/>
+    <path id="path-hat-brim" d="M244 157 C306 124 408 126 480 161 C486 176 474 194 445 202 C377 222 279 207 239 179 C226 170 230 162 244 157 Z"/>
+    <path id="path-hat-band" d="M315 105 C353 121 395 126 432 113 C433 129 430 144 424 157 C382 169 341 160 305 137 C306 126 309 115 315 105 Z"/>
+    <path id="path-cape" d="M248 383 C187 424 166 534 209 625 C258 594 310 587 360 612 C411 585 464 591 518 625 C552 522 522 415 453 374 C413 406 302 409 248 383 Z"/>
+    <path id="path-cape-lining" d="M239 423 C209 474 204 546 226 596 C267 570 311 567 357 589 C405 568 452 570 498 599 C518 540 508 467 471 421 C421 451 299 453 239 423 Z"/>
+    <path id="path-left-arm" d="M252 399 C202 402 166 432 151 475 C139 510 164 532 190 506 C211 484 232 464 263 459 Z"/>
+    <path id="path-right-arm" d="M469 392 C516 385 559 405 590 447 C611 476 596 506 563 489 C535 475 510 456 475 456 Z"/>
+    <path id="path-wand" d="M567 356 L594 366 L522 516 L497 504 Z"/>
+    <path id="path-star" d="M596 315 L610 347 L644 350 L618 372 L626 406 L596 388 L566 406 L574 372 L548 350 L582 347 Z"/>
+
+    <clipPath id="clip-tail"><use href="#path-tail"/></clipPath>
+    <clipPath id="clip-body"><use href="#path-body"/></clipPath>
+    <clipPath id="clip-belly"><use href="#path-belly"/></clipPath>
+    <clipPath id="clip-head"><use href="#path-head"/></clipPath>
+    <clipPath id="clip-face-mask"><use href="#path-face-mask"/></clipPath>
+    <clipPath id="clip-left-ear"><use href="#path-left-ear"/></clipPath>
+    <clipPath id="clip-right-ear"><use href="#path-right-ear"/></clipPath>
+    <clipPath id="clip-left-inner-ear"><use href="#path-left-inner-ear"/></clipPath>
+    <clipPath id="clip-right-inner-ear"><use href="#path-right-inner-ear"/></clipPath>
+    <clipPath id="clip-hat-crown"><use href="#path-hat-crown"/></clipPath>
+    <clipPath id="clip-hat-brim"><use href="#path-hat-brim"/></clipPath>
+    <clipPath id="clip-hat-band"><use href="#path-hat-band"/></clipPath>
+    <clipPath id="clip-cape"><use href="#path-cape"/></clipPath>
+    <clipPath id="clip-cape-lining"><use href="#path-cape-lining"/></clipPath>
+    <clipPath id="clip-left-arm"><use href="#path-left-arm"/></clipPath>
+    <clipPath id="clip-right-arm"><use href="#path-right-arm"/></clipPath>
+    <clipPath id="clip-wand"><use href="#path-wand"/></clipPath>
+    <clipPath id="clip-star"><use href="#path-star"/></clipPath>
+  </defs>
+
+  <rect width="720" height="720" fill="#fffaf1"/>
+
+  <g id="fills">
+    <g id="tail-fill" clip-path="url(#clip-tail)">
+      <rect x="30" y="210" width="260" height="280" fill="var(--fox-orange)"/>
+      <ellipse cx="117" cy="306" rx="80" ry="66" fill="#f49a3d" opacity="0.75"/>
+      <path d="M100 258 C128 316 159 383 222 446 L159 476 C89 431 58 357 89 287 Z" fill="var(--fox-light)"/>
+      <path d="M203 272 C244 332 241 415 201 456 C265 416 287 326 235 266 Z" fill="var(--fox-dark)" opacity="0.28"/>
+    </g>
+
+    <g id="cape-fill" clip-path="url(#clip-cape)">
+      <rect x="160" y="360" width="390" height="290" fill="var(--cape)"/>
+      <path d="M220 379 C288 425 428 426 491 382 L516 626 C450 586 410 579 360 609 C306 581 264 586 209 624 Z" fill="#193d82"/>
+      <circle cx="263" cy="493" r="86" fill="#3c6fd0" opacity="0.28"/>
+    </g>
+
+    <g id="cape-lining-fill" clip-path="url(#clip-cape-lining)">
+      <rect x="190" y="405" width="330" height="210" fill="var(--cape-lining)"/>
+      <path d="M236 421 C287 450 424 454 474 421 C450 496 414 555 360 589 C306 555 268 496 236 421 Z" fill="#b42d55" opacity="0.45"/>
+    </g>
+
+    <g id="body-fill" clip-path="url(#clip-body)">
+      <rect x="235" y="315" width="285" height="300" fill="var(--fox-orange)"/>
+      <ellipse cx="396" cy="408" rx="120" ry="98" fill="#f2933d" opacity="0.55"/>
+    </g>
+
+    <g id="belly-fill" clip-path="url(#clip-belly)">
+      <rect x="285" y="380" width="160" height="200" fill="var(--fox-light)"/>
+      <ellipse cx="365" cy="500" rx="60" ry="82" fill="#ffe2b8"/>
+    </g>
+
+    <g id="head-fill" clip-path="url(#clip-head)">
+      <rect x="195" y="92" width="300" height="270" fill="var(--fox-orange)"/>
+      <ellipse cx="327" cy="220" rx="132" ry="112" fill="#f2933d" opacity="0.55"/>
+      <path d="M421 169 C479 221 467 310 396 342 C470 326 513 242 469 174 Z" fill="var(--fox-dark)" opacity="0.25"/>
+    </g>
+
+    <g id="face-mask-fill" clip-path="url(#clip-face-mask)">
+      <rect x="240" y="180" width="220" height="160" fill="var(--fox-light)"/>
+      <ellipse cx="353" cy="276" rx="80" ry="54" fill="#ffe0b2"/>
+    </g>
+
+    <g id="ears-fill">
+      <g clip-path="url(#clip-left-ear)"><rect x="220" y="38" width="85" height="160" fill="var(--fox-orange)"/></g>
+      <g clip-path="url(#clip-right-ear)"><rect x="365" y="70" width="130" height="130" fill="var(--fox-orange)"/></g>
+      <g clip-path="url(#clip-left-inner-ear)"><rect x="240" y="70" width="50" height="100" fill="#f6a0a0"/></g>
+      <g clip-path="url(#clip-right-inner-ear)"><rect x="395" y="88" width="85" height="90" fill="#f6a0a0"/></g>
+    </g>
+
+    <g id="hat-fill">
+      <g clip-path="url(#clip-hat-crown)">
+        <rect x="285" y="25" width="165" height="145" fill="var(--hat)"/>
+        <circle cx="382" cy="76" r="55" fill="#7040ad" opacity="0.45"/>
+      </g>
+      <g clip-path="url(#clip-hat-brim)">
+        <rect x="228" y="124" width="260" height="95" fill="#3d2064"/>
+        <ellipse cx="365" cy="164" rx="116" ry="32" fill="#5b3192" opacity="0.55"/>
+      </g>
+      <g clip-path="url(#clip-hat-band)">
+        <rect x="300" y="98" width="140" height="65" fill="var(--hat-band)"/>
+        <path d="M323 103 C355 117 392 120 426 112 L423 131 C388 140 351 134 316 118 Z" fill="#ffe07a"/>
+      </g>
+    </g>
+
+    <g id="arms-fill">
+      <g clip-path="url(#clip-left-arm)"><rect x="135" y="390" width="140" height="130" fill="var(--fox-orange)"/></g>
+      <g clip-path="url(#clip-right-arm)"><rect x="460" y="370" width="145" height="130" fill="var(--fox-orange)"/></g>
+    </g>
+
+    <g id="wand-fill" clip-path="url(#clip-wand)">
+      <rect x="490" y="350" width="110" height="175" fill="var(--wand)"/>
+      <path d="M575 359 L592 366 L521 515 L508 508 Z" fill="#66504a"/>
+    </g>
+
+    <g id="star-fill" clip-path="url(#clip-star)">
+      <rect x="540" y="305" width="115" height="110" fill="var(--spark)"/>
+      <circle cx="596" cy="362" r="32" fill="#fff39a" opacity="0.75"/>
+    </g>
+  </g>
+
+  <g id="details">
+    <circle cx="307" cy="238" r="9" fill="#2b1b17"/>
+    <circle cx="399" cy="238" r="9" fill="#2b1b17"/>
+    <path d="M343 267 C349 273 359 273 365 267 C361 284 348 284 343 267 Z" fill="#2b1b17"/>
+    <path class="thin" d="M321 292 C338 307 369 307 387 292"/>
+    <path class="thin" d="M280 270 C251 261 231 260 209 267"/>
+    <path class="thin" d="M281 288 C251 290 229 299 209 314"/>
+    <path class="thin" d="M426 270 C455 261 476 260 497 267"/>
+    <path class="thin" d="M425 288 C455 290 477 299 497 314"/>
+    <circle cx="592" cy="362" r="56" fill="none" stroke="#f8d84a" stroke-width="3" opacity="0.45"/>
+    <path class="thin" d="M540 323 L520 301"/>
+    <path class="thin" d="M648 322 L670 301"/>
+    <path class="thin" d="M647 399 L675 417"/>
+    <path class="thin" d="M548 400 L521 421"/>
+  </g>
+
+  <g id="strokes">
+    <use href="#path-tail" class="outline"/>
+    <use href="#path-cape" class="outline"/>
+    <use href="#path-cape-lining" class="detail"/>
+    <use href="#path-body" class="outline"/>
+    <use href="#path-belly" class="detail"/>
+    <use href="#path-left-arm" class="outline"/>
+    <use href="#path-right-arm" class="outline"/>
+    <use href="#path-head" class="outline"/>
+    <use href="#path-face-mask" class="detail"/>
+    <use href="#path-left-ear" class="outline"/>
+    <use href="#path-right-ear" class="outline"/>
+    <use href="#path-left-inner-ear" class="detail"/>
+    <use href="#path-right-inner-ear" class="detail"/>
+    <use href="#path-hat-crown" class="outline"/>
+    <use href="#path-hat-brim" class="outline"/>
+    <use href="#path-hat-band" class="detail"/>
+    <use href="#path-wand" class="outline"/>
+    <use href="#path-star" class="outline"/>
+  </g>
+</svg>

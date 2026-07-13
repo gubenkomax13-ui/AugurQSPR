@@ -1,0 +1,10 @@
+-r requirements-local.txt
+morfeus-ml==0.7.2
+dscribe==2.1.1
+pysr==0.19.4
+xtb==22.1
+
+# External runtime requirements:
+# - PaDEL/padelpy requires Java.
+# - PySR requires a working Julia installation.
+# - xTB may require platform-specific native libraries.

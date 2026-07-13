@@ -3,7 +3,7 @@
 """
 spectra_core.py
 
-Ядро работы со спектральной базой GenQSPR:
+Ядро работы со спектральной базой Augur QSPR:
 - подготовка веществ из SMILES;
 - spectra_bank;
 - поиск IR-спектров в NIST Chemistry WebBook;
@@ -65,8 +65,8 @@ def spectra_get_http_timeout(default=20):
 # ------------------------------------------------------------------
 # Папки spectra_bank
 # Важно: пути считаются от папки проекта, а не от os.getcwd().
-# Если файл лежит в E:\QSPR Forge\modules\spectra_core.py,
-# банк будет здесь: E:\QSPR Forge\spectra_bank
+# Если файл лежит в <project_root>\modules\spectra_core.py,
+# банк будет здесь: <project_root>\spectra_bank
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT_DIR = os.path.dirname(MODULE_DIR)
@@ -1147,10 +1147,15 @@ def spectra_prepare_compounds_from_df(input_df, smiles_col):
 
     for idx, row in input_df.iterrows():
         input_smiles = str(row.get(smiles_col, "")).strip()
+        record_id = str(row.get("record_id", "")).strip()
+        if not record_id:
+            record_id = f"record_{int(idx) + 1:06d}"
 
         base_row = {
+            "record_id": record_id,
             "row_index": idx,
-            "compound_id": row.get("compound_id", ""),
+            "source_row": row.get("source_row", idx),
+            "compound_id": row.get("compound_id", record_id),
             "input_smiles": input_smiles,
             "canonical_smiles": "",
             "inchikey": "",
@@ -6443,6 +6448,8 @@ def spectral_descriptor_cache_settings(
 
 def spectral_descriptor_cache_required_cols():
     return [
+        "record_id",
+        "source_row",
         "spectrum_id",
         "inchikey",
         "canonical_smiles",
@@ -6705,7 +6712,9 @@ def spectral_find_cached_descriptor_row(spectrum_record, descriptor_settings=Non
 
 def spectral_make_descriptor_row_metadata(compound, spectrum_record, processed_file):
     return {
+        "record_id": compound.get("record_id", ""),
         "row_index": compound.get("row_index", ""),
+        "source_row": compound.get("source_row", compound.get("row_index", "")),
         "compound_id": compound.get("compound_id", ""),
         "name": compound.get("name", ""),
         "input_smiles": compound.get("input_smiles", ""),
@@ -6845,7 +6854,7 @@ def spectral_prepare_descriptor_cache_row(row, descriptor_settings, spectrum_typ
     cache_row.update(descriptor_settings or {})
     cache_row["descriptor_cached_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    drop_cols = ["row_index", "compound_id", "name", "input_smiles"]
+    drop_cols = ["record_id", "row_index", "source_row", "compound_id", "name", "input_smiles"]
 
     for col in drop_cols:
         cache_row.pop(col, None)

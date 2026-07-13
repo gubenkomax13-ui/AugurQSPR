@@ -3,7 +3,7 @@
 """
 descriptor_bank_core.py
 
-Простой CSV-банк дескрипторов для QSPR Forge.
+Простой CSV-банк дескрипторов для Augur QSPR.
 
 Версия 1:
 - локальный CSV;
@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 
 from rdkit import Chem
+
+from modules.qspr_core import qspr_rename_duplicate_columns
 
 
 DESCRIPTOR_BANK_DIR = "descriptor_bank"
@@ -101,7 +103,7 @@ def descriptor_bank_save(bank_df, bank_file=DESCRIPTOR_BANK_FILE):
     os.makedirs(os.path.dirname(bank_file), exist_ok=True)
 
     bank_df = bank_df.copy()
-    bank_df = bank_df.loc[:, ~bank_df.columns.duplicated()].copy()
+    bank_df = qspr_rename_duplicate_columns(bank_df)
 
     bank_df.to_csv(bank_file, index=False)
 
@@ -311,7 +313,7 @@ def descriptor_bank_append(
         return descriptor_bank_load(bank_file)
 
     work = desc_df.copy()
-    work = work.loc[:, ~work.columns.duplicated()].copy()
+    work = qspr_rename_duplicate_columns(work)
 
     status_col = None
     source_name = str(descriptor_source).lower().strip()
@@ -325,7 +327,7 @@ def descriptor_bank_append(
 
     if status_col is not None:
         work = work[
-            work[status_col].astype(str).str.lower().str.strip() == "ok"
+            work[status_col].astype(str).str.lower().str.strip().isin(["ok", "complete"])
         ].copy()
 
         if work.empty:
@@ -390,7 +392,7 @@ def descriptor_bank_append(
     bank = descriptor_bank_load(bank_file)
 
     bank = pd.concat([bank, work], ignore_index=True)
-    bank = bank.loc[:, ~bank.columns.duplicated()].copy()
+    bank = qspr_rename_duplicate_columns(bank)
 
     bank = bank.drop_duplicates(
         subset=[

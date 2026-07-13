@@ -28,8 +28,21 @@ from modules.module_explain_ui import render_module_explanation
 def _source_payload(context, model_name):
     session = st.session_state
     sources = {}
+    current_checker = context.get("qspr_validation_result_is_current")
 
-    kfold = session.get("kfold_results_dict", {}).get(model_name)
+    def current_result(store_name, kind):
+        result = session.get(store_name, {}).get(model_name)
+        if not isinstance(result, dict):
+            return None
+        if callable(current_checker):
+            try:
+                if not current_checker(model_name, result, kind):
+                    return None
+            except Exception:
+                return None
+        return result
+
+    kfold = current_result("kfold_results_dict", "kfold")
     if isinstance(kfold, dict):
         sources["kfold"] = {
             "label": t("error_analysis.source_kfold", k=kfold.get("k", "")),
@@ -41,7 +54,7 @@ def _source_payload(context, model_name):
             )),
         }
 
-    loo = session.get("loo_results_dict", {}).get(model_name)
+    loo = current_result("loo_results_dict", "loo")
     if isinstance(loo, dict):
         sources["loo"] = {
             "label": t("error_analysis.source_loo"),
@@ -53,7 +66,7 @@ def _source_payload(context, model_name):
             )),
         }
 
-    holdout = session.get("holdout_results_dict", {}).get(model_name)
+    holdout = current_result("holdout_results_dict", "holdout")
     if isinstance(holdout, dict):
         sources["holdout"] = {
             "label": t("error_analysis.source_holdout"),

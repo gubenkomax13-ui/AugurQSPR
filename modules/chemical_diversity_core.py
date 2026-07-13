@@ -13,12 +13,14 @@ import pandas as pd
 try:
     from rdkit import Chem, DataStructs
     from rdkit.Chem import AllChem, rdFingerprintGenerator
+    from rdkit.Chem.MolStandardize import rdMolStandardize
     from rdkit.ML.Cluster import Butina
 except Exception:  # pragma: no cover - depends on optional local RDKit install
     Chem = None
     DataStructs = None
     AllChem = None
     rdFingerprintGenerator = None
+    rdMolStandardize = None
     Butina = None
 
 try:
@@ -41,11 +43,38 @@ except Exception:  # pragma: no cover - SAOD module is optional for this diagnos
     saod2_classify_alkane = None
 
 
+CHEMICAL_SPACE_ALGORITHM_VERSION = "chemical_space_1.3"
+
+
+def coerce_boolean_series(values, default: bool = False) -> pd.Series:
+    """Coerce bool-like values without treating non-empty strings as True."""
+    series = values if isinstance(values, pd.Series) else pd.Series(values)
+    true_values = {True, 1, "1", "true", "True", "TRUE", "yes", "Yes", "YES", "y", "Y"}
+    false_values = {False, 0, "0", "false", "False", "FALSE", "no", "No", "NO", "n", "N", ""}
+
+    def coerce_one(value):
+        try:
+            if pd.isna(value):
+                return bool(default)
+        except (TypeError, ValueError):
+            pass
+        if value in true_values:
+            return True
+        if value in false_values:
+            return False
+        return bool(default)
+
+    return series.map(coerce_one).astype(bool)
+
+
 @dataclass
 class _MoleculeRecord:
     row_index: int
     label: str
     smiles: str
+    original_smiles: str
+    fingerprint_smiles: str
+    fingerprint_structure_source: str
     mol: object
     fingerprint: object
 
@@ -59,6 +88,43 @@ def _safe_text(value) -> str:
     except (TypeError, ValueError):
         pass
     return str(value).strip()
+
+
+def _invalid_structure_row(row, row_index, smiles, reason_code):
+    reason_labels = {
+        "empty_smiles": "пустой SMILES",
+        "invalid_smiles": "невалидный SMILES",
+        "mixture": "смесь",
+    }
+    return {
+        "record_id": row.get("record_id", ""),
+        "compound_id": row.get("compound_id", ""),
+        "source_row": row.get("source_row", int(row_index)),
+        "row_index": int(row_index),
+        "SMILES": smiles,
+        "status_code": "excluded",
+        "status_label": "исключено",
+        "reason_code": reason_code,
+        "reason": reason_labels.get(reason_code, reason_code),
+    }
+
+
+def _standardized_parent_mol(mol):
+    if mol is None or rdMolStandardize is None:
+        return mol, "original_smiles"
+    try:
+        mol = rdMolStandardize.LargestFragmentChooser().choose(mol)
+    except Exception:
+        pass
+    try:
+        mol = rdMolStandardize.Cleanup(mol)
+    except Exception:
+        pass
+    try:
+        mol = rdMolStandardize.Uncharger().uncharge(mol)
+    except Exception:
+        pass
+    return mol, "standardized_parent"
 
 
 def _morgan_fingerprint(mol, radius: int = 2, n_bits: int = 2048):
@@ -91,6 +157,7 @@ def _build_records(
     label_col: Optional[str],
     radius: int,
     n_bits: int,
+    fingerprint_structure_source: str = "standardized_parent",
 ) -> tuple[list[_MoleculeRecord], pd.DataFrame]:
     records: list[_MoleculeRecord] = []
     invalid_rows = []
@@ -101,21 +168,30 @@ def _build_records(
     for row_index, row in data.iterrows():
         smiles = _safe_text(row.get(smiles_col, ""))
         if not smiles:
-            invalid_rows.append({
-                "row_index": int(row_index),
-                "SMILES": smiles,
-                "reason": "empty_smiles",
-            })
+            invalid_rows.append(_invalid_structure_row(row, row_index, smiles, "empty_smiles"))
+            continue
+
+        use_parent = str(fingerprint_structure_source or "standardized_parent") == "standardized_parent"
+        if "." in smiles and not use_parent:
+            invalid_rows.append(_invalid_structure_row(row, row_index, smiles, "mixture"))
             continue
 
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
-            invalid_rows.append({
-                "row_index": int(row_index),
-                "SMILES": smiles,
-                "reason": "invalid_smiles",
-            })
+            invalid_rows.append(_invalid_structure_row(row, row_index, smiles, "invalid_smiles"))
             continue
+        fingerprint_mol = mol
+        structure_source_used = "original_smiles"
+        if use_parent:
+            fingerprint_mol, structure_source_used = _standardized_parent_mol(mol)
+            if fingerprint_mol is None:
+                invalid_rows.append(_invalid_structure_row(row, row_index, smiles, "invalid_smiles"))
+                continue
+        fingerprint_smiles = Chem.MolToSmiles(
+            fingerprint_mol,
+            canonical=True,
+            isomericSmiles=True,
+        )
 
         label = _safe_text(row.get(label_col, "")) if label_col and label_col in data.columns else ""
         if not label:
@@ -124,9 +200,12 @@ def _build_records(
         records.append(_MoleculeRecord(
             row_index=int(row_index),
             label=label,
-            smiles=smiles,
-            mol=mol,
-            fingerprint=_morgan_fingerprint(mol, radius=radius, n_bits=n_bits),
+            smiles=fingerprint_smiles,
+            original_smiles=smiles,
+            fingerprint_smiles=fingerprint_smiles,
+            fingerprint_structure_source=structure_source_used,
+            mol=fingerprint_mol,
+            fingerprint=_morgan_fingerprint(fingerprint_mol, radius=radius, n_bits=n_bits),
         ))
 
     return records, pd.DataFrame(invalid_rows)
@@ -196,6 +275,22 @@ def _pairwise_sample(records: list[_MoleculeRecord], top_n: int, sample_pairs: i
             nearest_index[j] = i
 
     return np.asarray(sims, dtype=float), top_heap, max_similarity, nearest_index
+
+
+def _bootstrap_mean_interval(values, random_state: int, n_bootstrap: int = 500, alpha: float = 0.05):
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if len(values) < 2:
+        return np.nan, np.nan
+    rng = np.random.default_rng(int(random_state))
+    means = []
+    n = len(values)
+    for _ in range(int(n_bootstrap)):
+        sample = values[rng.integers(0, n, size=n)]
+        means.append(float(np.mean(sample)))
+    lower = float(np.quantile(means, alpha / 2.0))
+    upper = float(np.quantile(means, 1.0 - alpha / 2.0))
+    return lower, upper
 
 
 def _top_pairs_table(records: list[_MoleculeRecord], top_heap) -> pd.DataFrame:
@@ -380,18 +475,24 @@ def _similarity_matrix_for_records(records: list[_MoleculeRecord]) -> np.ndarray
     return matrix
 
 
+CSA_DENSE_LABEL = "DENSE"
+CSA_MODERATE_LABEL = "MODERATE"
+CSA_SPARSE_LABEL = "SPARSE"
+CSA_ISOLATED_LABEL = "ISOLATED"
+
+
 def classify_chemical_space_score(score: float) -> str:
     try:
         score = float(score)
     except (TypeError, ValueError):
-        return "Singleton / outlier"
+        return CSA_ISOLATED_LABEL
     if score >= 0.85:
-        return "Dense area"
+        return CSA_DENSE_LABEL
     if score >= 0.70:
-        return "Moderate area"
+        return CSA_MODERATE_LABEL
     if score >= 0.50:
-        return "Sparse area"
-    return "Singleton / outlier"
+        return CSA_SPARSE_LABEL
+    return CSA_ISOLATED_LABEL
 
 
 def _compute_projection(distance_matrix: np.ndarray, method: str, random_state: int) -> tuple[np.ndarray, str]:
@@ -399,7 +500,18 @@ def _compute_projection(distance_matrix: np.ndarray, method: str, random_state: 
     if n == 1:
         return np.zeros((1, 2), dtype=float), "single-point"
 
-    method_normalized = str(method or "auto").strip().upper()
+    method_aliases = {
+        "AUTO": "AUTO",
+        "UMAP": "UMAP",
+        "MDS": "MDS",
+        "TSNE": "TSNE",
+        "T-SNE": "TSNE",
+        "T_SNE": "TSNE",
+    }
+    method_normalized = method_aliases.get(
+        str(method or "AUTO").strip().upper(),
+        "AUTO",
+    )
     if method_normalized in {"AUTO", "UMAP"}:
         try:
             import umap  # type: ignore
@@ -417,7 +529,7 @@ def _compute_projection(distance_matrix: np.ndarray, method: str, random_state: 
             if method_normalized == "UMAP":
                 method_normalized = "MDS"
 
-    if method_normalized in {"TSNE", "T-SNE"} and TSNE is not None and n >= 3:
+    if method_normalized == "TSNE" and TSNE is not None and n >= 3:
         perplexity = max(1, min(30, (n - 1) // 3))
         coords = TSNE(
             n_components=2,
@@ -427,7 +539,7 @@ def _compute_projection(distance_matrix: np.ndarray, method: str, random_state: 
             random_state=int(random_state),
             learning_rate="auto",
         ).fit_transform(distance_matrix)
-        return np.asarray(coords, dtype=float), "t-SNE"
+        return np.asarray(coords, dtype=float), "TSNE"
 
     if MDS is not None:
         try:
@@ -451,6 +563,49 @@ def _compute_projection(distance_matrix: np.ndarray, method: str, random_state: 
         return np.asarray(coords, dtype=float), "PCA fallback"
 
     return np.column_stack([np.arange(n, dtype=float), np.zeros(n, dtype=float)]), "linear fallback"
+
+
+def _projection_quality(distance_matrix: np.ndarray, coords: np.ndarray, method: str) -> dict:
+    quality = {
+        "projection_method": str(method),
+        "trustworthiness": np.nan,
+        "distance_correlation": np.nan,
+        "stress": np.nan,
+    }
+    try:
+        n = int(distance_matrix.shape[0])
+        if n < 3:
+            return quality
+        projected = np.sqrt(
+            np.sum((coords[:, None, :] - coords[None, :, :]) ** 2, axis=2)
+        )
+        tri = np.triu_indices(n, k=1)
+        original_values = np.asarray(distance_matrix[tri], dtype=float)
+        projected_values = np.asarray(projected[tri], dtype=float)
+        finite = np.isfinite(original_values) & np.isfinite(projected_values)
+        if finite.sum() >= 2:
+            quality["distance_correlation"] = float(
+                np.corrcoef(original_values[finite], projected_values[finite])[0, 1]
+            )
+            numerator = float(np.sum((original_values[finite] - projected_values[finite]) ** 2))
+            denominator = float(np.sum(original_values[finite] ** 2))
+            quality["stress"] = float(np.sqrt(numerator / denominator)) if denominator > 0 else np.nan
+        try:
+            from sklearn.manifold import trustworthiness
+
+            quality["trustworthiness"] = float(
+                trustworthiness(
+                    distance_matrix,
+                    coords,
+                    n_neighbors=max(1, min(5, n - 1)),
+                    metric="precomputed",
+                )
+            )
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return quality
 
 
 def build_similarity_edges(
@@ -548,7 +703,7 @@ def _groups_table_from_nodes(
             "members_preview": "; ".join(group["name"].astype(str).head(8).tolist()),
             "average_internal_similarity": round(_internal_similarity(similarity_matrix, indices), 4)
             if group_size > 1 else np.nan,
-            "singleton_count_in_group": int(group["is_singleton_selected"].astype(bool).sum()),
+            "singleton_count_in_group": int(coerce_boolean_series(group["is_singleton_selected"]).sum()),
             "notes": "small isolated group" if group_size <= int(small_group_limit) else "",
         })
     if not rows:
@@ -559,7 +714,7 @@ def _groups_table_from_nodes(
 def _singletons_table_from_nodes(nodes: pd.DataFrame, method: str) -> pd.DataFrame:
     if not isinstance(nodes, pd.DataFrame) or nodes.empty:
         return pd.DataFrame()
-    singles = nodes[nodes["is_singleton_selected"].astype(bool)].copy()
+    singles = nodes[coerce_boolean_series(nodes["is_singleton_selected"])].copy()
     if singles.empty:
         return pd.DataFrame(columns=[
             "molecule_name",
@@ -689,9 +844,9 @@ def _pattern_interpretation(group_df: pd.DataFrame) -> str:
         return "Точные структурные паттерны не выделены: нет распознанных ациклических алканов."
     top = group_df.sort_values("group_size", ascending=False).head(3)
     top_names = ", ".join(top["exact_pattern"].astype(str).tolist())
-    weak = group_df[group_df["rare_group"].astype(bool)].sort_values("group_size").head(3)
+    weak = group_df[coerce_boolean_series(group_df["rare_group"])].sort_values("group_size").head(3)
     weak_names = ", ".join(weak["exact_pattern"].astype(str).tolist())
-    unclassified = int(group_df["unclassified_group"].astype(bool).sum())
+    unclassified = int(coerce_boolean_series(group_df["unclassified_group"]).sum())
     text = f"Наиболее крупные точные паттерны представлены группами: {top_names}."
     if weak_names:
         text += f" Слабопредставленные паттерны: {weak_names}."
@@ -767,17 +922,17 @@ def _exact_pattern_hierarchy(
     groups = pd.DataFrame(group_rows).sort_values(["group_size", "exact_pattern"], ascending=[False, True]).reset_index(drop=True)
 
     rare_groups = groups[
-        groups["rare_group"].astype(bool)
-        | groups["singleton_group"].astype(bool)
-        | groups["unclassified_group"].astype(bool)
+        coerce_boolean_series(groups["rare_group"])
+        | coerce_boolean_series(groups["singleton_group"])
+        | coerce_boolean_series(groups["unclassified_group"])
     ].copy()
     if not rare_groups.empty:
         rare_groups["reason_flag"] = np.select(
             [
-                rare_groups["unclassified_group"].astype(bool),
-                rare_groups["singleton_group"].astype(bool),
-                rare_groups["small_group"].astype(bool),
-                rare_groups["rare_group"].astype(bool),
+                coerce_boolean_series(rare_groups["unclassified_group"]),
+                coerce_boolean_series(rare_groups["singleton_group"]),
+                coerce_boolean_series(rare_groups["small_group"]),
+                coerce_boolean_series(rare_groups["rare_group"]),
             ],
             ["unclassified", "singleton", "small", "rare"],
             default="rare",
@@ -790,6 +945,40 @@ def _exact_pattern_hierarchy(
         "members": members,
         "interpretation": _pattern_interpretation(groups),
     }
+
+
+def _normalize_community_method(method: str) -> str:
+    value = str(method or "").strip().lower()
+    aliases = {
+        "connected_components": "Connected components",
+        "connected components": "Connected components",
+        "component": "Connected components",
+        "butina": "Butina clustering",
+        "butina_clustering": "Butina clustering",
+        "butina clustering": "Butina clustering",
+        "dbscan": "DBSCAN",
+        "similarity_network": "Similarity network",
+        "similarity network": "Similarity network",
+        "singletons_only": "Singletons only",
+        "singletons only": "Singletons only",
+    }
+    return aliases.get(value, "Connected components")
+
+
+def _normalize_singleton_criterion(criterion: str) -> str:
+    value = str(criterion or "").strip().lower()
+    aliases = {
+        "combined": "combined",
+        "component_size_1": "component size == 1",
+        "component size == 1": "component size == 1",
+        "no_neighbors": "no neighbors above threshold",
+        "no neighbors above threshold": "no neighbors above threshold",
+        "cluster_size_lte_n": "cluster size <= N",
+        "cluster size <= n": "cluster size <= N",
+        "dbscan_noise": "DBSCAN noise",
+        "dbscan noise": "DBSCAN noise",
+    }
+    return aliases.get(value, "combined")
 
 
 def analyze_structural_communities(
@@ -812,7 +1001,8 @@ def analyze_structural_communities(
     nodes = map_df.reset_index(drop=True).copy()
     n = len(nodes)
     nodes["node_index"] = np.arange(n)
-    method = str(method or "Connected components")
+    method = _normalize_community_method(method)
+    singleton_criterion = _normalize_singleton_criterion(singleton_criterion)
     threshold = float(threshold)
     edges = build_similarity_edges(similarity_matrix, threshold=threshold, top_k=int(top_k), max_edges=int(max_edges))
     degree = np.zeros(n, dtype=int)
@@ -866,34 +1056,34 @@ def analyze_structural_communities(
     nodes["group_size"] = nodes["group_id"].map(sizes).fillna(1).astype(int)
     nodes["is_singleton_graph"] = nodes["group_size"] == 1
     nodes["is_singleton_butina"] = (nodes["group_size"] == 1) if method == "Butina clustering" else False
-    nodes["is_noise_dbscan"] = nodes["is_noise"].astype(bool)
+    nodes["is_noise_dbscan"] = coerce_boolean_series(nodes["is_noise"])
     nodes["is_small_isolated_group"] = nodes["group_size"] <= int(min_cluster_size)
 
     if singleton_criterion == "component size == 1":
-        selected_singleton = nodes["is_singleton_graph"].astype(bool)
+        selected_singleton = coerce_boolean_series(nodes["is_singleton_graph"])
         reason = "component size == 1"
     elif singleton_criterion == "no neighbors above threshold":
-        selected_singleton = nodes["has_no_close_neighbors"].astype(bool)
+        selected_singleton = coerce_boolean_series(nodes["has_no_close_neighbors"])
         reason = "no neighbors above threshold"
     elif singleton_criterion == "cluster size <= N":
-        selected_singleton = nodes["is_small_isolated_group"].astype(bool)
+        selected_singleton = coerce_boolean_series(nodes["is_small_isolated_group"])
         reason = f"cluster size <= {int(min_cluster_size)}"
     elif singleton_criterion == "DBSCAN noise":
-        selected_singleton = nodes["is_noise_dbscan"].astype(bool)
+        selected_singleton = coerce_boolean_series(nodes["is_noise_dbscan"])
         reason = "DBSCAN noise"
     else:
         selected_singleton = (
-            nodes["has_no_close_neighbors"].astype(bool)
-            | nodes["is_singleton_graph"].astype(bool)
-            | nodes["is_singleton_butina"].astype(bool)
-            | nodes["is_noise_dbscan"].astype(bool)
+            coerce_boolean_series(nodes["has_no_close_neighbors"])
+            | coerce_boolean_series(nodes["is_singleton_graph"])
+            | coerce_boolean_series(nodes["is_singleton_butina"])
+            | coerce_boolean_series(nodes["is_noise_dbscan"])
         )
         reason = "combined criterion"
 
     nodes["is_singleton_selected"] = selected_singleton
     nodes["singleton_reason"] = np.where(selected_singleton, reason, "")
     if method == "Singletons only":
-        nodes = nodes[nodes["is_singleton_selected"].astype(bool)].copy()
+        nodes = nodes[coerce_boolean_series(nodes["is_singleton_selected"])].copy()
         visible = set(nodes["node_index"].astype(int).tolist())
         if isinstance(edges, pd.DataFrame) and not edges.empty:
             edges = edges[
@@ -911,14 +1101,14 @@ def analyze_structural_communities(
         "method": method,
         "n_nodes": int(len(nodes)),
         "n_groups": n_groups,
-        "n_singletons": int(nodes["is_singleton_selected"].astype(bool).sum()) if not nodes.empty else 0,
+        "n_singletons": int(coerce_boolean_series(nodes["is_singleton_selected"]).sum()) if not nodes.empty else 0,
         "n_small_groups": int(len(small_groups)) if isinstance(small_groups, pd.DataFrame) else 0,
         "largest_group_size": largest_group_size,
         "largest_group_fraction": float(largest_group_size / max(len(nodes), 1)),
-        "noise_points": int(nodes["is_noise"].astype(bool).sum()) if not nodes.empty else 0,
+        "noise_points": int(coerce_boolean_series(nodes["is_noise"]).sum()) if not nodes.empty else 0,
         "mean_degree": float(np.mean(nodes["degree"])) if not nodes.empty else np.nan,
         "mean_cluster_size": float(np.mean(nodes["group_size"])) if not nodes.empty else np.nan,
-        "no_close_neighbors": int(nodes["has_no_close_neighbors"].astype(bool).sum()) if not nodes.empty else 0,
+        "no_close_neighbors": int(coerce_boolean_series(nodes["has_no_close_neighbors"]).sum()) if not nodes.empty else 0,
     }
     summary["interpretation"] = _community_interpretation(summary, method)
     return {
@@ -1036,6 +1226,8 @@ def _final_chemical_space(
             "nearest_neighbors": pd.DataFrame(),
             "duplicates": pd.DataFrame(),
             "projection_method": "",
+            "projection_quality": {},
+            "random_seed": int(random_state),
             "n_components": 0,
             "largest_component_size": 0,
         }
@@ -1043,6 +1235,7 @@ def _final_chemical_space(
     distance_matrix = np.clip(1.0 - np.asarray(similarity_matrix, dtype=float), 0.0, 1.0)
     np.fill_diagonal(distance_matrix, 0.0)
     coords, actual_method = _compute_projection(distance_matrix, projection_method, int(random_state))
+    projection_quality = _projection_quality(distance_matrix, coords, actual_method)
     edges = build_similarity_edges(
         similarity_matrix,
         threshold=float(edge_threshold),
@@ -1087,19 +1280,21 @@ def _final_chemical_space(
         item = {
             "row": record.row_index + 1,
             "name": record.label,
-            "SMILES": record.smiles,
+            "SMILES": record.original_smiles,
+            "fingerprint_smiles": record.fingerprint_smiles,
+            "fingerprint_structure_source": record.fingerprint_structure_source,
             "canonical_smiles": canonical[i],
             "csa_x": float(coords[i, 0]),
             "csa_y": float(coords[i, 1]),
             "nearest_neighbor": nearest_record.label if nearest_record else "",
-            "nearest_neighbor_smiles": nearest_record.smiles if nearest_record else "",
+            "nearest_neighbor_smiles": nearest_record.original_smiles if nearest_record else "",
             "nearest_neighbor_tanimoto": round(float(nearest_score[i]), 4) if np.isfinite(nearest_score[i]) else np.nan,
             "close_analog_count": int(close_counts[i]),
             "local_density": round(float(local_density[i]), 4) if np.isfinite(local_density[i]) else np.nan,
             "connected_component": int(components[i]),
             "csa_class": csa_class,
             "is_singleton": bool(close_counts[i] == 0),
-            "is_structural_outlier": bool(csa_class == "Singleton / outlier"),
+            "is_structural_outlier": bool(csa_class == CSA_ISOLATED_LABEL),
         }
         if target_col and target_col in data.columns:
             item["experimental_value"] = pd.to_numeric(
@@ -1109,7 +1304,8 @@ def _final_chemical_space(
         rows.append(item)
         nearest_rows.append({
             "molecule": record.label,
-            "SMILES": record.smiles,
+            "SMILES": record.original_smiles,
+            "fingerprint_smiles": record.fingerprint_smiles,
             "nearest_neighbor": item["nearest_neighbor"],
             "nearest_neighbor_smiles": item["nearest_neighbor_smiles"],
             "nearest_neighbor_tanimoto": item["nearest_neighbor_tanimoto"],
@@ -1126,6 +1322,8 @@ def _final_chemical_space(
         "similarity_matrix": similarity_matrix,
         "exact_patterns": exact_patterns,
         "projection_method": actual_method,
+        "projection_quality": projection_quality,
+        "random_seed": int(random_state),
         "n_components": int(n_components),
         "largest_component_size": int(largest_component_size),
     }
@@ -1174,6 +1372,15 @@ def _heatmap_payload(
         "smiles": [record.smiles for record in selected_records],
         "cluster_id": [cluster_by_row.get(record.row_index + 1, -1) for record in selected_records],
     })
+    if saod2_classify_alkane is not None:
+        exact_patterns = []
+        for record in selected_records:
+            try:
+                classification = saod2_classify_alkane(record.mol)
+                exact_patterns.append(str(classification.get("exact_pattern", "")))
+            except Exception:
+                exact_patterns.append("")
+        molecules["exact_pattern"] = exact_patterns
     return {
         "matrix": pd.DataFrame(matrix, index=labels, columns=labels),
         "molecules": molecules,
@@ -1248,6 +1455,29 @@ def _cluster_records(records: list[_MoleculeRecord], similarity_threshold: float
     )
 
 
+def _cluster_threshold_sensitivity(records: list[_MoleculeRecord], thresholds=None) -> pd.DataFrame:
+    if thresholds is None:
+        thresholds = [0.50, 0.60, 0.70, 0.80, 0.85, 0.90]
+    rows = []
+    for threshold in thresholds:
+        cluster_summary, _ = _cluster_records(records, float(threshold))
+        if cluster_summary.empty:
+            rows.append({
+                "tanimoto_threshold": float(threshold),
+                "n_clusters": 0,
+                "n_singletons": 0,
+                "largest_cluster_size": 0,
+            })
+            continue
+        rows.append({
+            "tanimoto_threshold": float(threshold),
+            "n_clusters": int(len(cluster_summary)),
+            "n_singletons": int((cluster_summary["n"] == 1).sum()),
+            "largest_cluster_size": int(cluster_summary["n"].max()),
+        })
+    return pd.DataFrame(rows)
+
+
 def _status_from_summary(summary: dict) -> tuple[str, str]:
     n = int(summary.get("valid_structures", 0) or 0)
     if n < 3:
@@ -1280,6 +1510,35 @@ def _status_from_summary(summary: dict) -> tuple[str, str]:
         reasons.append("есть почти дублирующиеся или очень близкие пары")
 
     return status, "; ".join(reasons) if reasons else "явных причин не выделено"
+
+
+def _status_code_from_status(status: str) -> str:
+    text = str(status or "").strip()
+    status_codes = {
+        "низкое разнообразие": "LOW_DIVERSITY",
+        "неоднородный датасет": "HETEROGENEOUS_DATASET",
+        "высокое разнообразие": "HIGH_DIVERSITY",
+        "умеренное разнообразие": "MODERATE_DIVERSITY",
+        "не рассчитано": "NOT_CALCULATED",
+        "недостаточно данных": "INSUFFICIENT_DATA",
+        "LOW_DIVERSITY": "LOW_DIVERSITY",
+        "HETEROGENEOUS_DATASET": "HETEROGENEOUS_DATASET",
+        "HIGH_DIVERSITY": "HIGH_DIVERSITY",
+        "MODERATE_DIVERSITY": "MODERATE_DIVERSITY",
+        "NOT_CALCULATED": "NOT_CALCULATED",
+        "INSUFFICIENT_DATA": "INSUFFICIENT_DATA",
+    }
+    if text in status_codes:
+        return status_codes[text]
+    if text in {"РЅРёР·РєРѕРµ СЂР°Р·РЅРѕРѕР±СЂР°Р·РёРµ", "LOW_DIVERSITY"}:
+        return "LOW_DIVERSITY"
+    if text in {"РЅРµРѕРґРЅРѕСЂРѕРґРЅС‹Р№ РґР°С‚Р°СЃРµС‚", "HETEROGENEOUS_DATASET"}:
+        return "HETEROGENEOUS_DATASET"
+    if text in {"РІС‹СЃРѕРєРѕРµ СЂР°Р·РЅРѕРѕР±СЂР°Р·РёРµ", "HIGH_DIVERSITY"}:
+        return "HIGH_DIVERSITY"
+    if text in {"СѓРјРµСЂРµРЅРЅРѕРµ СЂР°Р·РЅРѕРѕР±СЂР°Р·РёРµ", "MODERATE_DIVERSITY"}:
+        return "MODERATE_DIVERSITY"
+    return "NOT_CALCULATED"
 
 
 def _descriptor_space_diagnostics(
@@ -1338,6 +1597,7 @@ def analyze_chemical_diversity(
     unique_threshold: float = 0.30,
     cluster_similarity_threshold: float = 0.60,
     projection_method: str = "auto",
+    fingerprint_structure_source: str = "standardized_parent",
     map_edge_threshold: float = 0.75,
     map_edge_top_k: int = 5,
     max_full_molecules: int = 2000,
@@ -1361,6 +1621,7 @@ def analyze_chemical_diversity(
         label_col=label_col,
         radius=radius,
         n_bits=n_bits,
+        fingerprint_structure_source=fingerprint_structure_source,
     )
     n = len(records)
     total_pairs = n * (n - 1) // 2
@@ -1375,15 +1636,30 @@ def analyze_chemical_diversity(
         }
         status, reasons = _status_from_summary(summary)
         summary["status"] = status
+        summary["status_code"] = _status_code_from_status(status)
         summary["status_reasons"] = reasons
         return {
+            "status": "success",
+            "errors": [],
+            "warnings": [],
             "summary": summary,
+            "fingerprint_config": {
+                "structure_source": str(fingerprint_structure_source),
+                "fingerprint_type": "Morgan bit fingerprint",
+                "radius": int(radius),
+                "n_bits": int(n_bits),
+                "duplicate_threshold": float(duplicate_threshold),
+                "analogue_threshold": float(analogue_threshold),
+                "cluster_similarity_threshold": float(cluster_similarity_threshold),
+                "threshold_note": "Tanimoto thresholds depend on fingerprint settings and chemistry.",
+            },
             "invalid_structures": invalid_df,
             "similarity_histogram": pd.DataFrame(),
             "top_similar_pairs": pd.DataFrame(),
             "unique_molecules": pd.DataFrame(),
             "cluster_summary": pd.DataFrame(),
             "cluster_assignments": pd.DataFrame(),
+            "cluster_threshold_sensitivity": pd.DataFrame(),
             "fingerprint_pca": pd.DataFrame(),
             "similarity_heatmap": {"matrix": pd.DataFrame(), "molecules": pd.DataFrame(), "sampled": False},
             "duplicate_pairs": pd.DataFrame(),
@@ -1420,6 +1696,10 @@ def analyze_chemical_diversity(
 
     pairs_gt_dup = int(np.sum(sims > float(duplicate_threshold)))
     pairs_gt_analogue = int(np.sum(sims > float(analogue_threshold)))
+    if pairwise_mode == "sampled":
+        mean_ci_low, mean_ci_high = _bootstrap_mean_interval(sims, random_state=int(random_state))
+    else:
+        mean_ci_low, mean_ci_high = np.nan, np.nan
     if pairwise_mode == "sampled" and pair_sample_fraction > 0:
         pairs_gt_dup_est = int(round(pairs_gt_dup / pair_sample_fraction))
         pairs_gt_analogue_est = int(round(pairs_gt_analogue / pair_sample_fraction))
@@ -1466,6 +1746,10 @@ def analyze_chemical_diversity(
         "pairwise_mode": pairwise_mode,
         "total_pairs": int(total_pairs),
         "pairs_used": n_pairs_used,
+        "pair_sample_fraction": float(pair_sample_fraction),
+        "random_seed": int(random_state),
+        "mean_tanimoto_bootstrap_ci95_low": float(mean_ci_low) if np.isfinite(mean_ci_low) else np.nan,
+        "mean_tanimoto_bootstrap_ci95_high": float(mean_ci_high) if np.isfinite(mean_ci_high) else np.nan,
         "mean_tanimoto": float(np.mean(sims)) if len(sims) else np.nan,
         "median_tanimoto": float(np.median(sims)) if len(sims) else np.nan,
         "min_tanimoto": float(np.min(sims)) if len(sims) else np.nan,
@@ -1481,9 +1765,24 @@ def analyze_chemical_diversity(
         "singleton_clusters": singleton_clusters,
         "cluster_sampled": bool(cluster_sampled),
         "cluster_similarity_threshold": float(cluster_similarity_threshold),
+        "fingerprint_structure_source": str(fingerprint_structure_source),
+        "fingerprint_type": "Morgan bit fingerprint",
+        "fingerprint_radius": int(radius),
+        "fingerprint_bits": int(n_bits),
+        "tanimoto_threshold_note": "Thresholds are fingerprint-configuration dependent, not universal.",
+        "analogue_threshold": float(analogue_threshold),
+        "duplicate_threshold": float(duplicate_threshold),
+        "full_similarity_matrix_estimated_mb": float((n ** 2 * 8) / (1024 ** 2)),
+        "large_dataset_mode": bool(n > int(max_full_molecules)),
+        "large_dataset_note": (
+            "Final map uses a sampled subset to avoid full NxN matrix growth."
+            if n > int(max_full_molecules)
+            else "Final map uses the full valid set."
+        ),
     }
     status, reasons = _status_from_summary(summary)
     summary["status"] = status
+    summary["status_code"] = _status_code_from_status(status)
     summary["status_reasons"] = reasons
 
     if n <= int(max_full_molecules):
@@ -1516,10 +1815,10 @@ def analyze_chemical_diversity(
     final_classes = final_space.get("map", pd.DataFrame())
     if isinstance(final_classes, pd.DataFrame) and not final_classes.empty:
         class_counts = final_classes["csa_class"].value_counts()
-        summary["csa_dense_area"] = int(class_counts.get("Dense area", 0))
-        summary["csa_moderate_area"] = int(class_counts.get("Moderate area", 0))
-        summary["csa_sparse_area"] = int(class_counts.get("Sparse area", 0))
-        summary["csa_singleton_outlier"] = int(class_counts.get("Singleton / outlier", 0))
+        summary["csa_dense_area"] = int(class_counts.get(CSA_DENSE_LABEL, 0))
+        summary["csa_moderate_area"] = int(class_counts.get(CSA_MODERATE_LABEL, 0))
+        summary["csa_sparse_area"] = int(class_counts.get(CSA_SPARSE_LABEL, 0))
+        summary["csa_singleton_outlier"] = int(class_counts.get(CSA_ISOLATED_LABEL, 0))
         summary["csa_connected_components"] = int(final_space.get("n_components", 0) or 0)
         summary["csa_largest_component_size"] = int(final_space.get("largest_component_size", 0) or 0)
         summary["csa_exact_duplicates"] = int(
@@ -1537,6 +1836,20 @@ def analyze_chemical_diversity(
     })
 
     return {
+        "status": "success",
+        "errors": [],
+        "warnings": [],
+        "algorithm_version": CHEMICAL_SPACE_ALGORITHM_VERSION,
+        "fingerprint_config": {
+            "structure_source": str(fingerprint_structure_source),
+            "fingerprint_type": "Morgan bit fingerprint",
+            "radius": int(radius),
+            "n_bits": int(n_bits),
+            "duplicate_threshold": float(duplicate_threshold),
+            "analogue_threshold": float(analogue_threshold),
+            "cluster_similarity_threshold": float(cluster_similarity_threshold),
+            "threshold_note": "Tanimoto thresholds depend on fingerprint settings and chemistry.",
+        },
         "summary": summary,
         "invalid_structures": invalid_df,
         "similarity_histogram": hist_df,
@@ -1546,6 +1859,7 @@ def analyze_chemical_diversity(
         "unique_molecules": _unique_table(records, max_similarity, nearest_index, int(top_n_unique)),
         "cluster_summary": cluster_summary,
         "cluster_assignments": cluster_assignments,
+        "cluster_threshold_sensitivity": _cluster_threshold_sensitivity(cluster_records),
         "fingerprint_pca": _fingerprint_pca_map(
             records=records,
             cluster_assignments=cluster_assignments,

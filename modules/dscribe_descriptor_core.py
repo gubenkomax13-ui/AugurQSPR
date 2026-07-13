@@ -3,7 +3,7 @@
 """
 dscribe_descriptor_core.py
 
-DScribe-дескрипторы для QSPR Forge.
+DScribe-дескрипторы для Augur QSPR.
 
 Первая стабильная версия:
 - RDKit SMILES -> 3D conformer;
@@ -21,6 +21,8 @@ import pandas as pd
 
 from rdkit import Chem
 from rdkit.Chem import AllChem
+
+from modules.qspr_core import qspr_rename_duplicate_columns
 
 
 # ---------------------------------------------------------------------
@@ -294,7 +296,7 @@ def calculate_dscribe_descriptors_for_dataframe(
         raise ValueError(f"Колонка SMILES не найдена: {smiles_col}")
 
     work = df.copy()
-    work = work.loc[:, ~work.columns.duplicated()].copy()
+    work = qspr_rename_duplicate_columns(work)
 
     if max_molecules is not None:
         work = work.head(int(max_molecules)).copy()
@@ -330,7 +332,7 @@ def calculate_dscribe_descriptors_for_dataframe(
         rows.append(desc)
 
     out = pd.DataFrame(rows)
-    out = out.loc[:, ~out.columns.duplicated()].copy()
+    out = qspr_rename_duplicate_columns(out)
 
     return out
 

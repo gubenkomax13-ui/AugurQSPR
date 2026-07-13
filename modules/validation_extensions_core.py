@@ -16,6 +16,7 @@ from sklearn.model_selection import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 
 try:
     from rdkit import Chem
@@ -39,8 +40,8 @@ def _as_matrix(X):
     matrix = np.asarray(X, dtype=float)
     if matrix.ndim != 2:
         raise ValueError("X must be a two-dimensional matrix.")
-    if not np.isfinite(matrix).all():
-        raise ValueError("X contains NaN or infinite values.")
+    if np.isinf(matrix).any():
+        raise ValueError("X contains infinite values.")
     return matrix
 
 
@@ -67,9 +68,11 @@ def _make_pipeline(model_name, n_samples, n_features, params=None, scale=True):
         n_features=int(n_features),
         params=params,
     )
+    steps = [("imputer", SimpleImputer(strategy="median"))]
     if scale:
-        return Pipeline([("scale", StandardScaler()), ("model", model)])
-    return Pipeline([("model", model)])
+        steps.append(("scale", StandardScaler()))
+    steps.append(("model", model))
+    return Pipeline(steps)
 
 
 def _prediction_rows(

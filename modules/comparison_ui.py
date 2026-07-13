@@ -33,7 +33,7 @@ def render_model_comparison_section(context):
                 all_models_for_compare.append(_m)
 
     try:
-        online_light_mode = bool(qspr_is_online_streamlit_version())
+        online_light_mode = bool(qspr_is_online_mode())
     except Exception:
         try:
             online_light_mode = bool(qspr_is_streamlit_cloud_runtime())

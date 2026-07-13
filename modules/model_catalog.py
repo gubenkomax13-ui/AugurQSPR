@@ -184,8 +184,11 @@ MODEL_CATALOG = OrderedDict([
         nonlinear=True, high_accuracy=True,
     )),
     ("gep_symbolic", _entry(
-        "GEP Symbolic Regression", "GEP Symbolic Regression", "symbolic",
-        "GEP Symbolic Regression", aliases=("GEP",),
+        "Augur Evolutionary Symbolic Regression",
+        "Augur Evolutionary Symbolic Regression",
+        "symbolic",
+        "Augur Evolutionary Symbolic Regression",
+        aliases=("GEP", "GEP Symbolic Regression"),
         interpretation=True, nonlinear=True,
     )),
     ("genetic_programming", _entry(
@@ -284,7 +287,7 @@ def get_models_by_group(
             continue
         if not include_unavailable and not model_is_available(model, availability):
             continue
-        grouped[model["group"]].append(model["runtime_name"])
+        grouped[model["group"]].append(model_id)
 
     return OrderedDict(
         (group_name, models)

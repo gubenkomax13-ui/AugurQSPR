@@ -9,7 +9,34 @@ import streamlit as st
 from scipy.stats import norm
 
 from modules.i18n import t
+from modules.analysis_state import analysis_result_hash, attach_result_cache_metadata, cached_result_is_current
 from modules.module_explain_ui import render_module_explanation
+from modules.model_catalog import (
+    MODEL_GROUP_BOOSTING,
+    MODEL_GROUP_KERNEL_SIMILARITY,
+    MODEL_GROUP_LINEAR,
+    MODEL_GROUP_META_ENSEMBLES,
+    MODEL_GROUP_NEURAL,
+    MODEL_GROUP_SPLINE,
+    MODEL_GROUP_SYMBOLIC,
+    MODEL_GROUP_TREES,
+    MODEL_GROUP_TREE_ENSEMBLES,
+    get_model_display_name,
+    get_models_by_group,
+    normalize_model_id,
+)
+from modules.qspr_core import (
+    qspr_auto_select_and_tune,
+    qspr_available_model_options,
+    qspr_get_model_help,
+    qspr_model_applicability_guidance,
+    qspr_metrics,
+    qspr_prediction_table,
+    qspr_save_results_auto,
+    qspr_seed_stability_holdout,
+    qspr_train_analysis_model,
+)
+from modules.structural_filter_core import qspr_show_descriptor_meaning_table
 
 
 def render_training_section(context):
@@ -163,8 +190,10 @@ def render_training_section(context):
     
     model_options = model_groups[model_group]
     
-    if st.session_state.get("model_algorithm_radio") not in model_options:
-        st.session_state.model_algorithm_radio = model_options[0]
+    current_model_code = normalize_model_id(st.session_state.get("model_algorithm_radio"))
+    if current_model_code not in model_options:
+        current_model_code = model_options[0]
+    st.session_state.model_algorithm_radio = current_model_code
     
     model_name = st.radio(
         t('model_selection.model_label'),
@@ -173,20 +202,31 @@ def render_training_section(context):
         key="model_algorithm_radio",
         format_func=get_model_display_name,
     )
+    model_id = normalize_model_id(model_name)
             
     st.session_state.last_model_group = model_group
     st.session_state.last_model_algorithm = model_name
+    st.session_state.random_seed = int(
+        st.number_input(
+            "Model random seed",
+            min_value=0,
+            max_value=2_147_483_647,
+            value=int(st.session_state.get("random_seed", 42)),
+            step=1,
+            key="model_random_seed_input",
+        )
+    )
 
     is_online_mode = bool(globals().get("qspr_is_online_mode", lambda: False)())
     online_allowed_models = {
-        "Linear Regression",
-        "Ridge",
-        "LASSO",
-        "Elastic Net",
-        "Random Forest",
-        "SVR",
+        "linear_regression",
+        "ridge_regression",
+        "lasso_regression",
+        "elastic_net",
+        "random_forest",
+        "svr",
     }
-    online_model_locked = is_online_mode and model_name not in online_allowed_models
+    online_model_locked = is_online_mode and model_id not in online_allowed_models
     if online_model_locked:
         st.info(
             "Эта модель показана как возможность полной локальной версии Augur QSPR, "
@@ -217,7 +257,7 @@ def render_training_section(context):
         )
             
     # Model params UI
-    if model_name == "PLS Regression":
+    if model_id == "pls_regression":
         max_pls = max(1, min(20, X_all_current.shape[1], len(y_all_current) - 1))
         st.session_state.pls_components = st.slider(
             t('model_params.pls_components_label'),
@@ -227,7 +267,7 @@ def render_training_section(context):
             key="pls_components_slider"
         )
     
-    elif model_name == "Ridge":
+    elif model_id == "ridge_regression":
         st.session_state.ridge_alpha = st.number_input(
             t('model_params.ridge_alpha_label'),
             min_value=0.000001,
@@ -237,7 +277,7 @@ def render_training_section(context):
             key="ridge_alpha_input"
         )
     
-    elif model_name == "LASSO":
+    elif model_id == "lasso_regression":
         st.session_state.lasso_alpha = st.number_input(
             t('model_params.lasso_alpha_label'),
             min_value=0.000001,
@@ -247,7 +287,7 @@ def render_training_section(context):
             key="lasso_alpha_input"
         )
     
-    elif model_name == "Elastic Net":
+    elif model_id == "elastic_net":
         st.session_state.elastic_alpha = st.number_input(
             t('model_params.elastic_alpha_label'),
             min_value=0.000001,
@@ -265,7 +305,7 @@ def render_training_section(context):
             key="elastic_l1_ratio_slider"
         )
     
-    elif model_name == "MLP Regression":
+    elif model_id == "mlp_regression":
         st.session_state.mlp_hidden_layer_sizes = st.text_input(
             t('model_params.mlp_hidden_layers_label'),
             value=str(st.session_state.mlp_hidden_layer_sizes),
@@ -310,7 +350,7 @@ def render_training_section(context):
     
         st.warning(t('model_params.mlp_warning'))
     
-    elif model_name == "LightGBM":
+    elif model_id == "lightgbm":
         st.session_state.lightgbm_n_estimators = st.slider(
             t('model_params.lightgbm_estimators_label'),
             50, 1000,
@@ -335,7 +375,7 @@ def render_training_section(context):
             key="lightgbm_num_leaves_slider"
         )
     
-    elif model_name == "SVR":
+    elif model_id == "svr":
         st.session_state.svr_c = st.number_input(
             t('model_params.svr_c_label'),
             min_value=0.000001,
@@ -363,7 +403,7 @@ def render_training_section(context):
     
         st.info(t('model_params.svr_info'))
     
-    elif model_name == "Gaussian Process Regression (GPR)":
+    elif model_id == "gpr":
         st.session_state.gpr_alpha = st.number_input(
             t('model_params.gpr_alpha_label'),
             min_value=0.000000001,
@@ -393,7 +433,7 @@ def render_training_section(context):
     
         st.info(t('model_params.gpr_info'))
     
-    elif model_name == "KNN Regression":
+    elif model_id == "knn_regression":
         max_knn = max(1, min(30, len(y_all_current)))
     
         st.session_state.knn_n_neighbors = st.slider(
@@ -414,7 +454,7 @@ def render_training_section(context):
     
         st.info(t('model_params.knn_info'))
     
-    elif model_name == "CatBoost":
+    elif model_id == "catboost":
         st.session_state.catboost_iterations = st.slider(
             t('model_params.catboost_iterations_label'),
             50, 1000,
@@ -439,7 +479,7 @@ def render_training_section(context):
             key="catboost_depth_slider"
         )
     
-    elif model_name == "AdaBoost Regressor":
+    elif model_id == "adaboost":
         st.session_state.adaboost_n_estimators = st.slider(
             t('model_params.adaboost_estimators_label'),
             min_value=10,
@@ -459,7 +499,7 @@ def render_training_section(context):
         )
         st.info(t('model_params.adaboost_info'))
     
-    elif model_name == "Stacking":
+    elif model_id == "stacking_regressor":
         st.session_state.stacking_cv = st.slider(
             t('model_params.stacking_cv_label'),
             3, 10,
@@ -473,8 +513,13 @@ def render_training_section(context):
             key="stacking_passthrough_checkbox"
         )
         st.info(t('model_params.stacking_info'))
+        st.warning(
+            "Stacking should be treated as a final-training meta-model. "
+            "For an honest estimate, use nested CV: outer validation loop, "
+            "inner Stacking CV/model selection. Non-nested metrics can be optimistic."
+        )
     
-    elif model_name == "Voting Regressor":
+    elif model_id == "voting_regressor":
         st.caption("Веса базовых моделей при усреднении прогнозов")
         col_vote_1, col_vote_2, col_vote_3 = st.columns(3)
         with col_vote_1:
@@ -511,7 +556,7 @@ def render_training_section(context):
         else:
             st.info("Voting Regressor усредняет прогнозы Random Forest, Extra Trees и Ridge.")
     
-    elif model_name == "CART Regression":
+    elif model_id == "cart_regression":
         st.session_state.cart_max_depth = st.slider(
             t('model_params.cart_max_depth_label'),
             min_value=1,
@@ -532,7 +577,7 @@ def render_training_section(context):
     
         st.info(t('model_params.cart_info'))
     
-    elif model_name == "MARS-like Regression":
+    elif model_id == "mars_like":
         st.session_state.mars_degree = st.slider(
             t('model_params.mars_degree_label'),
             min_value=1,
@@ -553,7 +598,7 @@ def render_training_section(context):
     
         st.info(t('model_params.mars_info'))
     
-    elif model_name == "Spline Regression":
+    elif model_id == "spline_regression":
         st.session_state.spline_n_knots = st.slider(
             "Число узлов сплайна",
             min_value=3,
@@ -580,7 +625,7 @@ def render_training_section(context):
         )
         st.info("Сплайн-регрессия создаёт гладкие базисные функции для каждого дескриптора.")
     
-    elif model_name == "GAM Regression":
+    elif model_id == "gam_regression":
         st.session_state.gam_n_splines = st.slider(
             "Число сплайн-базисов",
             min_value=3,
@@ -607,7 +652,7 @@ def render_training_section(context):
         )
         st.info("GAM суммирует гладкие нелинейные вклады отдельных дескрипторов без автоматического добавления взаимодействий.")
     
-    elif model_name == "GEP Symbolic Regression":
+    elif model_id == "gep_symbolic":
         st.session_state.gep_population_size = st.slider(
             t('model_params.gep_population_size_label'),
             min_value=100,
@@ -635,7 +680,7 @@ def render_training_section(context):
             key="gep_max_depth_slider"
         )
     
-    elif model_name == "Genetic Programming Regression":
+    elif model_id == "genetic_programming":
         st.session_state.gp_population_size = st.slider(
             "Размер популяции GP",
             min_value=100,
@@ -662,7 +707,7 @@ def render_training_section(context):
         )
         st.info("Генетическое программирование ищет короткую математическую формулу и штрафует избыточную сложность.")
     
-    elif model_name == "PySR":
+    elif model_id == "pysr":
         st.session_state.pysr_niterations = st.slider(
             "Число итераций PySR",
             min_value=10,
@@ -689,7 +734,7 @@ def render_training_section(context):
         )
         st.warning("PySR требует установленного пакета pysr и рабочей среды Julia. Поиск формул может занимать значительное время.")
     
-    elif model_name == "Extra Trees":
+    elif model_id == "extra_trees":
         st.session_state.et_n_estimators = st.slider(
             t('model_params.et_estimators_label'),
             min_value=50,
@@ -737,7 +782,7 @@ def render_training_section(context):
     
         st.info(t('model_params.et_info'))
     
-    elif model_name == "HistGradientBoosting Regressor":
+    elif model_id == "hist_gradient_boosting":
         st.session_state.hgb_max_iter = st.slider(
             t('model_params.hgb_max_iter_label'),
             min_value=50,
@@ -1062,12 +1107,95 @@ def render_training_section(context):
             os.path.join(HELP_DIR, "auto_feature_selection_help.md"),
             expanded=False
         )
+
+    current_params_for_guidance = get_model_params_from_session()
+    current_guidance = qspr_model_applicability_guidance(
+        model_name,
+        n_samples=len(y_all_current),
+        n_features=X_all_current.shape[1],
+        params=current_params_for_guidance,
+        online_mode=is_online_mode,
+    )
+    model_resource_blocked = False
+    for guidance in current_guidance:
+        message = guidance.get("message", "")
+        if guidance.get("topic") == "GPR applicability":
+            estimated = guidance.get("estimated_fit_time_seconds")
+            if estimated is not None and np.isfinite(float(estimated)):
+                message = f"{message} Estimated fit time: {float(estimated):.1f} s."
+        if guidance.get("topic") == "MLP data-to-parameter ratio":
+            message = (
+                f"{message} N={guidance.get('n_samples')}, "
+                f"parameters~{guidance.get('n_parameters_estimated')}, "
+                f"N/parameters={float(guidance.get('samples_per_parameter', 0.0)):.4f}."
+            )
+        if guidance.get("level") == "error":
+            model_resource_blocked = True
+            st.error(message)
+        elif guidance.get("level") == "warning":
+            st.warning(message)
+        else:
+            st.info(message)
+
+    stochastic_models_for_seed_stability = {
+        "random_forest",
+        "extra_trees",
+        "adaboost",
+        "hist_gradient_boosting",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+        "mlp_regression",
+        "gep_symbolic",
+        "genetic_programming",
+    }
+    if model_id in stochastic_models_for_seed_stability:
+        with st.expander("Seed stability diagnostic", expanded=False):
+            st.caption(
+                "Runs the selected stochastic model with seeds 1, 7, 42, 101, 2026 "
+                "and reports the spread of hold-out metrics."
+            )
+            seed_test_percent = st.slider(
+                "Seed stability test set, %",
+                min_value=10,
+                max_value=50,
+                value=20,
+                step=5,
+                key="seed_stability_test_percent",
+            )
+            if st.button("Run seed stability", key="run_seed_stability"):
+                try:
+                    smiles_for_seed = data[smiles_col_current].iloc[
+                        valid_indices_current
+                    ].values.tolist()
+                    seed_result = qspr_seed_stability_holdout(
+                        X=X_all_current,
+                        y=y_all_current,
+                        model_name=model_name,
+                        seeds=[1, 7, 42, 101, 2026],
+                        valid_indices=valid_indices_current,
+                        smiles=smiles_for_seed,
+                        test_size=float(seed_test_percent) / 100.0,
+                        params=current_params_for_guidance,
+                        scale=True,
+                    )
+                    st.session_state.seed_stability_result = seed_result
+                except Exception as e:
+                    st.error(f"Seed stability failed: {e}")
+            seed_result = st.session_state.get("seed_stability_result")
+            if isinstance(seed_result, dict):
+                st.dataframe(
+                    seed_result.get("results_df", pd.DataFrame()),
+                    width="stretch",
+                    hide_index=True,
+                )
+                st.json(seed_result.get("summary", {}))
     
     # Training
     train_clicked = st.button(
         t('model_training.train_button'),
         type="primary",
-        disabled=online_model_locked,
+        disabled=online_model_locked or model_resource_blocked,
     )
     
     if train_clicked:
@@ -1112,7 +1240,7 @@ def render_training_section(context):
     
                     X_model_space = auto_result.get("X_model_space", X_all_current)
                     y_pred_all = np.ravel(
-                        auto_result["model"].predict(X_model_space)
+                        auto_result["model"].predict(X_all_current)
                     )
     
                     result_train = {
@@ -1131,7 +1259,27 @@ def render_training_section(context):
                     )
                     st.session_state.model_used_descriptor_model_name = model_name
     
-                    st.session_state.trained_models[model_name] = result_train
+                    train_hash = analysis_result_hash(
+                        st.session_state,
+                        model_name,
+                        params=get_model_params_from_session(),
+                        validation_settings={
+                            "kind": "train",
+                            "auto_feature_selection": True,
+                            "auto_hyperparameter_optimization": st.session_state.get(
+                                "auto_hyperparameter_optimization",
+                                False,
+                            ),
+                        },
+                        X=X_all_current,
+                        y=y_all_current,
+                        desc_names=desc_names_current,
+                        valid_indices=valid_indices_current,
+                    )
+                    st.session_state.trained_models[model_name] = attach_result_cache_metadata(
+                        result_train,
+                        train_hash,
+                    )
                     st.session_state.pop(
                         f"descriptor_importance_result_{model_name}",
                         None
@@ -1184,7 +1332,20 @@ def render_training_section(context):
                     st.session_state.model_used_descriptor_names = list(desc_names_current)
                     st.session_state.model_used_descriptor_model_name = model_name
     
-                    st.session_state.trained_models[model_name] = result_train
+                    train_hash = analysis_result_hash(
+                        st.session_state,
+                        model_name,
+                        params=get_model_params_from_session(),
+                        validation_settings={"kind": "train"},
+                        X=X_all_current,
+                        y=y_all_current,
+                        desc_names=desc_names_current,
+                        valid_indices=valid_indices_current,
+                    )
+                    st.session_state.trained_models[model_name] = attach_result_cache_metadata(
+                        result_train,
+                        train_hash,
+                    )
                     st.session_state.pop(
                         f"descriptor_importance_result_{model_name}",
                         None
@@ -1225,10 +1386,58 @@ def render_training_section(context):
         )
     if model_name in st.session_state.trained_models:
         model_data = st.session_state.trained_models[model_name]
+        expected_train_hash = analysis_result_hash(
+            st.session_state,
+            model_name,
+            params=get_model_params_from_session(),
+            validation_settings={"kind": "train"},
+            X=X_all_current,
+            y=y_all_current,
+            desc_names=desc_names_current,
+            valid_indices=valid_indices_current,
+        )
+        expected_auto_train_hash = analysis_result_hash(
+            st.session_state,
+            model_name,
+            params=get_model_params_from_session(),
+            validation_settings={
+                "kind": "train",
+                "auto_feature_selection": True,
+                "auto_hyperparameter_optimization": st.session_state.get(
+                    "auto_hyperparameter_optimization",
+                    False,
+                ),
+            },
+            X=X_all_current,
+            y=y_all_current,
+            desc_names=desc_names_current,
+            valid_indices=valid_indices_current,
+        )
+        if (
+            isinstance(model_data, dict)
+            and not (
+                cached_result_is_current(model_data, expected_train_hash)
+                or cached_result_is_current(model_data, expected_auto_train_hash)
+            )
+        ):
+            st.warning(
+                "Stored model belongs to an older data/descriptor/configuration signature. Retrain before using it."
+            )
+            st.stop()
         model = model_data["model"]
         scaler = model_data.get("scaler", None)
         X_scaled = model_data.get("X_scaled", X_all_current)
         y_pred_all = np.ravel(model_data["y_pred"])
+        core_model = model.named_steps.get("model") if hasattr(model, "named_steps") else model
+        if hasattr(core_model, "get_formula_complexity"):
+            complexity = core_model.get_formula_complexity()
+            if complexity:
+                st.warning(
+                    "Symbolic formula uses Augur evolutionary symbolic regression fallback. "
+                    "Check operation count, tree depth, descriptor count and protected math before publication."
+                )
+                with st.expander("Symbolic formula complexity and domain notes", expanded=False):
+                    st.json(complexity)
     
         smiles_current = data[smiles_col_current].iloc[valid_indices_current].values
     
@@ -1317,6 +1526,35 @@ def render_training_section(context):
                     str(auto_res.get("feature_selection_method", selection_summary_auto.get("method", "—")))
                 )
     
+            if auto_res.get("cv_status") == "failed":
+                st.warning(
+                    "Cross-validation failed. The final model may be fitted on all data, "
+                    "but it must not be treated as validated."
+                )
+                st.caption(
+                    f"{auto_res.get('failed_stage', 'CV')}: "
+                    f"{auto_res.get('cv_error_type', '')} "
+                    f"{auto_res.get('cv_error_message', '')}"
+                )
+            elif auto_res.get("model_validation_status"):
+                st.caption(str(auto_res.get("model_validation_status")))
+            target_quality_auto = auto_res.get("target_quality") or {}
+            if target_quality_auto.get("warnings"):
+                st.warning(
+                    "Target property has weak variation: "
+                    f"{target_quality_auto.get('n_unique_y')} unique values; "
+                    f"dominant value fraction = {target_quality_auto.get('dominant_y_fraction', 0):.2f}."
+                )
+            feature_ratio_auto = auto_res.get("feature_ratio_diagnostics") or {}
+            if feature_ratio_auto.get("warnings"):
+                st.warning(
+                    "Descriptor count is high relative to the number of objects: "
+                    f"n={feature_ratio_auto.get('n')}, p={feature_ratio_auto.get('p')}, "
+                    f"residual df={feature_ratio_auto.get('residual_degrees_of_freedom')}."
+                )
+            st.caption(str(auto_res.get("best_cv_rmse_label", "")))
+            st.caption(str(auto_res.get("cv_metrics_label", "")))
+
             if best_params_auto:
                 with st.expander(t('auto_results.best_params_expander'), expanded=False):
                     st.json(best_params_auto)
@@ -1624,7 +1862,7 @@ def render_training_section(context):
             hide_index=True
         )
     
-        if model_name == "Gaussian Process Regression (GPR)":
+        if model_id == "gpr":
             try:
                 y_gpr_mean, y_gpr_std = model.predict(X_scaled, return_std=True)
     

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-GenQSPR / QSPR Универсальный конструктор моделей
+Augur QSPR
 
 Главный Streamlit-интерфейс.
 Расчётные ядра вынесены в модули:
@@ -24,96 +24,50 @@ import re
 import sys
 import json
 import io
-import subprocess
 import importlib
-import hmac
+import hashlib
 import warnings
 from datetime import datetime
+from copy import deepcopy
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from html import escape
-from sklearn.linear_model import LinearRegression
-from modules.applicability_domain_core import *
-from modules.methodology_generator import generate_methodology_text
-from modules.module_explain_ui import render_module_explanation
-from modules.module_registry import module_overview_markdown
-from modules.report_generator import generate_full_report
-from modules.save_model_ui import render_verified_model_save
-from modules.validation_ui import render_validation_section
-from modules.error_analysis_ui import render_error_analysis_section
-from modules.comparison_ui import render_model_comparison_section
-from modules.consensus_ui import render_consensus_section
-from modules.diagnostics_ui import render_model_diagnostics_section
-from modules.training_ui import render_training_section
-from modules.report_ui import render_report_section
-from modules.statistics_summary_ui import render_final_statistics_summary
-from modules.chemical_diversity_ui import render_chemical_diversity_section
 import time
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-
-def _qspr_arrow_safe_table_data(data):
-    """Return a display copy that PyArrow can serialize without noisy fallback logs."""
-    try:
-        import pandas as _pd
-    except Exception:
-        return data
-
-    if not isinstance(data, _pd.DataFrame):
-        return data
-
-    out = data.copy()
-    out.columns = [str(col) for col in out.columns]
-
-    for col in out.columns:
-        if out[col].dtype != "object":
-            continue
-
-        def _cell_to_text(value):
-            if value is None:
-                return ""
-            try:
-                if _pd.isna(value):
-                    return ""
-            except (TypeError, ValueError):
-                pass
-            if isinstance(value, bytes):
-                return value.decode("utf-8", errors="replace")
-            return str(value)
-
-        out[col] = out[col].map(_cell_to_text).astype("string")
-
-    return out
-
-
-def _install_qspr_arrow_safe_streamlit_tables():
-    if getattr(st, "_qspr_arrow_safe_tables_installed", False):
-        return
-
-    original_dataframe = st.dataframe
-    original_data_editor = st.data_editor
-
-    def dataframe(data=None, *args, **kwargs):
-        return original_dataframe(_qspr_arrow_safe_table_data(data), *args, **kwargs)
-
-    def data_editor(data=None, *args, **kwargs):
-        return original_data_editor(_qspr_arrow_safe_table_data(data), *args, **kwargs)
-
-    st.dataframe = dataframe
-    st.data_editor = data_editor
-    st._qspr_arrow_safe_tables_installed = True
-
-
-_install_qspr_arrow_safe_streamlit_tables()
-
-from modules.i18n import (
-    gettext,
-    set_language,
-    t,
-    load_language,
-    validate_translation_keys,
+st.set_page_config(
+    page_title="Augur QSPR",
+    layout="wide",
 )
+
+
+def gettext(key, **kwargs):
+    return t(key, **kwargs)
+
+
+def set_language(lang):
+    return None
+
+
+def t(key, **kwargs):
+    fallback = {
+        "install.title": "Augur QSPR installation",
+        "install.missing_packages": "Missing or broken packages: {packages}",
+        "install.numpy_conflict": "Installed NumPy version is outside the supported range.",
+    }.get(str(key), str(key))
+    try:
+        return fallback.format(**kwargs)
+    except Exception:
+        return fallback
+
+
+def load_language(lang):
+    return {}
+
+
+def validate_translation_keys(root):
+    return []
 
 SUPPORTED_LANGS = ("ru", "en", "kk")
 AUGUR_GITHUB_URL = "https://github.com/gubenkomax13-ui/AugurQSPR"
@@ -123,6 +77,447 @@ ONLINE_LOCK_MESSAGE = (
 )
 ONLINE_MAX_UPLOAD_MB = 5
 ONLINE_MAX_DATA_ROWS = 1000
+
+
+def qspr_norm_column_name(name):
+    text = str(name or "").strip().lower()
+    text = re.sub(r"[\s\-\./\\]+", "_", text)
+    text = re.sub(r"[^0-9a-zа-яё_]+", "", text)
+    return text.strip("_")
+
+
+def qspr_pick_columns_by_aliases(columns, aliases):
+    aliases_norm = {qspr_norm_column_name(item) for item in aliases}
+    exact = [col for col in columns if qspr_norm_column_name(col) in aliases_norm]
+    contains = [
+        col for col in columns
+        if col not in exact
+        and any(alias in qspr_norm_column_name(col) for alias in aliases_norm if len(alias) >= 4)
+    ]
+    return exact + contains
+
+
+QSPR_SMILES_ALIASES = [
+    "SMILES", "smiles", "canonical_smiles", "Canonical SMILES",
+    "canonical_SMILES", "can_smiles", "mol_smiles", "input_smiles",
+    "structure_smiles", "isomeric_smiles",
+]
+
+QSPR_PROPERTY_ALIASES = [
+    "activity", "value", "property", "property_value", "response",
+    "target", "y", "ic50", "ec50", "ki", "kd", "pic50", "pec50",
+    "pki", "pkd", "affinity", "potency", "inhibition", "effect",
+    "свойство", "активность", "значение", "ответ",
+]
+
+QSPR_OPTIONAL_COLUMN_ALIASES = {
+    "name": ["name", "compound_name", "molecule_name", "title", "название", "имя"],
+    "compound_id": ["compound_id", "compoundid", "cid", "id", "mol_id", "molecule_id", "compound"],
+    "series_id": ["series_id", "series", "chemical_series", "ряд", "серия"],
+    "scaffold_id": ["scaffold_id", "scaffold", "core", "каркас", "скаффолд"],
+    "assay_id": ["assay_id", "assay", "assay_name", "protocol", "method", "experiment", "context", "метод", "анализ"],
+    "target_name": ["target_name", "target name", "biological_target", "protein", "gene", "мишень", "таргет"],
+    "endpoint_type": ["endpoint_type", "endpoint", "activity_type", "standard_type", "measure", "тип_активности"],
+    "activity_unit": ["activity_unit", "unit", "units", "standard_units", "standard_unit", "единица", "единицы"],
+    "source": ["source", "dataset", "origin", "reference", "источник"],
+    "batch": ["batch", "batch_id", "lot", "серия_измерений", "партия"],
+    "reference_compound": ["reference_compound", "control", "standard_compound", "reference", "референс"],
+}
+
+QSPR_EXPERIMENT_CONTEXT_FIELDS = ["target_name", "endpoint_type", "activity_unit", "assay_id", "source", "batch"]
+QSPR_UNIT_FACTORS_TO_MOLAR = {
+    "m": 1.0,
+    "mol_l": 1.0,
+    "mol/l": 1.0,
+    "molar": 1.0,
+    "mm": 1e-3,
+    "mmol_l": 1e-3,
+    "mmol/l": 1e-3,
+    "um": 1e-6,
+    "µm": 1e-6,
+    "μm": 1e-6,
+    "umol_l": 1e-6,
+    "umol/l": 1e-6,
+    "nm": 1e-9,
+    "nmol_l": 1e-9,
+    "nmol/l": 1e-9,
+    "pm": 1e-12,
+    "pmol_l": 1e-12,
+    "pmol/l": 1e-12,
+}
+
+
+QSPR_NO_ACTIVITY_TRANSFORM = "без преобразования"
+QSPR_NEG_LOG10_TRANSFORM = "-log10(value в mol/L)"
+QSPR_ALREADY_TRANSFORMED_ACTIVITY = "пользовательская уже преобразованная шкала"
+QSPR_INTERPRET_HIGHER_ACTIVITY = "большее значение обычно соответствует большей активности"
+QSPR_INTERPRET_LOWER_ACTIVITY = "меньшее значение обычно соответствует большей активности"
+QSPR_INTERPRET_NUMERIC_ONLY = "направление активности неприменимо; анализировать только числовое изменение"
+
+
+def qspr_infer_property_interpretation(property_col):
+    norm = qspr_norm_column_name(property_col)
+    compact = norm.replace("_", "")
+
+    higher_markers = ["pic50", "pki", "pkd", "pec50"]
+    lower_markers = ["ic50", "ki", "kd", "ec50"]
+    physchem_markers = [
+        "bp", "bpexp", "boilingpoint", "boilingtemperature",
+        "mp", "mpexp", "meltingpoint", "density", "logp",
+        "clogp", "solubility",
+    ]
+
+    if any(marker in compact for marker in higher_markers):
+        return {
+            "kind": "activity",
+            "label": "Лекарственная активность",
+            "interpretation": QSPR_INTERPRET_HIGHER_ACTIVITY,
+            "message": f"Обнаружен показатель {property_col}. Более высокое значение обычно соответствует большей активности.",
+        }
+    if any(marker in compact for marker in lower_markers):
+        return {
+            "kind": "activity",
+            "label": "Лекарственная активность",
+            "interpretation": QSPR_INTERPRET_LOWER_ACTIVITY,
+            "message": f"Обнаружен показатель {property_col}. Более низкое значение обычно соответствует большей активности.",
+        }
+    if any(marker in compact for marker in physchem_markers):
+        return {
+            "kind": "physchem",
+            "label": "Физико-химическое",
+            "interpretation": QSPR_INTERPRET_NUMERIC_ONLY,
+            "message": (
+                f"Выбрано физико-химическое свойство: {property_col}. "
+                "SAOD будет анализировать числовые изменения свойства. "
+                "Оценка «усиления» или «ослабления» эффекта не применяется."
+            ),
+        }
+    return {
+        "kind": "numeric",
+        "label": "Числовое свойство",
+        "interpretation": QSPR_INTERPRET_NUMERIC_ONLY,
+        "message": (
+            "SAOD оценивает рост, снижение или отсутствие устойчивого изменения свойства. "
+            "Понятия «усиление» и «ослабление эффекта» не используются."
+        ),
+    }
+
+
+def qspr_show_property_interpretation_block(property_col, key_prefix):
+    info = qspr_infer_property_interpretation(property_col)
+    st.subheader("Интерпретация свойства")
+    st.markdown(f"**Тип свойства:** {info['label']}")
+    st.markdown(f"**Выбранное свойство:** {property_col}")
+    st.info(info["message"])
+    if info["kind"] == "activity":
+        st.caption("Определено автоматически по названию колонки. Проверьте корректность интерпретации.")
+
+    interpretation = info["interpretation"]
+    transform_mode = QSPR_NO_ACTIVITY_TRANSFORM
+
+    with st.expander("Расширенные настройки", expanded=False):
+        if info["kind"] == "activity":
+            override = st.checkbox(
+                "Переопределить автоматическую интерпретацию",
+                value=False,
+                key=f"{key_prefix}_override_property_interpretation",
+            )
+            if override:
+                interpretation = st.radio(
+                    "Интерпретация свойства",
+                    [
+                        QSPR_INTERPRET_HIGHER_ACTIVITY,
+                        QSPR_INTERPRET_LOWER_ACTIVITY,
+                        QSPR_INTERPRET_NUMERIC_ONLY,
+                    ],
+                    key=f"{key_prefix}_property_interpretation_override",
+                )
+            transform_mode = st.selectbox(
+                "Преобразование активности",
+                [
+                    QSPR_NO_ACTIVITY_TRANSFORM,
+                    QSPR_NEG_LOG10_TRANSFORM,
+                    QSPR_ALREADY_TRANSFORMED_ACTIVITY,
+                ],
+                key=f"{key_prefix}_activity_transform",
+            )
+        else:
+            st.caption(
+                "Для этого типа свойства преобразование активности скрыто. "
+                "Анализируются только числовое увеличение, снижение или отсутствие устойчивого направления."
+            )
+
+    return interpretation, transform_mode, info
+
+
+def qspr_detect_optional_columns(df):
+    if not isinstance(df, pd.DataFrame):
+        return {}
+    detected = {}
+    for field, aliases in QSPR_OPTIONAL_COLUMN_ALIASES.items():
+        matches = qspr_pick_columns_by_aliases(df.columns, aliases)
+        if matches:
+            detected[field] = matches[0]
+    return detected
+
+
+def qspr_ensure_record_ids(df):
+    if not isinstance(df, pd.DataFrame):
+        return df
+    out = df.copy()
+    if "row_position" not in out.columns:
+        out["row_position"] = np.arange(len(out), dtype=int)
+    if "source_index" not in out.columns:
+        out["source_index"] = list(out.index)
+    if "source_row" not in out.columns:
+        out["source_row"] = out["source_index"]
+    if "record_id" not in out.columns:
+        out["record_id"] = [
+            f"record_{int(i) + 1:06d}"
+            for i in range(len(out))
+        ]
+    if "compound_id" not in out.columns:
+        out["compound_id"] = out["record_id"].astype(str)
+    return out
+
+
+def qspr_context_columns(df, detected=None):
+    detected = detected or qspr_detect_optional_columns(df)
+    context = {}
+    for field in QSPR_EXPERIMENT_CONTEXT_FIELDS:
+        if field not in detected or detected[field] not in df.columns:
+            continue
+        col = detected[field]
+        if field != "activity_unit":
+            numeric_share = pd.to_numeric(
+                df[col].astype(str).str.replace(",", ".", regex=False),
+                errors="coerce",
+            ).notna().mean()
+            if numeric_share >= 0.7:
+                continue
+        context[field] = col
+    return context
+
+
+def qspr_context_diversity(df, context_cols):
+    rows = []
+    for field, col in context_cols.items():
+        values = df[col].dropna().astype(str).str.strip()
+        values = values[values != ""]
+        unique_values = sorted(values.unique().tolist())
+        if len(unique_values) > 1:
+            rows.append({
+                "context_field": field,
+                "column": col,
+                "unique_values": len(unique_values),
+                "examples": "; ".join(unique_values[:8]),
+            })
+    return pd.DataFrame(rows)
+
+
+def qspr_apply_context_selectors(df, context_cols, key_prefix):
+    filtered = df.copy()
+    selected = {}
+
+    if not context_cols:
+        return filtered, selected
+
+    st.caption("Экспериментальный контекст")
+    selector_cols = st.columns(2)
+    for i, (field, col) in enumerate(context_cols.items()):
+        values = (
+            filtered[col]
+            .dropna()
+            .astype(str)
+            .str.strip()
+        )
+        options = sorted([value for value in values.unique().tolist() if value])
+        if not options:
+            continue
+        with selector_cols[i % 2]:
+            choice = st.selectbox(
+                f"{field}: {col}",
+                ["Все значения"] + options,
+                key=f"{key_prefix}_{field}_{qspr_norm_column_name(col)}",
+            )
+        if choice != "Все значения":
+            filtered = filtered[filtered[col].astype(str).str.strip() == choice].copy()
+            selected[field] = choice
+
+    return filtered, selected
+
+
+def qspr_make_experimental_group_key(df, context_cols):
+    cols = [col for col in context_cols.values() if col in df.columns]
+    if not cols:
+        return pd.Series(["all"] * len(df), index=df.index)
+    return df[cols].fillna("").astype(str).agg(" | ".join, axis=1)
+
+
+def qspr_unit_factor_to_molar(unit):
+    raw = str(unit or "").strip()
+    norm = raw.lower().replace("µ", "u").replace("μ", "u")
+    norm = norm.replace(" ", "").replace("·", "*")
+    norm = norm.replace("mol/l", "mol/l")
+    norm_key = qspr_norm_column_name(norm)
+    for key, factor in QSPR_UNIT_FACTORS_TO_MOLAR.items():
+        if qspr_norm_column_name(key) == norm_key or norm == key:
+            return factor
+    return None
+
+
+def qspr_transform_activity_values(df, property_col, transform_mode, unit_col=None, constant_unit=None):
+    out = df.copy()
+    transform_mode_norm = str(transform_mode or "").strip()
+    no_transform_modes = {
+        QSPR_NO_ACTIVITY_TRANSFORM,
+        QSPR_ALREADY_TRANSFORMED_ACTIVITY,
+        "без преобразования",
+        "пользовательская уже преобразованная шкала",
+    }
+    neg_log_modes = {
+        QSPR_NEG_LOG10_TRANSFORM,
+        "-log10(value в mol/L)",
+    }
+    if transform_mode_norm in no_transform_modes:
+        return out, property_col, None
+    if transform_mode_norm not in neg_log_modes:
+        return out, property_col, None
+
+    values = pd.to_numeric(
+        out[property_col].astype(str).str.replace(",", ".", regex=False),
+        errors="coerce",
+    )
+
+    if unit_col and unit_col in out.columns:
+        units = out[unit_col].dropna().astype(str).str.strip()
+        units = units[units != ""].unique().tolist()
+        if len(units) != 1:
+            raise ValueError("Для -log10 преобразования выберите одну экспериментальную группу с одной единицей активности.")
+        unit = units[0]
+    else:
+        unit = constant_unit
+
+    factor = qspr_unit_factor_to_molar(unit)
+    if factor is None:
+        raise ValueError(f"Неизвестная или неподдержанная единица активности для -log10: {unit}")
+
+    molar_values = values * factor
+    invalid = molar_values.notna() & (molar_values <= 0)
+    if invalid.any():
+        raise ValueError("-log10 преобразование невозможно для нулевых или отрицательных значений активности.")
+
+    transformed_col = f"{property_col}__neg_log10_mol_l"
+    out[transformed_col] = -np.log10(molar_values)
+    return out, transformed_col, unit
+
+
+def qspr_duplicate_policy_report(df, target_col, structure_col="_qspr_inchikey", context_cols=None):
+    if df is None or df.empty or structure_col not in df.columns:
+        return pd.DataFrame()
+
+    context_cols = [col for col in (context_cols or []) if col in df.columns]
+    rows = []
+    work = df.copy()
+    valid = work[structure_col].astype(str).str.strip() != ""
+
+    for structure_key, group in work.loc[valid].groupby(structure_col, dropna=False):
+        if len(group) <= 1:
+            continue
+
+        target_values = (
+            pd.to_numeric(group[target_col], errors="coerce")
+            if target_col in group.columns else pd.Series(dtype=float)
+        )
+        n_target_values = int(target_values.dropna().nunique())
+        n_contexts = 1
+        if context_cols:
+            n_contexts = int(
+                group[context_cols].fillna("").astype(str).agg(" | ".join, axis=1).nunique()
+            )
+
+        exact_cols = [
+            col for col in group.columns
+            if not str(col).startswith("_qspr_")
+        ]
+        n_exact_rows = int(group[exact_cols].drop_duplicates().shape[0]) if exact_cols else len(group)
+
+        canonical_unique = int(group.get("_qspr_canonical_smiles", pd.Series(dtype=str)).astype(str).nunique())
+        parent_unique = int(group.get("_qspr_parent_smiles", pd.Series(dtype=str)).astype(str).nunique())
+        input_unique = int(group.get("_qspr_input_smiles", pd.Series(dtype=str)).astype(str).nunique())
+
+        if n_contexts > 1:
+            duplicate_type = "same_structure_different_experimental_context"
+        elif n_target_values > 1:
+            duplicate_type = "same_structure_different_property"
+        elif n_exact_rows == 1:
+            duplicate_type = "exact_duplicate"
+        elif canonical_unique == 1 and parent_unique <= 1 and input_unique <= 1:
+            duplicate_type = "same_structure_same_property"
+        else:
+            duplicate_type = "same_inchikey_different_representation"
+
+        rows.append({
+            "structure_key": structure_key,
+            "n_records": int(len(group)),
+            "duplicate_type": duplicate_type,
+            "n_unique_property_values": n_target_values,
+            "n_experimental_contexts": n_contexts,
+            "n_canonical_smiles": canonical_unique,
+            "n_parent_smiles": parent_unique,
+            "n_input_smiles": input_unique,
+            "row_indices": "; ".join(map(str, group.index.tolist()[:20])),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def qspr_apply_duplicate_policy(df, target_col, policy, context_cols=None):
+    if df is None or df.empty or "_qspr_inchikey" not in df.columns:
+        return df, pd.DataFrame()
+
+    report = qspr_duplicate_policy_report(
+        df,
+        target_col=target_col,
+        structure_col="_qspr_inchikey",
+        context_cols=context_cols,
+    )
+
+    policy = str(policy or "").strip().lower()
+    if policy in {"не удалять", "оставить все измерения", "keep_all"}:
+        return df.copy(), report
+
+    work = df.copy()
+    valid = work["_qspr_inchikey"].astype(str).str.strip() != ""
+
+    if policy in {"удалить только точные дубликаты", "exact"}:
+        non_private_cols = [col for col in work.columns if not str(col).startswith("_qspr_")]
+        if non_private_cols:
+            work = work.drop_duplicates(subset=non_private_cols, keep="first")
+        return work.reset_index(drop=True), report
+
+    group_cols = ["_qspr_inchikey"]
+    if policy in {"разделить по assay/context", "assay"}:
+        group_cols.extend([col for col in (context_cols or []) if col in work.columns])
+
+    passthrough = work.loc[~valid].copy()
+    grouped = work.loc[valid].copy()
+    rows = []
+
+    for _, group in grouped.groupby(group_cols, dropna=False, sort=False):
+        row = group.iloc[0].copy()
+        if target_col in group.columns:
+            values = pd.to_numeric(group[target_col], errors="coerce")
+            if policy in {"усреднить", "mean"}:
+                row[target_col] = float(values.mean()) if values.notna().any() else np.nan
+            else:
+                row[target_col] = float(values.median()) if values.notna().any() else np.nan
+        row["_qspr_duplicate_records_merged"] = int(len(group))
+        rows.append(row)
+
+    collapsed = pd.DataFrame(rows)
+    out = pd.concat([passthrough, collapsed], ignore_index=True, sort=False)
+    return out.reset_index(drop=True), report
 
 
 def _normalize_lang_code(value):
@@ -230,23 +625,7 @@ def qspr_is_online_streamlit_version():
 
 def qspr_runtime_mode():
     """Return `online` or `local` for feature gating."""
-    for source in (os.environ.get("AUGUR_MODE"), os.environ.get("AUGUR_RUNTIME_MODE")):
-        value = str(source or "").strip().lower()
-        if value in {"online", "demo", "cloud", "public"}:
-            return "online"
-        if value in {"local", "full", "desktop"}:
-            return "local"
-
-    try:
-        value = str(st.secrets.get("AUGUR_MODE", "") or "").strip().lower()
-        if value in {"online", "demo", "cloud", "public"}:
-            return "online"
-        if value in {"local", "full", "desktop"}:
-            return "local"
-    except Exception:
-        pass
-
-    return "online" if qspr_is_online_streamlit_version() else "local"
+    return shared_qspr_runtime_mode()
 
 
 def qspr_is_online_mode():
@@ -424,7 +803,6 @@ REQUIRED_PACKAGES = {
     "rdkit-pypi": "rdkit",
     "scikit-learn": "sklearn",
     "joblib": "joblib",
-    "streamlit": "streamlit",
     "seaborn": "seaborn",
     "scipy": "scipy",
     "Pillow": "PIL",
@@ -444,8 +822,25 @@ OPTIONAL_PACKAGES = {
 }
 
 
+def classify_import_failure(import_name, exc):
+    message = str(exc) or exc.__class__.__name__
+    lower = message.lower()
+    if importlib.util.find_spec(import_name) is None:
+        return "not installed"
+    if isinstance(exc, OSError):
+        if any(token in lower for token in ["dll", "shared object", "cannot open", "library"]):
+            return "runtime dependency missing"
+        return "binary incompatibility"
+    if any(token in lower for token in ["numpy.dtype size changed", "binary incompat", "abi"]):
+        return "binary incompatibility"
+    if isinstance(exc, ImportError):
+        return "runtime dependency missing"
+    return "import failed"
+
+
 def check_packages(packages):
     missing = []
+    diagnostics = []
 
     for pkg_key, pkg_info in packages.items():
         if isinstance(pkg_info, tuple):
@@ -455,61 +850,117 @@ def check_packages(packages):
 
         try:
             importlib.import_module(import_name)
-        except ImportError:
-            missing.append(pkg_key)
+            diagnostics.append({
+                "package": pkg_key,
+                "import_name": import_name,
+                "status": "ok",
+                "details": "",
+            })
+        except ModuleNotFoundError as exc:
+            status = "not installed" if getattr(exc, "name", "") == import_name else "runtime dependency missing"
+            label = f"{pkg_key} ({status}: {exc})"
+            missing.append(label)
+            diagnostics.append({
+                "package": pkg_key,
+                "import_name": import_name,
+                "status": status,
+                "details": str(exc),
+            })
+        except Exception as exc:
+            status = classify_import_failure(import_name, exc)
+            label = f"{pkg_key} ({status}: {exc})"
+            missing.append(label)
+            diagnostics.append({
+                "package": pkg_key,
+                "import_name": import_name,
+                "status": status,
+                "details": str(exc),
+            })
 
-    return missing
+    return missing, diagnostics
 
 
-missing_required = check_packages(REQUIRED_PACKAGES)
+missing_required, required_import_diagnostics = check_packages(REQUIRED_PACKAGES)
 
 numpy_conflict = False
+numpy_version_details = ""
 
 try:
     import numpy as _np_check
 
-    if _np_check.__version__.startswith("2."):
+    try:
+        from packaging.version import Version
+        numpy_version = Version(str(_np_check.__version__))
+        numpy_supported = Version("1.23") <= numpy_version < Version("2.0")
+    except Exception:
+        version_parts = str(_np_check.__version__).split(".")
+        numpy_supported = (
+            len(version_parts) >= 2
+            and version_parts[0].isdigit()
+            and version_parts[1].isdigit()
+            and int(version_parts[0]) == 1
+            and int(version_parts[1]) >= 23
+        )
+    if not numpy_supported:
         numpy_conflict = True
+        numpy_version_details = f"installed numpy={_np_check.__version__}; required >=1.23,<2.0"
         if "numpy<2" not in missing_required:
             missing_required.append("numpy<2")
 except ImportError:
     numpy_conflict = True
+    numpy_version_details = "numpy is not importable; required >=1.23,<2.0"
     if "numpy<2" not in missing_required:
         missing_required.append("numpy<2")
 
 if missing_required or numpy_conflict:
-    st.set_page_config(page_title=t('install.page_title'), layout="centered")
     st.title(t('install.title'))
 
     if missing_required:
         st.error(t('install.missing_packages', packages=', '.join(missing_required)))
+        failed_import_diagnostics = [
+            row for row in required_import_diagnostics
+            if row.get("status") != "ok"
+        ]
+        if failed_import_diagnostics:
+            st.dataframe(
+                failed_import_diagnostics,
+                width="stretch",
+                hide_index=True,
+            )
 
     if numpy_conflict:
         st.error(t('install.numpy_conflict'))
+        if numpy_version_details:
+            st.code(numpy_version_details)
 
-    if st.button(t('install.install_button'), type="primary"):
-        with st.spinner(t('install.spinner_text')):
-            install_list = []
+    st.warning(
+        "Автоматическая установка пакетов из интерфейса отключена: она может сломать окружение "
+        "и не покрывает внешние зависимости вроде Java для PaDEL, Julia для PySR и системных библиотек xTB."
+    )
+    missing_required_packages = [
+        str(item).split(" (", 1)[0]
+        for item in missing_required
+        if str(item).split(" (", 1)[0] != "numpy<2"
+    ]
+    if numpy_conflict and "numpy<2" not in missing_required_packages:
+        missing_required_packages.append("numpy<2")
+    if missing_required_packages:
+        st.markdown("Install only the missing required packages:")
+        st.code(
+            f"{sys.executable} -m pip install " + " ".join(missing_required_packages),
+            language="bash",
+        )
+    st.markdown("Optional extensions are installed separately when needed:")
+    st.code(
+        f"{sys.executable} -m pip install xgboost lightgbm catboost\n"
+        f"{sys.executable} -m pip install mordred padelpy shap jcamp\n"
+        f"{sys.executable} -m pip install pysr xtb",
+        language="bash",
+    )
+    st.info("Используйте `requirements-online.txt`, `requirements-local.txt` или `requirements-full.txt` в отдельном установщике/терминале.")
 
-            for pkg_key, pkg_info in REQUIRED_PACKAGES.items():
-                if isinstance(pkg_info, tuple):
-                    install_list.append(pkg_info[1])
-                else:
-                    install_list.append(pkg_key)
-
-            for pkg in OPTIONAL_PACKAGES:
-                install_list.append(pkg)
-
-            cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "--user"] + install_list
-            result = subprocess.run(cmd, capture_output=True, text=True)
-
-            if result.returncode == 0:
-                st.success(t('install.success'))
-                st.info(t('install.java_required'))
-            else:
-                st.error(t('install.error_manual'))
-                st.code(f"{sys.executable} -m pip install --user {' '.join(install_list)}")
-
+    st.warning("After installing packages, restart the Streamlit/Python process so the app can load the new environment.")
+    st.info("If Streamlit itself is missing, run `py install_augur.py --profile local` from a terminal first.")
     st.stop()
 
 # ------------------------------------------------------------------
@@ -519,6 +970,70 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.linear_model import LinearRegression
+from modules import applicability_domain_core
+from modules.methodology_generator import generate_methodology_text
+from modules.module_explain_ui import render_module_explanation
+from modules.module_registry import module_overview_markdown
+from modules.report_generator import generate_full_report
+from modules.save_model_ui import render_verified_model_save
+from modules.validation_ui import render_validation_section
+from modules.error_analysis_ui import render_error_analysis_section
+from modules.comparison_ui import render_model_comparison_section
+from modules.consensus_ui import render_consensus_section
+from modules.diagnostics_ui import render_model_diagnostics_section
+from modules.installation_diagnostics_ui import render_installation_diagnostics_section
+from modules.training_ui import render_training_section
+from modules.report_ui import render_report_section
+from modules.statistics_summary_ui import render_final_statistics_summary
+from modules.chemical_diversity_ui import render_chemical_diversity_section
+from modules.model_catalog import MODEL_GROUP_LINEAR
+from modules.training_ui import MODEL_GROUP_TREE_ENSEMBLES
+from modules.runtime_mode import qspr_runtime_mode as shared_qspr_runtime_mode
+from modules.analysis_state import (
+    ALGORITHM_VERSIONS,
+    analysis_config_from_session,
+    analysis_config_to_dict,
+    analysis_result_hash,
+    attach_result_cache_metadata,
+    cached_result_is_current,
+    dataset_signature,
+    ensure_analysis_bundle,
+    reset_analysis_nodes,
+    sync_analysis_bundle_from_session,
+    update_analysis_bundle,
+)
+from modules.system_error_log import log_exception as augur_log_exception
+from modules.system_error_log import log_message as augur_log_message
+from modules.i18n import (
+    gettext,
+    set_language,
+    t,
+    load_language,
+    validate_translation_keys,
+)
+
+query_lang = _query_param_lang()
+if query_lang and st.session_state.get("lang") != query_lang:
+    st.session_state.lang = query_lang
+    st.session_state.lang_from_url = True
+elif "lang" not in st.session_state:
+    initial_lang = _browser_lang() or "ru"
+    st.session_state.lang = initial_lang
+    st.session_state.lang_auto_detected = initial_lang
+
+set_language(st.session_state.lang)
+
+@st.cache_data(show_spinner=False)
+def _cached_validate_translation_keys(project_root):
+    return validate_translation_keys(project_root)
+
+
+translation_key_issues = {}
+if _qspr_bool_setting(os.environ.get("AUGUR_VALIDATE_TRANSLATIONS")):
+    translation_key_issues = _cached_validate_translation_keys(
+        os.path.dirname(os.path.abspath(__file__))
+    )
 
 warnings.filterwarnings(
     "ignore",
@@ -580,7 +1095,7 @@ def _streamlit_safe_table_data(data):
     return safe
 
 
-def safe_histplot(ax, data, bins=30, kde=False, **kwargs):
+def _safe_histplot_legacy_unused(ax, data, bins=30, kde=False, **kwargs):
     """
     Безопасная гистограмма: очищает данные, ограничивает выбросы,
     строит через ax.hist с фиксированным числом бинов.
@@ -609,8 +1124,69 @@ def safe_histplot(ax, data, bins=30, kde=False, **kwargs):
             ax.plot(x_grid, kde_obj(x_grid) * len(d) * bin_width,
                     'r-', linewidth=2, label='KDE')
             ax.legend()
-        except:
-            pass
+        except Exception as exc:
+            return {"kde_status": "failed", "kde_reason": str(exc)}
+
+def safe_histplot(
+    ax,
+    data,
+    bins=30,
+    kde=False,
+    trim_extremes_only_for_plot=False,
+    lower_percentile=1.0,
+    upper_percentile=99.0,
+    **kwargs,
+):
+    """Plot a histogram and return diagnostics about visual trimming and KDE."""
+    result = {
+        "n_input": 0,
+        "n_plotted": 0,
+        "trimmed_count": 0,
+        "trimmed": False,
+        "trim_range": None,
+        "kde_status": "not_requested" if not kde else "not_run",
+        "kde_reason": "",
+    }
+    d = np.asarray(data)
+    d = d[np.isfinite(d)]
+    result["n_input"] = int(len(d))
+    if len(d) == 0:
+        result["kde_status"] = "skipped"
+        result["kde_reason"] = "no finite values"
+        return result
+    if trim_extremes_only_for_plot:
+        q_low, q_high = np.percentile(d, [float(lower_percentile), float(upper_percentile)])
+        if q_high > q_low:
+            before_trim = len(d)
+            d = d[(d >= q_low) & (d <= q_high)]
+            result["trimmed"] = True
+            result["trimmed_count"] = int(before_trim - len(d))
+            result["trim_range"] = (float(q_low), float(q_high))
+    if len(d) == 0:
+        result["kde_status"] = "skipped"
+        result["kde_reason"] = "all values hidden by visual trimming"
+        return result
+    result["n_plotted"] = int(len(d))
+    ax.hist(d, bins=bins, **kwargs)
+    if kde:
+        try:
+            from scipy.stats import gaussian_kde
+            if len(d) < 2:
+                raise ValueError("KDE requires at least two values")
+            if np.nanstd(d) <= 1e-12:
+                raise ValueError("KDE is undefined for nearly identical values")
+            kde_obj = gaussian_kde(d)
+            x_grid = np.linspace(d.min(), d.max(), 200)
+            bin_width = (d.max() - d.min()) / bins
+            ax.plot(x_grid, kde_obj(x_grid) * len(d) * bin_width,
+                    'r-', linewidth=2, label='KDE')
+            ax.legend()
+            result["kde_status"] = "ok"
+        except Exception as exc:
+            result["kde_status"] = "failed"
+            result["kde_reason"] = str(exc)
+    return result
+
 
 from scipy.spatial.distance import mahalanobis
 from scipy.stats import chi2, norm
@@ -635,14 +1211,6 @@ try:
 except Exception:
     shap_available = False
 
-# ------------------------------------------------------------------
-# Streamlit page config
-
-st.set_page_config(
-    page_title=t('main.page_title'),
-    layout="wide"
-)
-
 if translation_key_issues:
     with st.sidebar.expander("⚠️ i18n", expanded=False):
         st.warning("Обнаружены отсутствующие ключи локализации.")
@@ -653,7 +1221,7 @@ if translation_key_issues:
             )
 
 # ------------------------------------------------------------------
-# Подключение модулей GenQSPR
+# Подключение модулей Augur QSPR
 
 try:
     for _secret_key in [
@@ -675,32 +1243,39 @@ try:
         if _secret_value:
             os.environ.setdefault(_secret_key, str(_secret_value))
 
-    import modules.spectra_core as spectra_core_module
-    from modules.spectra_core import *
-    from modules.qspr_core import *
-    from modules.saod2_core import *
-    from modules.structural_filter_core import *
-    from modules.prognostic_model_core import *
-    from modules.descriptor_bank_core import *
-    from modules.descriptor_importance_core import *
-    from modules.error_analysis_core import *
+    from modules import descriptor_bank_core
+    from modules import descriptor_importance_core
+    from modules import error_analysis_core
+    from modules import prognostic_model_core
+    from modules import qspr_core
+    from modules import saod2_core
+    from modules import spectra_core as spectra_core_module
+    from modules import structural_filter_core
 
 
     try:
-        from modules.morfeus_descriptor_core import *
-        morfeus_available, morfeus_import_error = morfeus_is_available()
+        from modules import morfeus_descriptor_core
+        morfeus_available, morfeus_import_error = morfeus_descriptor_core.morfeus_is_available()
     except Exception as morfeus_e:
+        morfeus_descriptor_core = None
         morfeus_available = False
         morfeus_import_error = str(morfeus_e)
 
     try:
-        from modules.dscribe_descriptor_core import *
-        dscribe_available, dscribe_import_error = dscribe_is_available()
+        from modules import dscribe_descriptor_core
+        dscribe_available, dscribe_import_error = dscribe_descriptor_core.dscribe_is_available()
     except Exception as dscribe_e:
+        dscribe_descriptor_core = None
         dscribe_available = False
         dscribe_import_error = str(dscribe_e)
 
 except Exception as e:
+    augur_log_exception(
+        module="qspr_app",
+        function="module_imports",
+        exc=e,
+        run_context={"augur_mode": os.environ.get("AUGUR_MODE", ""), "python": sys.version.split()[0]},
+    )
     st.error(t('modules.import_error'))
     st.exception(e)
     st.stop()
@@ -710,6 +1285,7 @@ except Exception as e:
 
 RESULTS_DIR = "results"
 DATA_BANK_FILE = "data_bank.csv"
+DATA_BANK_DUPLICATE_POLICY_DEFAULT = "overwrite_new"
 HELP_DIR = "help"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(HELP_DIR, exist_ok=True)
@@ -1345,7 +1921,7 @@ def show_dataset_change_report(
         hide_index=True
     )
 
-    csv_removed = removed_view.to_csv(index=False).encode("utf-8")
+    csv_removed = qspr_core.qspr_csv_download_bytes(removed_view)
 
     st.download_button(
         t('dataset_change.download_removed'),
@@ -1417,6 +1993,9 @@ def fit_incremental_contributions(
         raise ValueError(t('incremental.no_increments'))
 
     work = data.copy()
+    work["row_position"] = np.arange(len(work), dtype=int)
+    if "source_index" not in work.columns:
+        work["source_index"] = list(data.index)
 
     work[target_col] = incremental_to_numeric(work[target_col])
 
@@ -1448,17 +2027,25 @@ def fit_incremental_contributions(
     y_pred = np.ravel(model.predict(X))
     errors = y - y_pred
 
-    metrics = qspr_metrics(y, y_pred)
+    metrics = qspr_core.qspr_metrics(y, y_pred)
 
     coef_table = pd.DataFrame({
         t('incremental.coef_table_group'): increment_cols,
-        t('incremental.coef_table_contribution'): model.coef_
+        t('incremental.coef_table_contribution'): model.coef_,
+        "coefficient_scale": "increment_feature_scale",
+        "coefficient_note": (
+            "Coefficients are valid for the feature scale used by this model. "
+            "Do not publish as raw-unit descriptor equation unless inverse "
+            "scaling is explicitly applied."
+        ),
     })
 
     if use_intercept:
         intercept_row = pd.DataFrame({
             t('incremental.coef_table_group'): [t('incremental.intercept')],
-            t('incremental.coef_table_contribution'): [model.intercept_]
+            t('incremental.coef_table_contribution'): [model.intercept_],
+            "coefficient_scale": ["intercept"],
+            "coefficient_note": [""],
         })
 
         coef_table = pd.concat(
@@ -1492,7 +2079,9 @@ def fit_incremental_contributions(
         "result_table": result_table,
         "metrics": metrics,
         "equation": equation,
-        "valid_indices": work_valid.index.tolist(),
+        "valid_indices": work_valid["row_position"].astype(int).tolist(),
+        "row_positions": work_valid["row_position"].astype(int).tolist(),
+        "source_indices": work_valid["source_index"].tolist(),
         "increment_cols": increment_cols,
         "target_col": target_col,
         "use_intercept": use_intercept
@@ -1825,33 +2414,11 @@ def qspr_standardize_molecule_dataset(
     if input_df is None or input_df.empty:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-def qspr_standardize_molecule_dataset(
-    input_df,
-    smiles_col,
-    target_col=None,
-    remove_duplicates_by_inchikey=False
-):
-    """
-    Стандартизация структур перед расчётом дескрипторов.
-
-    Делает:
-    - проверку SMILES;
-    - выбор главного фрагмента;
-    - очистку/нормализацию;
-    - нейтрализацию зарядов;
-    - canonical SMILES;
-    - InChIKey;
-    - диагностику смесей, неорганики, металлоорганики, полимерных/неполных записей;
-    - удаление дубликатов по InChIKey.
-    """
-    if input_df is None or input_df.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
     if smiles_col not in input_df.columns:
         raise ValueError(t('standardization.smiles_column_not_found', col=smiles_col))
 
     work = input_df.copy()
-    work = work.loc[:, ~work.columns.duplicated()].copy()
+    work = qspr_core.qspr_rename_duplicate_columns(work)
     rows = []
 
     metal_atomic_numbers = {
@@ -1870,10 +2437,15 @@ def qspr_standardize_molecule_dataset(
 
         result = row.to_dict()
         result["Номер исходной строки"] = idx + 1
+        result["input_smiles"] = raw_smiles
         result["input_smiles_original"] = raw_smiles
+        result["parent_smiles"] = ""
         result["standardized_smiles"] = ""
         result["canonical_smiles"] = ""
         result["inchikey"] = ""
+        result["fragment_removed"] = False
+        result["charge_changed"] = False
+        result["standardization_changed_structure"] = False
         result["standardization_status"] = ""
         result["standardization_warnings"] = ""
 
@@ -1918,15 +2490,28 @@ def qspr_standardize_molecule_dataset(
             elif has_metal:
                 warnings.append(t('standardization.warning_metal'))
 
-            try:
-                mol = chooser.choose(mol)
-            except Exception:
-                warnings.append(t('standardization.warning_fragment_fail'))
+            input_canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
+            input_formal_charge = Chem.GetFormalCharge(mol)
+            input_fragment_count = len(Chem.GetMolFrags(mol, asMols=False))
 
             try:
-                mol = rdMolStandardize.Cleanup(mol)
+                parent_mol = chooser.choose(mol)
+            except Exception:
+                warnings.append(t('standardization.warning_fragment_fail'))
+                parent_mol = mol
+
+            parent_smiles = Chem.MolToSmiles(parent_mol, canonical=True)
+            parent_formal_charge = Chem.GetFormalCharge(parent_mol)
+            fragment_removed = (
+                input_fragment_count > 1
+                or parent_smiles != input_canonical_smiles
+            )
+
+            try:
+                mol = rdMolStandardize.Cleanup(parent_mol)
             except Exception:
                 warnings.append(t('standardization.warning_cleanup'))
+                mol = parent_mol
 
             try:
                 mol = normalizer.normalize(mol)
@@ -1940,15 +2525,29 @@ def qspr_standardize_molecule_dataset(
 
             standardized_smiles = Chem.MolToSmiles(mol, canonical=False)
             canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
+            standardized_formal_charge = Chem.GetFormalCharge(mol)
+            charge_changed = (
+                input_formal_charge != parent_formal_charge
+                or parent_formal_charge != standardized_formal_charge
+            )
+            standardization_changed_structure = (
+                fragment_removed
+                or charge_changed
+                or canonical_smiles != input_canonical_smiles
+            )
 
             try:
                 inchikey = Chem.MolToInchiKey(mol)
             except Exception:
                 inchikey = ""
 
+            result["parent_smiles"] = parent_smiles
             result["standardized_smiles"] = standardized_smiles
             result["canonical_smiles"] = canonical_smiles
             result["inchikey"] = inchikey
+            result["fragment_removed"] = bool(fragment_removed)
+            result["charge_changed"] = bool(charge_changed)
+            result["standardization_changed_structure"] = bool(standardization_changed_structure)
             result["standardization_status"] = "ok"
             result["standardization_warnings"] = "; ".join(warnings)
 
@@ -2085,7 +2684,7 @@ def qspr_analyze_dataset_for_qspr(data, smiles_col, target_col):
     - классы веществ.
     """
     work = data.copy()
-    work = work.loc[:, ~work.columns.duplicated()].copy()
+    work = qspr_core.qspr_rename_duplicate_columns(work)
 
     y = pd.to_numeric(
         work[target_col].astype(str).str.replace(",", ".", regex=False),
@@ -2285,7 +2884,7 @@ def qspr_make_dataset_passport(
         return empty_passport, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     work = data.copy()
-    work = work.loc[:, ~work.columns.duplicated()].copy()
+    work = qspr_core.qspr_rename_duplicate_columns(work)
 
     if smiles_col not in work.columns:
         raise ValueError(t('passport.smiles_column_not_found', col=smiles_col))
@@ -2559,10 +3158,10 @@ def qspr_detect_data_leakage_columns(
         return x
 
     target_norm = normalize_name(target_col)
+    target_name_can_match_inside = len(target_norm) >= 3
 
     suspicious_tokens = [
         "target",
-        "y",
         "label",
         "property",
         "value",
@@ -2606,45 +3205,82 @@ def qspr_detect_data_leakage_columns(
     ]
 
     rows = []
+    y_series_for_leakage = None
+    y_length_mismatch = False
+    if data is not None and y is not None:
+        try:
+            y_values = np.asarray(y).reshape(-1)
+            if len(y_values) == len(data):
+                y_series_for_leakage = pd.Series(y_values, index=data.index)
+                y_series_for_leakage = pd.to_numeric(
+                    y_series_for_leakage.astype(str).str.replace(",", ".", regex=False),
+                    errors="coerce"
+                )
+            else:
+                y_length_mismatch = True
+        except Exception:
+            y_series_for_leakage = None
 
     for col in descriptor_cols:
         col_str = str(col)
         col_lower = col_str.lower().strip()
         col_norm = normalize_name(col_str)
 
-        reasons = []
+        explicit_reasons = []
+        possible_reasons = []
+        strong_predictor_reasons = []
+        correlation_to_target = np.nan
 
         if col_str == target_col:
-            reasons.append(t('data_leakage.reason_identical'))
+            explicit_reasons.append(t('data_leakage.reason_identical'))
 
         if col_lower == target_lower or col_norm == target_norm:
-            reasons.append(t('data_leakage.reason_name_match'))
+            explicit_reasons.append(t('data_leakage.reason_name_match'))
 
-        if target_norm and target_norm in col_norm:
-            reasons.append(t('data_leakage.reason_contains_target'))
+        if target_name_can_match_inside and target_norm in col_norm:
+            possible_reasons.append(t('data_leakage.reason_contains_target'))
 
         for part in target_parts:
             if part in col_lower or part in col_norm:
-                reasons.append(t('data_leakage.reason_contains_part', part=part))
+                possible_reasons.append(t('data_leakage.reason_contains_part', part=part))
 
         for token in suspicious_tokens:
             token_norm = normalize_name(token)
 
             if token_norm and token_norm in col_norm:
-                reasons.append(t('data_leakage.reason_suspicious_token', token=token))
+                possible_reasons.append(t('data_leakage.reason_suspicious_token', token=token))
 
-        if data is not None and y is not None and col in data.columns:
+        explicit_name_tokens = {
+            "y",
+            "target",
+            "targetcopy",
+            "copyoftarget",
+            "predictedy",
+            "predy",
+            "ypred",
+            "yhat",
+            "ytrue",
+            "truey",
+            "prediction",
+            "predicted",
+            "residual",
+            "residuals",
+            "error",
+        }
+        if col_norm in explicit_name_tokens:
+            explicit_reasons.append("explicit target-derived column name")
+
+        if y_length_mismatch:
+            possible_reasons.append("target length does not match data rows; leakage correlation check skipped")
+
+        if data is not None and y_series_for_leakage is not None and col in data.columns:
             try:
                 x = pd.to_numeric(
                     data[col].astype(str).str.replace(",", ".", regex=False),
                     errors="coerce"
                 )
 
-                y_series = pd.Series(y, index=data.index)
-                y_series = pd.to_numeric(
-                    y_series.astype(str).str.replace(",", ".", regex=False),
-                    errors="coerce"
-                )
+                y_series = y_series_for_leakage
 
                 mask = x.notna() & y_series.notna()
 
@@ -2662,25 +3298,55 @@ def qspr_detect_data_leakage_columns(
                     same_ratio = float(np.mean(same_mask))
 
                     if same_ratio >= 0.98:
-                        reasons.append(t('data_leakage.reason_near_identical', ratio=same_ratio))
+                        possible_reasons.append(t('data_leakage.reason_near_identical', ratio=same_ratio))
 
                     if x_valid.nunique(dropna=True) > 1 and y_valid.nunique(dropna=True) > 1:
                         corr = float(np.corrcoef(x_valid.values, y_valid.values)[0, 1])
+                        correlation_to_target = corr
 
                         if np.isfinite(corr) and abs(corr) >= correlation_threshold:
-                            reasons.append(t('data_leakage.reason_high_correlation', corr=corr))
+                            strong_predictor_reasons.append(t('data_leakage.reason_high_correlation', corr=corr))
 
             except Exception:
                 pass
+
+        if explicit_reasons:
+            leakage_class = "explicit_leakage"
+            reasons = explicit_reasons + possible_reasons + strong_predictor_reasons
+            recommendation = "remove_before_training"
+        elif possible_reasons:
+            leakage_class = "possible_leakage"
+            reasons = possible_reasons + strong_predictor_reasons
+            recommendation = "review_origin_before_training"
+        elif strong_predictor_reasons:
+            leakage_class = "strong_predictor"
+            reasons = strong_predictor_reasons
+            recommendation = "keep_if_physically_meaningful"
+        else:
+            leakage_class = ""
+            reasons = []
+            recommendation = ""
 
         if reasons:
             rows.append({
                 t('data_leakage.col'): col_str,
                 t('data_leakage.reasons'): "; ".join(sorted(set(reasons))),
-                t('data_leakage.recommendation'): t('data_leakage.recommendation_text')
+                t('data_leakage.recommendation'): t('data_leakage.recommendation_text'),
+                "leakage_class": leakage_class,
+                "correlation_to_target": correlation_to_target,
+                "recommended_action": recommendation,
             })
 
     return pd.DataFrame(rows)
+
+
+def qspr_leakage_has_blockers(leakage_df):
+    if leakage_df is None or not isinstance(leakage_df, pd.DataFrame) or leakage_df.empty:
+        return False
+    if "leakage_class" not in leakage_df.columns:
+        return True
+    blocking = {"explicit_leakage", "possible_leakage"}
+    return bool(leakage_df["leakage_class"].astype(str).isin(blocking).any())
 
 
 def qspr_show_data_leakage_warning(leakage_df, title=t('data_leakage.warning_title')):
@@ -2690,7 +3356,10 @@ def qspr_show_data_leakage_warning(leakage_df, title=t('data_leakage.warning_tit
     if leakage_df is None or not isinstance(leakage_df, pd.DataFrame) or leakage_df.empty:
         return False
 
-    st.warning(t('data_leakage.warning_text'))
+    if qspr_leakage_has_blockers(leakage_df):
+        st.warning(t('data_leakage.warning_text'))
+    else:
+        st.info("High correlation alone is reported as a strong predictor, not as confirmed leakage.")
 
     with st.expander(title, expanded=True):
         st.dataframe(
@@ -2829,7 +3498,7 @@ def qspr_descriptor_group_selection_ui(mode, desc_lists):
     - RDKit: только RDKit-группы;
     - Mordred: RDKit + Mordred;
     - Умный: RDKit + Mordred + уникальные PaDEL;
-    - Максимальная точность: RDKit + Mordred + все доступные PaDEL.
+    - max_coverage: RDKit + Mordred + all available PaDEL.
     """
     desc_lists = desc_lists or {}
 
@@ -2847,7 +3516,7 @@ def qspr_descriptor_group_selection_ui(mode, desc_lists):
     padel_fingerprints = desc_lists.get("padel_fingerprints", []) or []
     padel_1d2d = desc_lists.get("padel_1d2d", []) or []
 
-    if mode == "max_accuracy":
+    if mode == "max_coverage":
         if padel_all:
             padel_source_names = padel_all
             padel_source_label = t('descriptor_groups.padel_all_label',
@@ -3014,18 +3683,18 @@ def qspr_descriptor_group_selection_ui(mode, desc_lists):
         "rdkit_fast",
         "mordred",
         "mordred_padel_unique",
-        "max_accuracy",
+        "max_coverage",
     }
 
     use_mordred = mode in {
         "mordred",
         "mordred_padel_unique",
-        "max_accuracy",
+        "max_coverage",
     }
 
     use_padel = mode in {
         "mordred_padel_unique",
-        "max_accuracy",
+        "max_coverage",
     }
 
     st.markdown(t('descriptor_groups.molecular_groups_title'))
@@ -3051,13 +3720,13 @@ def qspr_descriptor_group_selection_ui(mode, desc_lists):
         )
 
     if use_padel:
-        if mode == "max_accuracy" and not padel_all:
+        if mode == "max_coverage" and not padel_all:
             st.warning(t('descriptor_groups.warning_max_accuracy_no_padel_all'))
 
         if mode == "mordred_padel_unique":
             st.info(t('descriptor_groups.info_smart_mode', count=len(padel_unique)))
 
-        if mode == "max_accuracy":
+        if mode == "max_coverage":
             st.info(t('descriptor_groups.info_max_accuracy_mode',
                 total=len(padel_all),
                 unique=len(padel_unique)
@@ -3179,7 +3848,7 @@ def spectra_resolve_saved_files_from_message(result_row):
 
     return row
 
-def spectra_build_search_cache_lookup():
+def _spectra_build_search_cache_lookup_legacy():
     """
     Быстро строит словари журнала уже проверенных спектров.
 
@@ -3189,7 +3858,7 @@ def spectra_build_search_cache_lookup():
     во внешний поиск, даже если спектр тогда не был найден.
     """
     try:
-        cache_df = spectra_load_search_cache()
+        cache_df = spectra_core_module.spectra_load_search_cache()
     except Exception:
         cache_df = pd.DataFrame()
 
@@ -3223,7 +3892,7 @@ def spectra_build_search_cache_lookup():
     work["inchikey"] = work["inchikey"].astype(str).str.strip()
     work["canonical_smiles"] = work["canonical_smiles"].astype(str).str.strip()
     work["_spectrum_type_norm"] = work["spectrum_type"].astype(str).apply(
-        spectra_normalize_spectrum_type
+        spectra_core_module.spectra_normalize_spectrum_type
     )
 
     # Более свежие записи должны перезаписывать старые.
@@ -3260,7 +3929,7 @@ def spectra_build_existing_bank_lookup():
     bank_by_smiles = {}
 
     try:
-        index_df = spectra_load_index()
+        index_df = spectra_core_module.spectra_load_index()
     except Exception:
         index_df = pd.DataFrame()
 
@@ -3289,7 +3958,7 @@ def spectra_build_existing_bank_lookup():
     work["inchikey"] = work["inchikey"].astype(str).str.strip()
     work["canonical_smiles"] = work["canonical_smiles"].astype(str).str.strip()
     work["_spectrum_type_norm"] = work["spectrum_type"].astype(str).apply(
-        spectra_normalize_spectrum_type
+        spectra_core_module.spectra_normalize_spectrum_type
     )
 
     active_values = ["true", "1", "yes", "y", "да", "active", ""]
@@ -3336,7 +4005,7 @@ def spectra_build_search_cache_lookup():
     cache_by_smiles = {}
 
     try:
-        cache_df = spectra_load_search_cache()
+        cache_df = spectra_core_module.spectra_load_search_cache()
     except Exception:
         cache_df = pd.DataFrame()
 
@@ -3367,7 +4036,7 @@ def spectra_build_search_cache_lookup():
     work["inchikey"] = work["inchikey"].astype(str).str.strip()
     work["canonical_smiles"] = work["canonical_smiles"].astype(str).str.strip()
     work["_spectrum_type_norm"] = work["spectrum_type"].astype(str).apply(
-        spectra_normalize_spectrum_type
+        spectra_core_module.spectra_normalize_spectrum_type
     )
 
     for _, row in work.iterrows():
@@ -3418,7 +4087,7 @@ def spectra_make_skipped_result_row(
         "canonical_smiles": compound.get("canonical_smiles", ""),
         "inchikey": compound.get("inchikey", ""),
         "structure_status": compound.get("structure_status", ""),
-        "spectrum_type": spectra_normalize_spectrum_type(spectrum_type),
+        "spectrum_type": spectra_core_module.spectra_normalize_spectrum_type(spectrum_type),
         "spectrum_status": status,
         "selected_source": selected_source,
         "candidate_count": candidate_count,
@@ -3495,6 +4164,11 @@ def _log_compact_mapping(mapping):
             continue
         if isinstance(value, float):
             parts.append(f"{key}={value:.4g}")
+        elif isinstance(value, dict):
+            compact = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+            if len(compact) > 180:
+                compact = compact[:177] + "..."
+            parts.append(f"{key}={compact}")
         else:
             parts.append(f"{key}={value}")
     return ", ".join(parts)
@@ -3514,6 +4188,43 @@ def _log_format_event(event, include_details=True):
     )
 
 
+def _analysis_config_hash(config_payload):
+    payload = {
+        "analysis_config": config_payload,
+        "algorithm_versions": dict(ALGORITHM_VERSIONS),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8", errors="replace")
+    ).hexdigest()
+
+
+def _current_reproducibility_context(details=None):
+    details = dict(details or {})
+    config_payload = analysis_config_to_dict(analysis_config_from_session(st.session_state))
+    desc_names = st.session_state.get("desc_names") or st.session_state.get("molecular_desc_names") or []
+    data_obj = st.session_state.get("data")
+    record_count = None
+    try:
+        if data_obj is not None:
+            record_count = int(len(data_obj))
+    except Exception:
+        record_count = None
+    descriptor_count = None
+    try:
+        descriptor_count = int(len(desc_names))
+    except Exception:
+        descriptor_count = None
+    model_params = details.get("model_params", details.get("params", {}))
+    return {
+        "dataset_hash": st.session_state.get("dataset_signature", ""),
+        "config_hash": _analysis_config_hash(config_payload),
+        "random_seed": config_payload.get("random_seed"),
+        "model_params": model_params if isinstance(model_params, dict) else {},
+        "descriptor_count": descriptor_count,
+        "record_count": record_count,
+    }
+
+
 def add_event_log(stage, message, level="info", details=None, event=None):
     """Adds one structured research-journal event."""
     if "logs" not in st.session_state:
@@ -3524,17 +4235,39 @@ def add_event_log(stage, message, level="info", details=None, event=None):
     level = _log_normalize_level(level)
     stage = _log_normalize_stage(stage)
     now = datetime.now()
+    now_iso = now.isoformat(timespec="seconds")
+    if not st.session_state.get("analysis_started_at"):
+        st.session_state.analysis_started_at = now_iso
+    st.session_state.analysis_finished_at = now_iso
+    details_payload = dict(details or {})
+    details_payload.setdefault("reproducibility", _current_reproducibility_context(details_payload))
 
     entry = {
-        "timestamp": now.isoformat(timespec="seconds"),
+        "timestamp": now_iso,
         "time": now.strftime("%H:%M:%S"),
         "stage": stage,
         "event": str(event or "event"),
         "level": level,
         "message": str(message),
-        "details": dict(details or {}),
+        "details": details_payload,
     }
+    st.session_state.log_events.append(entry)
+    st.session_state.logs.append(_log_format_event(entry))
 
+    if level in {"ERROR", "WARNING"}:
+        augur_log_message(
+            module="qspr_app",
+            function="add_event_log",
+            level=level,
+            message=message,
+            params={"stage": stage, "event": entry["event"], "details": entry["details"]},
+            run_context={"augur_mode": os.environ.get("AUGUR_MODE", "")},
+        )
+
+    if len(st.session_state.log_events) > 500:
+        st.session_state.log_events = st.session_state.log_events[-500:]
+    if len(st.session_state.logs) > 500:
+        st.session_state.logs = st.session_state.logs[-500:]
 
 def render_spectra_search_results_if_available():
     results = st.session_state.get("spectra_search_results")
@@ -3576,7 +4309,7 @@ def render_spectra_search_results_if_available():
             search_results_df[col] = False if col == "_from_real_search" else ""
 
     status_norm = search_results_df["spectrum_status"].astype(str).str.strip().str.lower()
-    type_norm = search_results_df["spectrum_type"].astype(str).str.strip().apply(spectra_normalize_spectrum_type)
+    type_norm = search_results_df["spectrum_type"].astype(str).str.strip().apply(spectra_core_module.spectra_normalize_spectrum_type)
     real_search_mask = (
         search_results_df["_from_real_search"]
         .astype(str)
@@ -3660,7 +4393,7 @@ def render_spectra_search_results_if_available():
         search_results_df["spectrum_type"]
         .astype(str)
         .str.strip()
-        .apply(spectra_normalize_spectrum_type)
+        .apply(spectra_core_module.spectra_normalize_spectrum_type)
     )
 
     status_summary = (
@@ -3691,7 +4424,7 @@ def render_spectra_search_results_if_available():
             "_from_real_search_bool",
         ],
         errors="ignore",
-    ).to_csv(index=False).encode("utf-8")
+    ).pipe(qspr_core.qspr_csv_download_bytes)
     st.download_button(
         "Скачать текущие результаты CSV",
         csv_search,
@@ -3700,15 +4433,6 @@ def render_spectra_search_results_if_available():
         key="download_current_spectra_search_results",
     )
     return True
-
-    st.session_state.log_events.append(entry)
-    st.session_state.logs.append(_log_format_event(entry))
-
-    if len(st.session_state.log_events) > 500:
-        st.session_state.log_events = st.session_state.log_events[-500:]
-    if len(st.session_state.logs) > 500:
-        st.session_state.logs = st.session_state.logs[-500:]
-
 
 def add_log(
     message,
@@ -3737,6 +4461,24 @@ def add_log(
 
 def log_streamlit_message(stage, message, level="warning", details=None, event=None):
     add_event_log(stage=stage, message=message, level=level, details=details, event=event)
+
+
+def qspr_log_exception(module, function, exc, params=None):
+    try:
+        path = augur_log_exception(
+            module=module,
+            function=function,
+            exc=exc,
+            params=params or {},
+            run_context={
+                "augur_mode": os.environ.get("AUGUR_MODE", ""),
+                "python": sys.version.split()[0],
+            },
+        )
+        st.session_state["last_system_error_log"] = path
+        return path
+    except Exception:
+        return ""
 
 
 VALIDATION_LABELS_RU = {
@@ -3836,6 +4578,155 @@ def validation_quality_text(quality):
     return VALIDATION_LABELS_RU.get(label, "не определено")
 
 
+VALIDATION_NOT_RUN = "VALIDATION_NOT_RUN"
+VALIDATION_FAILED = "VALIDATION_FAILED"
+VALIDATION_PARTIAL = "VALIDATION_PARTIAL"
+VALIDATION_COMPLETED = "VALIDATION_COMPLETED"
+VALIDATION_ACCEPTABLE = "VALIDATION_ACCEPTABLE"
+
+
+def qspr_validation_status(result):
+    if not isinstance(result, dict) or not result:
+        return VALIDATION_NOT_RUN
+    if str(result.get("cv_status", "")).lower() == "failed":
+        return VALIDATION_FAILED
+    if str(result.get("status", "")).lower() in {"failed", "error"}:
+        return VALIDATION_FAILED
+
+    summary = result.get("summary", {})
+    metrics_candidates = [
+        result.get("metrics_test"),
+        result.get("metrics"),
+        result.get("cv_metrics"),
+        summary if isinstance(summary, dict) else {},
+        result,
+    ]
+    finite_scores = []
+    for metrics in metrics_candidates:
+        if not isinstance(metrics, dict):
+            continue
+        for key in (
+            "R2",
+            "Q2",
+            "test_R2_mean",
+            "test_r2_mean",
+            "RMSE",
+            "test_RMSE_mean",
+            "test_rmse_mean",
+            "MAE",
+            "test_MAE_mean",
+            "test_mae_mean",
+        ):
+            value = _safe_float(metrics.get(key))
+            if value is not None:
+                finite_scores.append((key, value))
+
+    n_ok = result.get("n_ok", summary.get("n_ok") if isinstance(summary, dict) else None)
+    n_failed = result.get("n_failed", summary.get("n_failed") if isinstance(summary, dict) else None)
+    n_repeats = result.get("n_repeats", summary.get("n_repeats") if isinstance(summary, dict) else None)
+    n_test = None
+    for key in ("y_test", "test_indices", "test_smiles"):
+        value = result.get(key)
+        if value is not None:
+            try:
+                n_test = len(value)
+                break
+            except TypeError:
+                pass
+    if n_test is None and isinstance(summary, dict):
+        n_test = summary.get("test_n") or summary.get("n_test")
+
+    if n_ok is not None:
+        try:
+            if int(n_ok) <= 0:
+                return VALIDATION_FAILED
+        except (TypeError, ValueError):
+            pass
+    if not finite_scores:
+        return VALIDATION_FAILED
+
+    try:
+        if n_test is not None and int(n_test) < 5:
+            return VALIDATION_PARTIAL
+    except (TypeError, ValueError):
+        pass
+    try:
+        if n_failed is not None and int(n_failed) > 0:
+            return VALIDATION_PARTIAL
+    except (TypeError, ValueError):
+        pass
+    try:
+        if n_repeats is not None and n_ok is not None and int(n_ok) < int(n_repeats):
+            return VALIDATION_PARTIAL
+    except (TypeError, ValueError):
+        pass
+
+    score_values = {
+        key: value
+        for key, value in finite_scores
+        if "R2" in key.upper() or "Q2" in key.upper()
+    }
+    if score_values and max(score_values.values()) >= 0.50:
+        return VALIDATION_ACCEPTABLE
+    return VALIDATION_COMPLETED
+
+
+def qspr_current_validation_hash(model_name, validation_settings):
+    return analysis_result_hash(
+        st.session_state,
+        model_name,
+        params=get_model_params_from_session(),
+        validation_settings=validation_settings,
+        X=st.session_state.get("X_all"),
+        y=st.session_state.get("y_all"),
+        desc_names=st.session_state.get("desc_names"),
+        valid_indices=st.session_state.get("valid_indices"),
+    )
+
+
+def qspr_validation_result_is_current(model_name, result, expected_kind=None):
+    if not isinstance(result, dict) or not result.get("config_hash"):
+        return False
+    validation_settings = result.get("validation_settings")
+    if not isinstance(validation_settings, dict):
+        return False
+    if expected_kind is not None and validation_settings.get("kind") != expected_kind:
+        return False
+    return cached_result_is_current(
+        result,
+        qspr_current_validation_hash(model_name, validation_settings),
+    )
+
+
+def qspr_model_validation_status(model_name):
+    statuses = []
+    for store_name, expected_kind in (
+        ("holdout_results_dict", "holdout"),
+        ("kfold_results_dict", "kfold"),
+        ("loo_results_dict", "loo"),
+    ):
+        result = st.session_state.get(store_name, {}).get(model_name)
+        if qspr_validation_result_is_current(model_name, result, expected_kind):
+            statuses.append(qspr_validation_status(result))
+    ext_results = st.session_state.get("ext_validation_results_dict", {})
+    ext_result = ext_results.get(model_name)
+    if ext_result is None:
+        ext_global = st.session_state.get("ext_validation_result")
+        if isinstance(ext_global, dict) and ext_global.get("model_name") == model_name:
+            ext_result = ext_global
+    if qspr_validation_result_is_current(model_name, ext_result, "distance_holdout"):
+        statuses.append(qspr_validation_status(ext_result))
+    if VALIDATION_ACCEPTABLE in statuses:
+        return VALIDATION_ACCEPTABLE
+    if VALIDATION_COMPLETED in statuses:
+        return VALIDATION_COMPLETED
+    if VALIDATION_PARTIAL in statuses:
+        return VALIDATION_PARTIAL
+    if VALIDATION_FAILED in statuses:
+        return VALIDATION_FAILED
+    return VALIDATION_NOT_RUN
+
+
 def log_validation_result(method, model_name, result, y_values=None, details=None):
     details = dict(details or {})
     y_array = np.asarray(y_values, dtype=float) if y_values is not None else np.asarray([], dtype=float)
@@ -3933,6 +4824,8 @@ def log_repeated_holdout_result(model_name, result):
 
 def log_bootstrap_result(model_name, result):
     summary = result.get("summary", {})
+    config = analysis_config_from_session(st.session_state)
+    p95_ratio_threshold = float(config.bootstrap_rmse_p95_ratio_threshold)
     quality = interpret_validation_quality(
         r2=summary.get("r2_oob_mean"),
         rmse=summary.get("rmse_oob_mean"),
@@ -3943,7 +4836,39 @@ def log_bootstrap_result(model_name, result):
     rmse_values = pd.to_numeric(iterations.get("RMSE OOB", pd.Series(dtype=float)), errors="coerce").dropna()
     p95_rmse = float(rmse_values.quantile(0.95)) if not rmse_values.empty else None
     median_rmse = float(rmse_values.median()) if not rmse_values.empty else None
-    if p95_rmse is not None and median_rmse not in (None, 0) and p95_rmse > 2.0 * median_rmse:
+    target_sd = _safe_float(summary.get("target_sd"))
+    rmse_p95_increase = (
+        p95_rmse - median_rmse
+        if p95_rmse is not None and median_rmse is not None
+        else None
+    )
+    rmse_p95_increase_target_sd_fraction = (
+        rmse_p95_increase / target_sd
+        if rmse_p95_increase is not None and target_sd not in (None, 0)
+        else None
+    )
+    absolute_increase_threshold = 0.05 * target_sd if target_sd not in (None, 0) else None
+    ratio_instability = (
+        p95_rmse is not None
+        and median_rmse not in (None, 0)
+        and p95_rmse > p95_ratio_threshold * median_rmse
+    )
+    normalized_instability = (
+        ratio_instability
+        and (
+            absolute_increase_threshold is None
+            or (
+                rmse_p95_increase is not None
+                and rmse_p95_increase >= absolute_increase_threshold
+            )
+        )
+    )
+    result["quality_thresholds"] = {
+        "bootstrap_rmse_p95_ratio_threshold": p95_ratio_threshold,
+        "bootstrap_rmse_p95_absolute_increase_min_target_sd_fraction": 0.05,
+        "indicator_type": "heuristic",
+    }
+    if normalized_instability:
         quality = {"label": "unstable", "level": "warning", "reasons": ["P95 RMSE сильно выше медианы"]}
 
     message = (
@@ -3963,18 +4888,44 @@ def log_bootstrap_result(model_name, result):
             "failed_iterations": summary.get("n_iterations_skipped_or_failed"),
             "mae_oob": _fmt_mean_std(summary.get("mae_oob_mean"), summary.get("mae_oob_std")),
             "quality_reasons": "; ".join(quality.get("reasons", [])),
+            "indicator_type": "heuristic",
+            "rmse_p95_ratio_threshold": p95_ratio_threshold,
+            "rmse_p95": _fmt_metric(p95_rmse),
+            "rmse_median": _fmt_metric(median_rmse),
+            "rmse_p95_increase": _fmt_metric(rmse_p95_increase),
+            "target_sd": _fmt_metric(target_sd),
+            "rmse_p95_increase_target_sd_fraction": _fmt_metric(
+                rmse_p95_increase_target_sd_fraction
+            ),
         },
     )
+    sync_analysis_bundle_from_session(st.session_state)
 
 
 def log_y_randomization_result(model_name, result):
     summary = result.get("summary", {})
+    config = analysis_config_from_session(st.session_state)
+    q2_gap_threshold = float(config.y_randomization_q2_gap_threshold)
     original_q2 = _safe_float(summary.get("original_q2"))
     mean_perm = _safe_float(summary.get("mean_q2_permuted"))
     std_perm = _safe_float(summary.get("std_q2_permuted"))
+    p_value = _safe_float(summary.get("p_value"))
     gap = original_q2 - mean_perm if original_q2 is not None and mean_perm is not None else None
-    risky = gap is None or gap < 0.10 or (std_perm is not None and gap < std_perm)
+    gap_indicator = gap is None or gap < q2_gap_threshold or (std_perm is not None and gap < std_perm)
+    p_value_supports_model = (
+        p_value is not None
+        and p_value <= 0.05
+        and original_q2 is not None
+        and mean_perm is not None
+        and original_q2 > mean_perm
+    )
+    risky = not p_value_supports_model
     level = "warning" if risky else "info"
+    result["quality_thresholds"] = {
+        "y_randomization_q2_gap_threshold": q2_gap_threshold,
+        "primary_decision": "empirical_p_value",
+        "indicator_type": "heuristic",
+    }
     status = "возможна случайная корреляция" if risky else "риск случайной корреляции низкий"
     message = (
         f"Y-randomization {model_name}: {summary.get('n_permutations')} перестановок, "
@@ -3990,20 +4941,40 @@ def log_y_randomization_result(model_name, result):
             "model": model_name,
             "validation_method": summary.get("validation_method"),
             "q2_gap": _fmt_metric(gap),
-            "p_value": _fmt_metric(summary.get("p_value"), digits=3),
+            "p_value": _fmt_metric(p_value, digits=3),
+            "q2_permuted_ci95_low": _fmt_metric(summary.get("q2_permuted_ci95_low")),
+            "q2_permuted_ci95_high": _fmt_metric(summary.get("q2_permuted_ci95_high")),
+            "successful_permutations": summary.get("n_permutations_successful"),
+            "failed_permutations": summary.get("n_permutations_failed"),
             "conclusion": summary.get("conclusion"),
+            "primary_decision": "empirical_p_value",
+            "gap_indicator_flag": bool(gap_indicator),
+            "gap_indicator_type": "heuristic",
+            "q2_gap_threshold": q2_gap_threshold,
         },
     )
+    sync_analysis_bundle_from_session(st.session_state)
 
 
 def build_log_txt():
     events = st.session_state.get("log_events", [])
+    exported_at = datetime.now().isoformat(timespec="seconds")
+    started_at = st.session_state.get("analysis_started_at") or ""
+    finished_at = st.session_state.get("analysis_finished_at") or ""
     lines = [
         "Augur QSPR — журнал исследования",
         f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "Режим: QSPR-моделирование свойств молекул",
         "",
     ]
+    if len(lines) >= 2:
+        lines.pop(1)
+    lines.extend([
+        f"analysis_started_at: {started_at or 'not recorded'}",
+        f"analysis_finished_at: {finished_at or 'not recorded'}",
+        f"log_exported_at: {exported_at}",
+        "",
+    ])
 
     if events:
         lines.extend(_log_format_event(event, include_details=True) for event in events)
@@ -4062,19 +5033,10 @@ def show_markdown_help(title, help_path, expanded=False):
         st.markdown(load_markdown_help(help_path))
 
 
-def get_admin_password_secret():
-    try:
-        return st.secrets.get("ADMIN_PASSWORD", "")
-    except Exception:
-        return ""
-
-
 def get_user_role():
     if not qspr_is_online_mode():
         return "admin"
 
-    if bool(st.session_state.get("admin_authenticated", False)):
-        return "admin"
     return "user"
 
 
@@ -4101,45 +5063,11 @@ def render_admin_login_controls():
         st.session_state.admin_authenticated = True
         return
 
+    st.session_state.admin_authenticated = False
     with st.sidebar.expander("Администратор", expanded=False):
-        if qspr_is_online_mode():
-            st.info(ONLINE_LOCK_MESSAGE)
-            st.text_input(
-                "Admin password",
-                type="password",
-                disabled=True,
-                key="admin_password_input_online_disabled",
-            )
-            st.button("Login", disabled=True, key="admin_login_button_online_disabled")
-            return
-
-        if is_admin():
-            st.success("Режим администратора активен.")
-            if st.button("Выйти из режима администратора", key="admin_logout_button"):
-                st.session_state.admin_authenticated = False
-                st.rerun()
-            return
-
-        admin_password = get_admin_password_secret()
-        entered_password = st.text_input(
-            "Пароль администратора",
-            type="password",
-            key="admin_password_input",
-        )
-
-        if st.button("Войти", key="admin_login_button"):
-            if (
-                admin_password
-                and entered_password
-                and hmac.compare_digest(str(entered_password), str(admin_password))
-            ):
-                st.session_state.admin_authenticated = True
-                st.rerun()
-            else:
-                st.session_state.admin_authenticated = False
-                st.caption("Обычный пользовательский режим.")
-
-        st.caption("Без корректного пароля приложение работает в обычном режиме.")
+        st.info(ONLINE_LOCK_MESSAGE)
+        st.caption("Online mode runs as a regular user. Local mode is admin by default.")
+        return
 
 
 def show_compact_matplotlib_plot(fig, width=850, dpi=140):
@@ -4238,7 +5166,7 @@ def qspr_connect_spectral_descriptors_to_session(
     else:
         st.session_state.spectral_sparring_control_df = pd.DataFrame()
 
-    bundle = qspr_build_descriptor_matrix_from_sources(
+    bundle = qspr_core.qspr_build_descriptor_matrix_from_sources(
         current_df=current_df,
         target_col=target_col,
         use_molecular=use_molecular_for_qspr,
@@ -4262,10 +5190,22 @@ def qspr_connect_spectral_descriptors_to_session(
     st.session_state.X_all = bundle["X_all"]
     st.session_state.y_all = bundle["y_all"]
     st.session_state.valid_indices = bundle["valid_indices"]
+    st.session_state.row_positions = bundle.get("row_positions", bundle["valid_indices"])
+    st.session_state.source_indices = bundle.get("source_indices", [])
+    st.session_state.record_ids_current = bundle.get("record_ids", [])
     st.session_state.desc_names = bundle["desc_names"]
     st.session_state.df_desc = bundle["df_desc"]
-    st.session_state.custom_descriptor_source = bundle["report"]["descriptor_source"]
-    st.session_state.custom_descriptors_used = True
+    st.session_state.descriptor_quality_df = bundle.get("descriptor_quality", pd.DataFrame())
+    source_code = descriptor_source_code(bundle["report"]["descriptor_source"])
+    st.session_state.custom_descriptor_source = source_code
+    st.session_state.descriptor_source_code = source_code
+    st.session_state.descriptor_source_label = str(
+        bundle["report"].get("descriptor_source_label", source_code)
+    )
+    st.session_state.descriptor_source_type = descriptor_source_type(source_code)
+    st.session_state.custom_descriptors_used = (
+        st.session_state.descriptor_source_type != DESCRIPTOR_SOURCE_CALCULATED_MOLECULAR
+    )
 
     st.session_state.spectral_qspr_match_info = bundle.get(
         "match_info",
@@ -4285,7 +5225,7 @@ def qspr_connect_spectral_descriptors_to_session(
         ) + excluded_text
     )
 
-    qspr_show_descriptor_meaning_table(
+    structural_filter_core.qspr_show_descriptor_meaning_table(
         desc_names=bundle["desc_names"],
         title=t('spectra.descriptor_meanings_title'),
         status_label=t('spectra.status_calculated_included'),
@@ -4304,6 +5244,21 @@ def qspr_connect_spectral_descriptors_to_session(
 
     return bundle
 
+
+def _qspr_descriptor_table_row_positions(work, source_name):
+    if work is None or not isinstance(work, pd.DataFrame) or work.empty:
+        return pd.Series(dtype="Int64")
+    for column in ("row_position", "_original_index", "row_index"):
+        if column in work.columns:
+            values = pd.to_numeric(work[column], errors="coerce")
+            if values.notna().all():
+                return values.astype(int)
+            raise ValueError(
+                f"{source_name} descriptor table contains invalid {column} values."
+            )
+    return pd.Series(np.arange(len(work), dtype=int), index=work.index)
+
+
 def qspr_make_morfeus_bundle_from_dataframe(morfeus_df, target_col):
     """
     Делает bundle из morfeus-таблицы в формате, совместимом со store_descriptor_bundle().
@@ -4312,18 +5267,16 @@ def qspr_make_morfeus_bundle_from_dataframe(morfeus_df, target_col):
         raise ValueError(t('morfeus.bundle_empty'))
 
     work = morfeus_df.copy()
-    work = work.loc[:, ~work.columns.duplicated()].copy()
+    work = qspr_core.qspr_rename_duplicate_columns(work)
 
     if target_col not in work.columns:
         raise ValueError(t('morfeus.bundle_target_missing', col=target_col))
 
-    if "row_index" not in work.columns:
-        work["_original_index"] = work.index.astype(int)
-    else:
-        work["_original_index"] = pd.to_numeric(
-            work["row_index"],
-            errors="coerce"
-        )
+    work["_original_index"] = _qspr_descriptor_table_row_positions(
+        work,
+        "Morfeus",
+    )
+    work["row_position"] = work["_original_index"]
 
     if "morfeus_status" in work.columns:
         status_counts = work["morfeus_status"].astype(str).value_counts().to_dict()
@@ -4336,6 +5289,7 @@ def qspr_make_morfeus_bundle_from_dataframe(morfeus_df, target_col):
 
     service_cols = {
         "row_index",
+        "row_position",
         "_original_index",
         "compound_id",
         "input_smiles",
@@ -4356,7 +5310,7 @@ def qspr_make_morfeus_bundle_from_dataframe(morfeus_df, target_col):
         and c not in service_cols
     ]
 
-    work[target_col] = qspr_to_numeric(work[target_col])
+    work[target_col] = qspr_core.qspr_to_numeric(work[target_col])
 
     for col in descriptor_cols:
         work[col] = pd.to_numeric(work[col], errors="coerce")
@@ -4463,18 +5417,16 @@ def qspr_make_dscribe_bundle_from_dataframe(dscribe_df, target_col):
         raise ValueError(t('dscribe.bundle_empty'))
 
     work = dscribe_df.copy()
-    work = work.loc[:, ~work.columns.duplicated()].copy()
+    work = qspr_core.qspr_rename_duplicate_columns(work)
 
     if target_col not in work.columns:
         raise ValueError(t('dscribe.bundle_target_missing', col=target_col))
 
-    if "row_index" not in work.columns:
-        work["_original_index"] = work.index.astype(int)
-    else:
-        work["_original_index"] = pd.to_numeric(
-            work["row_index"],
-            errors="coerce"
-        )
+    work["_original_index"] = _qspr_descriptor_table_row_positions(
+        work,
+        "DScribe",
+    )
+    work["row_position"] = work["_original_index"]
 
     if "dscribe_status" in work.columns:
         status_counts = work["dscribe_status"].astype(str).value_counts().to_dict()
@@ -4487,6 +5439,7 @@ def qspr_make_dscribe_bundle_from_dataframe(dscribe_df, target_col):
 
     service_cols = {
         "row_index",
+        "row_position",
         "_original_index",
         "compound_id",
         "input_smiles",
@@ -4505,7 +5458,7 @@ def qspr_make_dscribe_bundle_from_dataframe(dscribe_df, target_col):
         and c not in service_cols
     ]
 
-    work[target_col] = qspr_to_numeric(work[target_col])
+    work[target_col] = qspr_core.qspr_to_numeric(work[target_col])
 
     for col in descriptor_cols:
         work[col] = pd.to_numeric(work[col], errors="coerce")
@@ -4608,19 +5561,21 @@ def qspr_make_xtb_bundle_from_dataframe(xtb_df, target_col):
     Делает bundle из xTB-таблицы в формате, совместимом со store_descriptor_bundle().
 
     Логика:
-    - берём только строки xtb_status == ok;
+    - берем только строки xtb_status == complete (или legacy ok);
     - целевое свойство должно быть числовым;
     - xTB-дескрипторы переводим в числа;
     - полностью пустые xTB-колонки удаляем;
-    - строка сохраняется, если есть хотя бы один валидный xTB-дескриптор.
+    - строка сохраняется только при достаточной полноте xTB-дескрипторов.
     """
     if xtb_df is None or not isinstance(xtb_df, pd.DataFrame) or xtb_df.empty:
         raise ValueError(t('xtb.bundle_empty'))
 
     work = xtb_df.copy()
 
-    if "_original_index" not in work.columns:
+    if "_original_index" not in work.columns and "row_position" not in work.columns:
         raise ValueError(t('xtb.bundle_no_original_index'))
+    work["_original_index"] = _qspr_descriptor_table_row_positions(work, "xTB")
+    work["row_position"] = work["_original_index"]
 
     if target_col not in work.columns:
         raise ValueError(t('xtb.bundle_target_missing', col=target_col))
@@ -4628,9 +5583,24 @@ def qspr_make_xtb_bundle_from_dataframe(xtb_df, target_col):
     if "xtb_status" not in work.columns:
         raise ValueError(t('xtb.bundle_no_status'))
 
+    xtb_service_cols = {
+        "xtb_status",
+        "xtb_error",
+        "xtb_message",
+        "xtb_gradient_norm",
+        "xtb_descriptor_n_expected",
+        "xtb_descriptor_n_observed",
+        "xtb_frontier_orbital_assignment_status",
+        "xtb_formal_charge_rdkit",
+        "xtb_requested_charge",
+        "xtb_uhf",
+        "xtb_multiplicity",
+        "xtb_electron_count",
+        "xtb_electronic_structure_type",
+    }
     descriptor_cols = [
         c for c in work.columns
-        if str(c).startswith("xtb_") and c != "xtb_status"
+        if str(c).startswith("xtb_") and c not in xtb_service_cols
     ]
 
     if not descriptor_cols:
@@ -4643,12 +5613,13 @@ def qspr_make_xtb_bundle_from_dataframe(xtb_df, target_col):
         .to_dict()
     )
 
-    work = work[work["xtb_status"].astype(str) == "ok"].copy()
+    status_normalized = work["xtb_status"].astype(str).str.lower().str.strip()
+    work = work[status_normalized.isin(["complete", "ok"])].copy()
 
     if work.empty:
         raise ValueError(t('xtb.bundle_no_ok_rows', statuses=status_counts))
 
-    work[target_col] = qspr_to_numeric(work[target_col])
+    work[target_col] = qspr_core.qspr_to_numeric(work[target_col])
 
     for col in descriptor_cols:
         work[col] = pd.to_numeric(work[col], errors="coerce")
@@ -4661,8 +5632,15 @@ def qspr_make_xtb_bundle_from_dataframe(xtb_df, target_col):
     if not descriptor_cols:
         raise ValueError(t('xtb.bundle_all_descriptors_empty', statuses=status_counts))
 
+    completeness = pd.to_numeric(
+        work.get("descriptor_completeness", np.nan),
+        errors="coerce",
+    )
+    if completeness.isna().all():
+        completeness = work[descriptor_cols].notna().mean(axis=1)
+    min_completeness = float(getattr(qspr_core, "XTB_MODEL_MIN_COMPLETENESS", 0.75))
     valid_mask = work[target_col].notna()
-    valid_mask = valid_mask & work[descriptor_cols].notna().any(axis=1)
+    valid_mask = valid_mask & completeness.ge(min_completeness)
 
     work = work.loc[valid_mask].copy()
 
@@ -4689,12 +5667,13 @@ def qspr_make_xtb_bundle_from_dataframe(xtb_df, target_col):
         "report": {
             "descriptor_source": "xtb_quantum_descriptors",
             "xtb_status_counts": status_counts,
+            "xtb_min_descriptor_completeness": min_completeness,
             "n_xtb_valid_rows": len(work),
             "n_xtb_descriptors": len(descriptor_cols),
         }
     }
 
-def qspr_append_xtb_to_bundle(base_bundle, xtb_df, target_col):
+def qspr_append_xtb_to_bundle(base_bundle, xtb_df, target_col, merge_policy="inner"):
     """
     Добавляет xTB-дескрипторы к уже рассчитанному molecular bundle.
     Сшивка идёт по _original_index.
@@ -4710,11 +5689,16 @@ def qspr_append_xtb_to_bundle(base_bundle, xtb_df, target_col):
 
     xtb_desc = xtb_bundle["df_desc"].copy()
     xtb_desc["_original_index"] = list(xtb_bundle["valid_indices"])
+    base_row_count = len(base_desc)
+    xtb_valid_row_count = len(xtb_desc)
+    merge_policy = str(merge_policy or "inner").strip().lower()
+    if merge_policy not in {"inner", "left"}:
+        raise ValueError(f"Unsupported descriptor merge policy: {merge_policy}")
 
     merged = base_desc.merge(
         xtb_desc,
         on="_original_index",
-        how="inner"
+        how=merge_policy
     )
 
     if merged.empty:
@@ -4722,9 +5706,7 @@ def qspr_append_xtb_to_bundle(base_bundle, xtb_df, target_col):
 
     desc_names = list(base_bundle["desc_names"]) + list(xtb_bundle["desc_names"])
 
-    merged[target_col] = qspr_to_numeric(merged[target_col])
-
-    merged[target_col] = qspr_to_numeric(merged[target_col])
+    merged[target_col] = qspr_core.qspr_to_numeric(merged[target_col])
 
     for col in desc_names:
         merged[col] = pd.to_numeric(merged[col], errors="coerce")
@@ -4752,13 +5734,22 @@ def qspr_append_xtb_to_bundle(base_bundle, xtb_df, target_col):
         "desc_names": desc_names,
         "df_desc": merged[desc_names].copy(),
         "report": {
-            "descriptor_source": "molecular_plus_xtb"
+            "descriptor_source": "molecular_plus_xtb",
+            "molecular_rows_before_xtb_join": int(base_row_count),
+            "xtb_valid_rows_before_join": int(xtb_valid_row_count),
+            "rows_after_xtb_join": int(len(merged)),
+            "rows_lost_by_xtb_join": int(max(0, base_row_count - len(merged))),
+            "rows_after_xtb_inner_join": int(len(merged)),
+            "rows_lost_by_xtb_inner_join": int(max(0, base_row_count - len(merged))),
+            "xtb_join_type": merge_policy,
+            "descriptor_merge_policy": merge_policy.upper(),
         }
     }
 
 def get_model_params_from_session():
     """Параметры моделей из session_state для qspr_core."""
     return {
+        "random_seed": st.session_state.get("random_seed", 42),
         "pls_components": st.session_state.get("pls_components", 2),
         "ridge_alpha": st.session_state.get("ridge_alpha", 1.0),
         "lasso_alpha": st.session_state.get("lasso_alpha", 0.01),
@@ -4891,7 +5882,7 @@ def qspr_model_group_for_name(model_name, model_groups=None):
 
     if model_groups is None:
         try:
-            model_groups = qspr_available_model_options()
+            model_groups = qspr_core.qspr_available_model_options()
         except Exception:
             model_groups = {}
 
@@ -4910,7 +5901,7 @@ def qspr_count_outside_ad_for_model(model_data):
         if X_model is None:
             return np.nan, np.nan
 
-        ad = qspr_calculate_leverage_ad(X_train=X_model)
+        ad = applicability_domain_core.qspr_calculate_leverage_ad(X_train=X_model)
         leverage = np.asarray(ad["leverage"], dtype=float)
         threshold = float(ad["threshold"])
         n_out = int(np.sum(leverage > threshold))
@@ -4988,8 +5979,14 @@ def qspr_build_model_comparison_table():
         hold = holdouts.get(name)
         kfold = kfolds.get(name)
         loo = loos.get(name)
+        if not qspr_validation_result_is_current(name, hold, "holdout"):
+            hold = None
+        if not qspr_validation_result_is_current(name, kfold, "kfold"):
+            kfold = None
+        if not qspr_validation_result_is_current(name, loo, "loo"):
+            loo = None
 
-        n_out_ad, pct_out_ad = qspr_count_outside_ad_for_model(model_data) if model_data else (np.nan, np.nan)
+        n_out_ad, pct_out_ad = applicability_domain_core.qspr_count_outside_ad_for_model(model_data) if model_data else (np.nan, np.nan)
 
         candidate_rmse = [
             qspr_metric_from_result(hold, "RMSE", metrics_key="metrics_test"),
@@ -5082,8 +6079,27 @@ def qspr_run_missing_validation_for_models(
     params = get_model_params_from_session()
 
     for candidate_model in model_names:
-        if run_holdout and candidate_model not in st.session_state.holdout_results_dict:
-            res_hold = qspr_holdout_validation(
+        holdout_settings = {
+            "kind": "holdout",
+            "test_size": holdout_test_size,
+            "random_state": holdout_random_state,
+            "use_random": True,
+        }
+        holdout_hash = analysis_result_hash(
+            st.session_state,
+            candidate_model,
+            params=params,
+            validation_settings=holdout_settings,
+            X=X,
+            y=y,
+            desc_names=st.session_state.get("desc_names"),
+            valid_indices=valid_indices,
+        )
+        if run_holdout and not cached_result_is_current(
+            st.session_state.holdout_results_dict.get(candidate_model),
+            holdout_hash,
+        ):
+            res_hold = qspr_core.qspr_holdout_validation(
                 X=X,
                 y=y,
                 model_name=candidate_model,
@@ -5096,13 +6112,31 @@ def qspr_run_missing_validation_for_models(
                 params=params,
                 scale=True,
             )
-            st.session_state.holdout_results_dict[candidate_model] = res_hold
+            res_hold["validation_settings"] = holdout_settings
+            st.session_state.holdout_results_dict[candidate_model] = attach_result_cache_metadata(
+                res_hold,
+                holdout_hash,
+            )
             combined_df = pd.concat([res_hold["train_table"], res_hold["test_table"]], ignore_index=True)
-            qspr_save_results_auto(combined_df, "holdout", target_col, len(y))
+            qspr_core.qspr_save_results_auto(combined_df, "holdout", target_col, len(y))
             messages.append(f"Hold-out: {candidate_model}")
 
-        if run_kfold and candidate_model not in st.session_state.kfold_results_dict:
-            res_kfold = qspr_kfold_validation(
+        kfold_settings = {"kind": "kfold", "k": kfold_k, "shuffle": True, "random_state": 42}
+        kfold_hash = analysis_result_hash(
+            st.session_state,
+            candidate_model,
+            params=params,
+            validation_settings=kfold_settings,
+            X=X,
+            y=y,
+            desc_names=st.session_state.get("desc_names"),
+            valid_indices=valid_indices,
+        )
+        if run_kfold and not cached_result_is_current(
+            st.session_state.kfold_results_dict.get(candidate_model),
+            kfold_hash,
+        ):
+            res_kfold = qspr_core.qspr_kfold_validation(
                 X=X,
                 y=y,
                 model_name=candidate_model,
@@ -5114,17 +6148,35 @@ def qspr_run_missing_validation_for_models(
                 shuffle=True,
                 random_state=42,
             )
-            st.session_state.kfold_results_dict[candidate_model] = res_kfold
-            qspr_save_results_auto(res_kfold["result_table"], "kfold", target_col, len(y))
+            res_kfold["validation_settings"] = kfold_settings
+            st.session_state.kfold_results_dict[candidate_model] = attach_result_cache_metadata(
+                res_kfold,
+                kfold_hash,
+            )
+            qspr_core.qspr_save_results_auto(res_kfold["result_table"], "kfold", target_col, len(y))
             messages.append(f"K-Fold: {candidate_model}")
 
-        if run_loo and candidate_model not in st.session_state.loo_results_dict:
+        loo_settings = {"kind": "loo"}
+        loo_hash = analysis_result_hash(
+            st.session_state,
+            candidate_model,
+            params=params,
+            validation_settings=loo_settings,
+            X=X,
+            y=y,
+            desc_names=st.session_state.get("desc_names"),
+            valid_indices=valid_indices,
+        )
+        if run_loo and not cached_result_is_current(
+            st.session_state.loo_results_dict.get(candidate_model),
+            loo_hash,
+        ):
             loo_skip_reason = qspr_loo_skip_reason(candidate_model, len(y))
             if loo_skip_reason:
                 messages.append(loo_skip_reason)
                 continue
 
-            res_loo = qspr_loo_validation(
+            res_loo = qspr_core.qspr_loo_validation(
                 X=X,
                 y=y,
                 model_name=candidate_model,
@@ -5133,8 +6185,12 @@ def qspr_run_missing_validation_for_models(
                 params=params,
                 scale=True,
             )
-            st.session_state.loo_results_dict[candidate_model] = res_loo
-            qspr_save_results_auto(res_loo["result_table"], "loo", target_col, len(y))
+            res_loo["validation_settings"] = loo_settings
+            st.session_state.loo_results_dict[candidate_model] = attach_result_cache_metadata(
+                res_loo,
+                loo_hash,
+            )
+            qspr_core.qspr_save_results_auto(res_loo["result_table"], "loo", target_col, len(y))
             messages.append(f"LOO: {candidate_model}")
 
     return messages
@@ -5178,19 +6234,57 @@ def qspr_auto_train_validate_models_for_comparison(
 
     for candidate_model in model_names:
         try:
-            if force_retrain or candidate_model not in st.session_state.trained_models:
-                train_res = qspr_train_analysis_model(
+            train_hash = analysis_result_hash(
+                st.session_state,
+                candidate_model,
+                params=params,
+                validation_settings={"kind": "train"},
+                X=X,
+                y=y,
+                desc_names=st.session_state.get("desc_names"),
+                valid_indices=valid_indices,
+            )
+            if force_retrain or not cached_result_is_current(
+                st.session_state.trained_models.get(candidate_model),
+                train_hash,
+            ):
+                train_res = qspr_core.qspr_train_analysis_model(
                     X=X,
                     y=y,
                     model_name=candidate_model,
                     params=params,
                     scale=True,
                 )
-                st.session_state.trained_models[candidate_model] = train_res
+                st.session_state.trained_models[candidate_model] = attach_result_cache_metadata(
+                    train_res,
+                    train_hash,
+                )
                 messages.append(t('training.trained_model', model=candidate_model))
 
-            if run_holdout and (force_retrain or candidate_model not in st.session_state.holdout_results_dict):
-                res_hold = qspr_holdout_validation(
+            holdout_settings = {
+                "kind": "holdout",
+                "test_size": holdout_test_size,
+                "random_state": holdout_random_state,
+                "use_random": True,
+            }
+            holdout_hash = analysis_result_hash(
+                st.session_state,
+                candidate_model,
+                params=params,
+                validation_settings=holdout_settings,
+                X=X,
+                y=y,
+                desc_names=st.session_state.get("desc_names"),
+                valid_indices=valid_indices,
+            )
+            if run_holdout and (
+                force_retrain
+                or not cached_result_is_current(
+                    st.session_state.holdout_results_dict.get(candidate_model),
+                    holdout_hash,
+                )
+            ):
+                res_hold = qspr_core.qspr_holdout_validation(
                     X=X,
                     y=y,
                     model_name=candidate_model,
@@ -5203,12 +6297,33 @@ def qspr_auto_train_validate_models_for_comparison(
                     params=params,
                     scale=True,
                 )
-                st.session_state.holdout_results_dict[candidate_model] = res_hold
+                res_hold["validation_settings"] = holdout_settings
+                st.session_state.holdout_results_dict[candidate_model] = attach_result_cache_metadata(
+                    res_hold,
+                    holdout_hash,
+                )
                 combined_df = pd.concat([res_hold["train_table"], res_hold["test_table"]], ignore_index=True)
-                qspr_save_results_auto(combined_df, "holdout", target_col, len(y))
+                qspr_core.qspr_save_results_auto(combined_df, "holdout", target_col, len(y))
 
-            if run_kfold and (force_retrain or candidate_model not in st.session_state.kfold_results_dict):
-                res_kfold = qspr_kfold_validation(
+            kfold_settings = {"kind": "kfold", "k": kfold_k, "shuffle": True, "random_state": 42}
+            kfold_hash = analysis_result_hash(
+                st.session_state,
+                candidate_model,
+                params=params,
+                validation_settings=kfold_settings,
+                X=X,
+                y=y,
+                desc_names=st.session_state.get("desc_names"),
+                valid_indices=valid_indices,
+            )
+            if run_kfold and (
+                force_retrain
+                or not cached_result_is_current(
+                    st.session_state.kfold_results_dict.get(candidate_model),
+                    kfold_hash,
+                )
+            ):
+                res_kfold = qspr_core.qspr_kfold_validation(
                     X=X,
                     y=y,
                     model_name=candidate_model,
@@ -5220,10 +6335,31 @@ def qspr_auto_train_validate_models_for_comparison(
                     shuffle=True,
                     random_state=42,
                 )
-                st.session_state.kfold_results_dict[candidate_model] = res_kfold
-                qspr_save_results_auto(res_kfold["result_table"], "kfold", target_col, len(y))
+                res_kfold["validation_settings"] = kfold_settings
+                st.session_state.kfold_results_dict[candidate_model] = attach_result_cache_metadata(
+                    res_kfold,
+                    kfold_hash,
+                )
+                qspr_core.qspr_save_results_auto(res_kfold["result_table"], "kfold", target_col, len(y))
 
-            if run_loo and (force_retrain or candidate_model not in st.session_state.loo_results_dict):
+            loo_settings = {"kind": "loo"}
+            loo_hash = analysis_result_hash(
+                st.session_state,
+                candidate_model,
+                params=params,
+                validation_settings=loo_settings,
+                X=X,
+                y=y,
+                desc_names=st.session_state.get("desc_names"),
+                valid_indices=valid_indices,
+            )
+            if run_loo and (
+                force_retrain
+                or not cached_result_is_current(
+                    st.session_state.loo_results_dict.get(candidate_model),
+                    loo_hash,
+                )
+            ):
                 loo_skip_reason = qspr_loo_skip_reason(candidate_model, len(y))
                 if loo_skip_reason:
                     errors.append({
@@ -5233,7 +6369,7 @@ def qspr_auto_train_validate_models_for_comparison(
                     })
                     continue
 
-                res_loo = qspr_loo_validation(
+                res_loo = qspr_core.qspr_loo_validation(
                     X=X,
                     y=y,
                     model_name=candidate_model,
@@ -5242,8 +6378,12 @@ def qspr_auto_train_validate_models_for_comparison(
                     params=params,
                     scale=True,
                 )
-                st.session_state.loo_results_dict[candidate_model] = res_loo
-                qspr_save_results_auto(res_loo["result_table"], "loo", target_col, len(y))
+                res_loo["validation_settings"] = loo_settings
+                st.session_state.loo_results_dict[candidate_model] = attach_result_cache_metadata(
+                    res_loo,
+                    loo_hash,
+                )
+                qspr_core.qspr_save_results_auto(res_loo["result_table"], "loo", target_col, len(y))
 
         except Exception as e:
             errors.append({
@@ -5268,7 +6408,8 @@ def qspr_bootstrap_validation(
     random_state=42,
     scale=True,
     min_oob_size=2,
-    progress_callback=None
+    progress_callback=None,
+    selector_config=None
 ):
     """
     Bootstrap / out-of-bag validation для QSPR-модели.
@@ -5318,11 +6459,17 @@ def qspr_bootstrap_validation(
 
     iteration_rows = []
     oob_prediction_rows = []
+    failed_iteration_rows = []
     skipped_iterations = 0
 
     for i in range(n_iterations):
+        iteration_seed = int(rng.integers(0, np.iinfo(np.int32).max))
+        bootstrap_idx = np.array([], dtype=int)
+        bootstrap_unique = set()
+        oob_idx = np.array([], dtype=int)
         try:
-            bootstrap_idx = rng.integers(0, n, size=boot_size)
+            iter_rng = np.random.default_rng(iteration_seed)
+            bootstrap_idx = iter_rng.integers(0, n, size=boot_size)
             bootstrap_unique = set(bootstrap_idx.tolist())
 
             oob_idx = np.array(
@@ -5344,6 +6491,17 @@ def qspr_bootstrap_validation(
                     "MAE OOB": np.nan,
                     "MAPE OOB, %": np.nan,
                 })
+                failed_iteration_rows.append({
+                    "iteration": i + 1,
+                    "seed": iteration_seed,
+                    "status": "skipped_no_oob",
+                    "reason": "OOB size below minimum",
+                    "train_n": int(len(bootstrap_idx)),
+                    "train_unique_n": int(len(bootstrap_unique)),
+                    "oob_n": int(len(oob_idx)),
+                    "model": model_name,
+                    "model_params": dict(params or {}),
+                })
 
                 if progress_callback is not None:
                     progress_callback(i + 1, n_iterations)
@@ -5356,26 +6514,23 @@ def qspr_bootstrap_validation(
             X_oob = X[oob_idx]
             y_oob = y[oob_idx]
 
-            if scale:
-                scaler = StandardScaler()
-                X_train_model = scaler.fit_transform(X_train)
-                X_oob_model = scaler.transform(X_oob)
-            else:
-                X_train_model = X_train
-                X_oob_model = X_oob
-
-            model = qspr_create_regression_model(
+            model = qspr_core.qspr_create_regression_model(
                 model_name,
-                n_samples=X_train_model.shape[0],
-                n_features=X_train_model.shape[1],
+                n_samples=X_train.shape[0],
+                n_features=X_train.shape[1],
                 params=params
             )
+            model = qspr_core.qspr_make_model_pipeline(
+                model,
+                scale=scale,
+                selector_config=selector_config
+            )
 
-            model.fit(X_train_model, y_train)
+            model.fit(X_train, y_train)
 
-            y_oob_pred = np.ravel(model.predict(X_oob_model))
+            y_oob_pred = np.ravel(model.predict(X_oob))
 
-            metrics_oob = qspr_metrics(y_oob, y_oob_pred)
+            metrics_oob = qspr_core.qspr_metrics(y_oob, y_oob_pred)
 
             iteration_rows.append({
                 t('bootstrap.iteration'): i + 1,
@@ -5406,13 +6561,24 @@ def qspr_bootstrap_validation(
             iteration_rows.append({
                 t('bootstrap.iteration'): i + 1,
                 t('bootstrap.status'): f"error: {e}",
-                "Train n": np.nan,
-                "Train unique n": np.nan,
-                "OOB n": np.nan,
+                "Train n": len(bootstrap_idx) if len(bootstrap_idx) else np.nan,
+                "Train unique n": len(bootstrap_unique) if bootstrap_unique else np.nan,
+                "OOB n": len(oob_idx) if len(oob_idx) else np.nan,
                 "R2 OOB": np.nan,
                 "RMSE OOB": np.nan,
                 "MAE OOB": np.nan,
                 "MAPE OOB, %": np.nan,
+            })
+            failed_iteration_rows.append({
+                "iteration": i + 1,
+                "seed": iteration_seed,
+                "status": "error",
+                "reason": str(e),
+                "train_n": int(len(bootstrap_idx)) if len(bootstrap_idx) else 0,
+                "train_unique_n": int(len(bootstrap_unique)) if bootstrap_unique else 0,
+                "oob_n": int(len(oob_idx)) if len(oob_idx) else 0,
+                "model": model_name,
+                "model_params": dict(params or {}),
             })
 
         if progress_callback is not None:
@@ -5420,6 +6586,7 @@ def qspr_bootstrap_validation(
 
     iterations_table = pd.DataFrame(iteration_rows)
     oob_predictions_table = pd.DataFrame(oob_prediction_rows)
+    failed_iterations_table = pd.DataFrame(failed_iteration_rows)
 
     ok_table = iterations_table[
         iterations_table[t('bootstrap.status')] == "ok"
@@ -5446,6 +6613,25 @@ def qspr_bootstrap_validation(
     rmse_mean, rmse_std = _mean_std("RMSE OOB")
     mae_mean, mae_std = _mean_std("MAE OOB")
     mape_mean, mape_std = _mean_std("MAPE OOB, %")
+    rmse_ok_values = pd.to_numeric(ok_table.get("RMSE OOB", pd.Series(dtype=float)), errors="coerce").dropna()
+    rmse_median = float(rmse_ok_values.median()) if not rmse_ok_values.empty else np.nan
+    rmse_p95 = float(rmse_ok_values.quantile(0.95)) if not rmse_ok_values.empty else np.nan
+    rmse_p95_increase = (
+        float(rmse_p95 - rmse_median)
+        if np.isfinite(rmse_p95) and np.isfinite(rmse_median)
+        else np.nan
+    )
+    target_sd = float(np.nanstd(y, ddof=1)) if len(y) > 1 else np.nan
+    rmse_p95_increase_target_sd_fraction = (
+        float(rmse_p95_increase / target_sd)
+        if np.isfinite(rmse_p95_increase) and np.isfinite(target_sd) and target_sd != 0
+        else np.nan
+    )
+    rmse_p95_to_median_ratio = (
+        float(rmse_p95 / rmse_median)
+        if np.isfinite(rmse_p95) and np.isfinite(rmse_median) and rmse_median != 0
+        else np.nan
+    )
 
     summary = {
         "model_name": model_name,
@@ -5462,6 +6648,12 @@ def qspr_bootstrap_validation(
         "mae_oob_std": mae_std,
         "mape_oob_mean": mape_mean,
         "mape_oob_std": mape_std,
+        "target_sd": target_sd,
+        "rmse_oob_median": rmse_median,
+        "rmse_oob_p95": rmse_p95,
+        "rmse_p95_to_median_ratio": rmse_p95_to_median_ratio,
+        "rmse_p95_increase": rmse_p95_increase,
+        "rmse_p95_increase_target_sd_fraction": rmse_p95_increase_target_sd_fraction,
     }
 
     summary_table = pd.DataFrame([
@@ -5479,12 +6671,18 @@ def qspr_bootstrap_validation(
         {t('bootstrap.summary_prompt'): t('bootstrap.summary_mae_std'), t('bootstrap.summary_value'): mae_std},
         {t('bootstrap.summary_prompt'): t('bootstrap.summary_mape_mean'), t('bootstrap.summary_value'): mape_mean},
         {t('bootstrap.summary_prompt'): t('bootstrap.summary_mape_std'), t('bootstrap.summary_value'): mape_std},
+        {t('bootstrap.summary_prompt'): "Target SD", t('bootstrap.summary_value'): target_sd},
+        {t('bootstrap.summary_prompt'): "RMSE OOB median", t('bootstrap.summary_value'): rmse_median},
+        {t('bootstrap.summary_prompt'): "RMSE OOB P95", t('bootstrap.summary_value'): rmse_p95},
+        {t('bootstrap.summary_prompt'): "RMSE P95 / median", t('bootstrap.summary_value'): rmse_p95_to_median_ratio},
+        {t('bootstrap.summary_prompt'): "RMSE P95 increase / target SD", t('bootstrap.summary_value'): rmse_p95_increase_target_sd_fraction},
     ])
 
     return {
         "summary": summary,
         "summary_table": summary_table,
         "iterations_table": iterations_table,
+        "failed_iterations_table": failed_iterations_table,
         "oob_predictions_table": oob_predictions_table,
     }
 
@@ -5500,7 +6698,8 @@ def qspr_y_randomization_test(
     k=5,
     random_state=42,
     scale=True,
-    progress_callback=None
+    progress_callback=None,
+    selector_config=None
 ):
     """
     Y-randomization / permutation test для QSPR-модели.
@@ -5523,13 +6722,18 @@ def qspr_y_randomization_test(
         params = {}
 
     method = str(method).strip()
+    method_code = method.lower().replace("_", "-")
+    if method_code in {"loo", "leave-one-out", "leave one out"}:
+        method = "LOO"
+    else:
+        method = "K-Fold"
     n_permutations = int(n_permutations)
     n_permutations = max(1, n_permutations)
 
     rng = np.random.default_rng(int(random_state))
 
     if method == "LOO":
-        original_result = qspr_loo_validation(
+        original_result = qspr_core.qspr_loo_validation(
             X=X,
             y=y,
             model_name=model_name,
@@ -5537,6 +6741,7 @@ def qspr_y_randomization_test(
             smiles=smiles,
             params=params,
             scale=scale,
+            selector_config=selector_config,
         )
         original_metrics = original_result.get("metrics", {})
         original_table = original_result.get("result_table", pd.DataFrame())
@@ -5545,7 +6750,7 @@ def qspr_y_randomization_test(
         k = int(k)
         k = max(2, min(k, len(y)))
 
-        original_result = qspr_kfold_validation(
+        original_result = qspr_core.qspr_kfold_validation(
             X=X,
             y=y,
             model_name=model_name,
@@ -5556,6 +6761,7 @@ def qspr_y_randomization_test(
             scale=scale,
             shuffle=True,
             random_state=int(random_state),
+            selector_config=selector_config,
         )
         original_metrics = original_result.get("metrics", {})
         original_table = original_result.get("result_table", pd.DataFrame())
@@ -5572,7 +6778,7 @@ def qspr_y_randomization_test(
 
         try:
             if method == "LOO":
-                perm_result = qspr_loo_validation(
+                perm_result = qspr_core.qspr_loo_validation(
                     X=X,
                     y=y_perm,
                     model_name=model_name,
@@ -5580,9 +6786,10 @@ def qspr_y_randomization_test(
                     smiles=smiles,
                     params=params,
                     scale=scale,
+                    selector_config=selector_config,
                 )
             else:
-                perm_result = qspr_kfold_validation(
+                perm_result = qspr_core.qspr_kfold_validation(
                     X=X,
                     y=y_perm,
                     model_name=model_name,
@@ -5593,6 +6800,7 @@ def qspr_y_randomization_test(
                     scale=scale,
                     shuffle=True,
                     random_state=int(random_state) + i + 1,
+                    selector_config=selector_config,
                 )
 
             perm_metrics = perm_result.get("metrics", {})
@@ -5633,6 +6841,8 @@ def qspr_y_randomization_test(
         max_q2_perm = float(q2_values.max())
         min_q2_perm = float(q2_values.min())
         std_q2_perm = float(q2_values.std(ddof=1)) if len(q2_values) > 1 else 0.0
+        q2_perm_ci95_low = float(q2_values.quantile(0.025))
+        q2_perm_ci95_high = float(q2_values.quantile(0.975))
 
         p_value = float((np.sum(q2_values >= original_q2) + 1) / (len(q2_values) + 1))
     else:
@@ -5641,6 +6851,8 @@ def qspr_y_randomization_test(
         max_q2_perm = np.nan
         min_q2_perm = np.nan
         std_q2_perm = np.nan
+        q2_perm_ci95_low = np.nan
+        q2_perm_ci95_high = np.nan
         p_value = np.nan
 
     if np.isfinite(p_value) and np.isfinite(original_q2):
@@ -5667,7 +6879,12 @@ def qspr_y_randomization_test(
         "max_q2_permuted": max_q2_perm,
         "min_q2_permuted": min_q2_perm,
         "std_q2_permuted": std_q2_perm,
+        "q2_permuted_ci95_low": q2_perm_ci95_low,
+        "q2_permuted_ci95_high": q2_perm_ci95_high,
         "p_value": p_value,
+        "empirical_p_value": p_value,
+        "n_permutations_successful": int(len(q2_values)),
+        "n_permutations_failed": int(n_permutations - len(q2_values)),
         "conclusion": conclusion,
     }
 
@@ -5683,6 +6900,10 @@ def qspr_y_randomization_test(
         {t('y_randomization.summary_prompt'): t('y_randomization.summary_max_q2'), t('y_randomization.summary_value'): max_q2_perm},
         {t('y_randomization.summary_prompt'): t('y_randomization.summary_min_q2'), t('y_randomization.summary_value'): min_q2_perm},
         {t('y_randomization.summary_prompt'): t('y_randomization.summary_std_q2'), t('y_randomization.summary_value'): std_q2_perm},
+        {t('y_randomization.summary_prompt'): "Permutation Q2 95% CI low", t('y_randomization.summary_value'): q2_perm_ci95_low},
+        {t('y_randomization.summary_prompt'): "Permutation Q2 95% CI high", t('y_randomization.summary_value'): q2_perm_ci95_high},
+        {t('y_randomization.summary_prompt'): "Successful permutations", t('y_randomization.summary_value'): int(len(q2_values))},
+        {t('y_randomization.summary_prompt'): "Failed permutations", t('y_randomization.summary_value'): int(n_permutations - len(q2_values))},
         {t('y_randomization.summary_prompt'): t('y_randomization.summary_p_value'), t('y_randomization.summary_value'): p_value},
         {t('y_randomization.summary_prompt'): t('y_randomization.summary_conclusion'), t('y_randomization.summary_value'): conclusion},
     ])
@@ -5707,7 +6928,8 @@ def qspr_repeated_holdout_validation(
     test_size=0.2,
     random_state=42,
     scale=True,
-    progress_callback=None
+    progress_callback=None,
+    selector_config=None
 ):
     """
     Repeated Hold-out / Monte-Carlo cross-validation.
@@ -5747,7 +6969,7 @@ def qspr_repeated_holdout_validation(
         current_seed = int(random_state) + i
 
         try:
-            res_hold = qspr_holdout_validation(
+            res_hold = qspr_core.qspr_holdout_validation(
                 X=X,
                 y=y,
                 model_name=model_name,
@@ -5759,6 +6981,7 @@ def qspr_repeated_holdout_validation(
                 manual_indices=None,
                 params=params,
                 scale=scale,
+                selector_config=selector_config,
             )
 
             metrics_train = res_hold.get("metrics_train", {})
@@ -5934,23 +7157,205 @@ def qspr_repeated_holdout_validation(
 
     return result
 
+def qspr_structure_hash_for_indices(df, smiles_col, indices=None):
+    digest = hashlib.sha256()
+    if df is None or not isinstance(df, pd.DataFrame) or smiles_col not in df.columns:
+        return ""
+    if indices is None:
+        values = df[smiles_col].astype(str).fillna("").tolist()
+    else:
+        values = df.iloc[list(indices)][smiles_col].astype(str).fillna("").tolist()
+    digest.update(f"rows={len(values)}\n".encode("utf-8"))
+    for value in values:
+        digest.update(str(value).encode("utf-8", errors="replace"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def qspr_descriptor_column_metadata(desc_names, source_label, structure_hash="", calculation_version=""):
+    return pd.DataFrame([
+        {
+            "descriptor": str(name),
+            "source": str(source_label),
+            "structure_hash": str(structure_hash),
+            "calculation_version": str(calculation_version),
+        }
+        for name in list(desc_names or [])
+    ])
+
+
+def validate_descriptor_bundle(bundle):
+    if not isinstance(bundle, dict):
+        raise ValueError("Descriptor bundle must be a dictionary.")
+
+    required = ["df_desc", "X_all", "y_all", "valid_indices", "desc_names"]
+    missing = [key for key in required if key not in bundle]
+    if missing:
+        raise ValueError("Descriptor bundle is missing keys: " + ", ".join(missing))
+
+    df_desc = bundle["df_desc"]
+    X_all = np.asarray(bundle["X_all"])
+    y_all = np.asarray(bundle["y_all"])
+    valid_indices = list(bundle["valid_indices"])
+    desc_names = [str(name) for name in list(bundle["desc_names"])]
+
+    if not isinstance(df_desc, pd.DataFrame):
+        raise ValueError("Descriptor bundle df_desc must be a DataFrame.")
+    if X_all.ndim != 2:
+        raise ValueError("Descriptor matrix X_all must be two-dimensional.")
+    if len(df_desc) != X_all.shape[0]:
+        raise ValueError("Descriptor bundle mismatch: len(df_desc) != len(X_all).")
+    if X_all.shape[0] != len(y_all):
+        raise ValueError("Descriptor bundle mismatch: len(X_all) != len(y_all).")
+    if len(y_all) != len(valid_indices):
+        raise ValueError("Descriptor bundle mismatch: len(y_all) != len(valid_indices).")
+    if X_all.shape[1] != len(desc_names):
+        raise ValueError("Descriptor bundle mismatch: X_all.shape[1] != len(desc_names).")
+    if [str(col) for col in df_desc.columns] != desc_names:
+        raise ValueError("Descriptor bundle mismatch: df_desc columns do not match desc_names.")
+
+    return {
+        "df_desc": df_desc.copy(),
+        "X_all": np.array(X_all, copy=True),
+        "y_all": np.array(y_all, copy=True),
+        "valid_indices": valid_indices,
+        "desc_names": desc_names,
+        "row_positions": list(bundle.get("row_positions", valid_indices)),
+        "source_indices": list(bundle.get("source_indices", [])),
+        "record_ids": list(bundle.get("record_ids", [])),
+    }
+
+
+def invalidate_descriptor_state():
+    reset_analysis_nodes(st.session_state, "descriptors", SESSION_DEFAULTS)
+    st.session_state.desc_calculated = False
+    st.session_state.validation_done = False
+    st.session_state.trained_models = {}
+    st.session_state.holdout_results_dict = {}
+    st.session_state.kfold_results_dict = {}
+    st.session_state.loo_results_dict = {}
+    st.session_state.repeated_holdout_results_dict = {}
+    st.session_state.montecarlo_results_dict = {}
+    st.session_state.y_randomization_results_dict = {}
+    st.session_state.bootstrap_results_dict = {}
+    st.session_state.ad_info = None
+    st.session_state.ext_validation_result = None
+    st.session_state.ext_validation_results_dict = {}
+    st.session_state.auto_tuning_result = None
+    st.session_state.model_comparison_df = None
+    st.session_state.best_model_from_comparison = None
+    st.session_state.pending_selected_model = None
+    st.session_state.model_used_descriptor_names = []
+    st.session_state.model_used_descriptor_model_name = ""
+    st.session_state.report_full_history = []
+    st.session_state.report_full_current_index = 0
+    st.session_state.prediction_uncertainty_results = None
+    st.session_state.prediction_uncertainty_table = None
+    st.session_state.consensus_df = None
+    st.session_state.consensus_result = None
+    st.session_state.consensus_prediction_table = None
+    st.session_state.consensus_models = []
+    st.session_state.model_comparison_errors_df = None
+    st.session_state.auto_model_comparison_df = None
+    st.session_state.auto_model_comparison_table = None
+    st.session_state.true_model_comparison_df = None
+    st.session_state.yrandom_best_model_result = None
+
+
+DESCRIPTOR_SOURCE_CALCULATED_MOLECULAR = "CALCULATED_MOLECULAR"
+DESCRIPTOR_SOURCE_UPLOADED = "UPLOADED"
+DESCRIPTOR_SOURCE_SPECTRAL = "SPECTRAL"
+DESCRIPTOR_SOURCE_COMBINED = "COMBINED"
+DESCRIPTOR_SOURCE_CACHED = "CACHED"
+
+
+def descriptor_source_type(source_label):
+    source = str(source_label or "").strip().lower()
+    if source in {"molecular_calculated", "molecular_only", "calculated_molecular"}:
+        return DESCRIPTOR_SOURCE_CALCULATED_MOLECULAR
+    if source in {"custom_descriptors", "uploaded", "uploaded_descriptors"}:
+        return DESCRIPTOR_SOURCE_UPLOADED
+    if "spectral" in source and ("molecular" in source or "combined" in source):
+        return DESCRIPTOR_SOURCE_COMBINED
+    if "spectral" in source:
+        return DESCRIPTOR_SOURCE_SPECTRAL
+    if "cached" in source or "cache" in source:
+        return DESCRIPTOR_SOURCE_CACHED
+    return DESCRIPTOR_SOURCE_UPLOADED
+
+
+def descriptor_source_code(source_label):
+    return str(source_label or "molecular_calculated").strip() or "molecular_calculated"
+
+
 def store_descriptor_bundle(bundle, source_label):
+    prepared_bundle = validate_descriptor_bundle(bundle)
+    source_code = descriptor_source_code(source_label)
+    source_type = descriptor_source_type(source_code)
+    structure_hash = qspr_structure_hash_for_indices(
+        st.session_state.get("data"),
+        st.session_state.get("smiles_col", "SMILES"),
+        prepared_bundle["valid_indices"],
+    )
+    descriptor_column_metadata = qspr_descriptor_column_metadata(
+        prepared_bundle["desc_names"],
+        source_label="uploaded" if source_code == "custom_descriptors" else source_code,
+        structure_hash=structure_hash,
+        calculation_version=ALGORITHM_VERSIONS["descriptor_matrix"],
+    )
+    invalidate_descriptor_state()
     """Единая запись дескрипторов в session_state."""
-    st.session_state.X_all = bundle["X_all"]
-    st.session_state.y_all = bundle["y_all"]
-    st.session_state.valid_indices = bundle["valid_indices"]
-    st.session_state.desc_names = bundle["desc_names"]
-    st.session_state.df_desc = bundle["df_desc"]
+    st.session_state.X_all = prepared_bundle["X_all"]
+    st.session_state.y_all = prepared_bundle["y_all"]
+    st.session_state.valid_indices = prepared_bundle["valid_indices"]
+    st.session_state.desc_names = prepared_bundle["desc_names"]
+    st.session_state.df_desc = prepared_bundle["df_desc"]
 
     st.session_state.desc_calculated = True
-    st.session_state.custom_descriptors_used = source_label not in ["molecular_calculated"]
-    st.session_state.custom_descriptor_source = source_label
+    st.session_state.custom_descriptors_used = source_type != DESCRIPTOR_SOURCE_CALCULATED_MOLECULAR
+    st.session_state.custom_descriptor_source = source_code
+    st.session_state.descriptor_source_code = source_code
+    st.session_state.descriptor_source_label = str(
+        bundle.get("report", {}).get("descriptor_source_label", source_code)
+    )
+    st.session_state.descriptor_source_type = source_type
+    st.session_state.descriptor_column_metadata = descriptor_column_metadata
+    st.session_state.descriptor_bundle = {
+        **prepared_bundle,
+        "source": source_code,
+        "source_code": source_code,
+        "source_label": st.session_state.descriptor_source_label,
+        "source_type": source_type,
+        "structure_hash": structure_hash,
+        "algorithm_version": ALGORITHM_VERSIONS["descriptor_matrix"],
+    }
 
     st.session_state.validation_done = False
     st.session_state.holdout_results_dict = {}
     st.session_state.kfold_results_dict = {}
     st.session_state.loo_results_dict = {}
     st.session_state.trained_models = {}
+    st.session_state.ext_validation_result = None
+    st.session_state.ext_validation_results_dict = {}
+    update_analysis_bundle(
+        st.session_state,
+        "descriptors",
+        {
+            "ready": True,
+            "source": source_code,
+            "source_code": source_code,
+            "source_label": st.session_state.descriptor_source_label,
+            "source_type": source_type,
+            "n_rows": int(prepared_bundle["X_all"].shape[0]),
+            "n_descriptors": int(len(prepared_bundle["desc_names"])),
+            "row_positions": list(prepared_bundle["row_positions"]),
+            "source_indices": list(prepared_bundle["source_indices"]),
+            "record_ids": list(prepared_bundle["record_ids"]),
+            "descriptor_names": list(prepared_bundle["desc_names"]),
+            "descriptor_column_metadata": descriptor_column_metadata.to_dict("records"),
+            "algorithm_version": ALGORITHM_VERSIONS["descriptor_matrix"],
+        },
+    )
 
 def qspr_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
     """
@@ -6028,6 +7433,15 @@ def qspr_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
     }
 
 
+def qspr_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
+    """Compatibility wrapper around the shared AD implementation."""
+    return applicability_domain_core.qspr_calculate_leverage_ad(
+        X_train=X_train,
+        X_query=X_query,
+        desc_names=desc_names,
+    )
+
+
 def qspr_make_ad_table(
     X_train,
     smiles,
@@ -6038,7 +7452,7 @@ def qspr_make_ad_table(
     """
     Таблица Applicability Domain для обучающей выборки.
     """
-    ad = qspr_calculate_leverage_ad(
+    ad = applicability_domain_core.qspr_calculate_leverage_ad(
         X_train=X_train,
         X_query=None,
         desc_names=desc_names
@@ -6054,7 +7468,7 @@ def qspr_make_ad_table(
     })
 
     if original_indices is not None:
-        table.insert(1, t('ad_table.col_original_index'), [int(i) + 1 for i in original_indices])
+        table.insert(1, t('ad_table.col_original_index'), list(original_indices))
 
     if smiles is not None:
         insert_pos = 2 if original_indices is not None else 1
@@ -6064,9 +7478,11 @@ def qspr_make_ad_table(
         table[t('ad_table.col_property')] = y
 
     table[t('ad_table.col_reliability')] = table[t('ad_table.col_status')].map({
-        t('ad_leverage.in_ad'): t('ad_table.reliability_in'),
-        t('ad_leverage.out_ad'): t('ad_table.reliability_out')
+        "IN_AD": t('ad_table.reliability_in'),
+        "OUT_OF_AD": t('ad_table.reliability_out')
     })
+    table["AD informative"] = bool(ad.get("informative", True))
+    table["AD warnings"] = "; ".join(ad.get("warnings", []))
 
     return table, ad
 
@@ -6128,7 +7544,7 @@ def qspr_make_descriptor_meaning_table(desc_names, status_label=""):
     """
     desc_names = list(desc_names or [])
 
-    meanings = qspr_load_descriptor_meanings()
+    meanings = qspr_core.qspr_load_descriptor_meanings()
 
     rows = []
 
@@ -6139,7 +7555,7 @@ def qspr_make_descriptor_meaning_table(desc_names, status_label=""):
             "№": i,
             t('desc_meaning_table.col_descriptor'): desc_str,
             t('desc_meaning_table.col_meaning'): meanings.get(desc_str, t('desc_meaning_table.no_meaning')),
-            t('desc_meaning_table.col_source'): qspr_guess_descriptor_source(desc_str),
+            t('desc_meaning_table.col_source'): structural_filter_core.qspr_guess_descriptor_source(desc_str),
             t('desc_meaning_table.col_status'): status_label,
         })
 
@@ -6161,7 +7577,7 @@ def qspr_show_descriptor_meaning_table(
     if not desc_names:
         return
 
-    meaning_df = qspr_make_descriptor_meaning_table(
+    meaning_df = structural_filter_core.qspr_make_descriptor_meaning_table(
         desc_names=desc_names,
         status_label=status_label
     )
@@ -6187,6 +7603,56 @@ def qspr_show_descriptor_meaning_table(
 # Data bank
 
 
+def _data_bank_last_non_empty(series):
+    valid = series.dropna()
+    if valid.empty:
+        return np.nan
+    valid_text = valid.astype(str).map(str.strip)
+    valid = valid.loc[valid_text != ""]
+    if valid.empty:
+        return np.nan
+    return valid.iloc[-1]
+
+
+def _data_bank_first_non_empty(series):
+    valid = series.dropna()
+    if valid.empty:
+        return np.nan
+    valid_text = valid.astype(str).map(str.strip)
+    valid = valid.loc[valid_text != ""]
+    if valid.empty:
+        return np.nan
+    return valid.iloc[0]
+
+
+def _data_bank_mean_or_last(series):
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
+    if not numeric.empty:
+        return float(numeric.mean())
+    return _data_bank_last_non_empty(series)
+
+
+def _data_bank_collapse_duplicate_smiles(df, policy=DATA_BANK_DUPLICATE_POLICY_DEFAULT):
+    if df is None or df.empty or "SMILES" not in df.columns:
+        return df
+    df = df.copy()
+    df["SMILES"] = df["SMILES"].astype(str).str.strip()
+    df = df[df["SMILES"] != ""]
+    if not bool(df["SMILES"].duplicated(keep=False).any()):
+        return df
+    if policy == "keep_existing":
+        reducer = _data_bank_first_non_empty
+    elif policy == "average_numeric":
+        reducer = _data_bank_mean_or_last
+    else:
+        reducer = _data_bank_last_non_empty
+    return (
+        df
+        .groupby("SMILES", sort=False, as_index=False)
+        .agg(reducer)
+    )
+
+
 def load_data_bank():
     if os.path.exists(DATA_BANK_FILE):
         df = pd.read_csv(DATA_BANK_FILE)
@@ -6194,14 +7660,46 @@ def load_data_bank():
         if "SMILES" not in df.columns:
             df["SMILES"] = ""
 
-        df = df.drop_duplicates(subset=["SMILES"], keep="first")
+        df = _data_bank_collapse_duplicate_smiles(
+            df,
+            policy=DATA_BANK_DUPLICATE_POLICY_DEFAULT,
+        )
         return df
 
     return pd.DataFrame(columns=["SMILES"])
 
 
 def save_data_bank(df):
-    df.to_csv(DATA_BANK_FILE, index=False)
+    lock_path = f"{DATA_BANK_FILE}.lock"
+    temp_path = f"{DATA_BANK_FILE}.{os.getpid()}.tmp"
+    lock_fd = None
+    deadline = time.time() + 10.0
+    try:
+        while True:
+            try:
+                lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(lock_fd, str(os.getpid()).encode("ascii", errors="ignore"))
+                break
+            except FileExistsError:
+                if time.time() >= deadline:
+                    raise TimeoutError(f"Data bank is locked by another process: {lock_path}")
+                time.sleep(0.1)
+
+        df.to_csv(temp_path, index=False)
+        os.replace(temp_path, DATA_BANK_FILE)
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        if lock_fd is not None and os.path.exists(lock_path):
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
     st.success(t('data_bank.saved', file=DATA_BANK_FILE))
 
 
@@ -6221,6 +7719,22 @@ def manage_data_bank():
         if st.button(t('data_bank.refresh_button')):
             st.rerun()
 
+    policy_labels = {
+        "overwrite_new": "Overwrite with uploaded values",
+        "keep_existing": "Keep existing bank values",
+        "average_numeric": "Average numeric repeated measurements",
+    }
+    duplicate_policy_label = st.selectbox(
+        "Duplicate/update policy",
+        list(policy_labels.values()),
+        index=0,
+        key="data_bank_duplicate_policy_label",
+    )
+    duplicate_policy = {
+        value: key for key, value in policy_labels.items()
+    }.get(duplicate_policy_label, DATA_BANK_DUPLICATE_POLICY_DEFAULT)
+    st.caption(f"Active data-bank duplicate policy: {duplicate_policy}")
+
     uploaded_bank = st.file_uploader(
         t('data_bank.upload_prompt'),
         type=["csv"],
@@ -6236,31 +7750,77 @@ def manage_data_bank():
         else:
             new_data["SMILES"] = new_data["SMILES"].astype(str).str.strip()
             new_data = new_data[new_data["SMILES"] != ""]
+            exact_duplicate_count = int(new_data.duplicated(keep="first").sum())
+            if exact_duplicate_count:
+                st.info(f"Exact duplicate rows in uploaded bank file: {exact_duplicate_count}.")
+
+            duplicate_smiles_mask = new_data["SMILES"].duplicated(keep=False)
+            if bool(duplicate_smiles_mask.any()):
+                duplicate_report_rows = []
+                for smiles_value, group in new_data.loc[duplicate_smiles_mask].groupby("SMILES", sort=False):
+                    conflict_cols = []
+                    repeated_cols = []
+                    for col in [c for c in group.columns if c != "SMILES"]:
+                        non_empty = (
+                            group[col]
+                            .dropna()
+                            .astype(str)
+                            .map(str.strip)
+                        )
+                        non_empty = non_empty[non_empty != ""]
+                        unique_values = sorted(set(non_empty.tolist()))
+                        if len(unique_values) > 1:
+                            conflict_cols.append(col)
+                        elif len(non_empty) > 1:
+                            repeated_cols.append(col)
+                    duplicate_report_rows.append({
+                        "SMILES": smiles_value,
+                        "rows": int(len(group)),
+                        "conflicting_columns": ", ".join(conflict_cols),
+                        "repeated_measurement_columns": ", ".join(repeated_cols),
+                    })
+                st.warning(
+                    "Repeated SMILES were found in the uploaded bank file. "
+                    f"The bank stores one row per SMILES; policy applied: {duplicate_policy}."
+                )
+                st.dataframe(pd.DataFrame(duplicate_report_rows), width="stretch", hide_index=True)
+                new_data = _data_bank_collapse_duplicate_smiles(new_data, policy=duplicate_policy)
 
             bank_df_idx = bank_df.set_index("SMILES")
             new_data_idx = new_data.set_index("SMILES")
+            all_smiles = bank_df_idx.index.union(new_data_idx.index)
+            bank_df_idx = bank_df_idx.reindex(all_smiles)
 
             for col in new_data_idx.columns:
                 if col in bank_df_idx.columns:
                     common_idx = bank_df_idx.index.intersection(new_data_idx.index)
-                    bank_df_idx.loc[common_idx, col] = new_data_idx.loc[common_idx, col]
-
-                    new_idx = new_data_idx.index.difference(bank_df_idx.index)
-
-                    if len(new_idx) > 0:
-                        bank_df_idx = pd.concat([bank_df_idx, new_data_idx.loc[new_idx, [col]]], axis=0)
+                    if duplicate_policy == "keep_existing":
+                        existing = bank_df_idx.loc[common_idx, col]
+                        incoming = new_data_idx.loc[common_idx, col]
+                        missing_existing = existing.isna() | (existing.astype(str).str.strip() == "")
+                        bank_df_idx.loc[common_idx[missing_existing], col] = incoming.loc[missing_existing]
+                    elif duplicate_policy == "average_numeric":
+                        existing_numeric = pd.to_numeric(bank_df_idx.loc[common_idx, col], errors="coerce")
+                        incoming_numeric = pd.to_numeric(new_data_idx.loc[common_idx, col], errors="coerce")
+                        both_numeric = existing_numeric.notna() & incoming_numeric.notna()
+                        averaged = (existing_numeric.loc[both_numeric] + incoming_numeric.loc[both_numeric]) / 2.0
+                        bank_df_idx.loc[common_idx[both_numeric], col] = averaged
+                        non_numeric = ~both_numeric
+                        bank_df_idx.loc[common_idx[non_numeric], col] = new_data_idx.loc[common_idx[non_numeric], col]
+                    else:
+                        bank_df_idx.loc[common_idx, col] = new_data_idx.loc[common_idx, col]
                 else:
                     bank_df_idx[col] = new_data_idx[col]
 
             bank_df_idx.reset_index(inplace=True)
-            bank_df_idx = bank_df_idx.drop_duplicates(subset=["SMILES"], keep="last")
+            bank_df_idx = _data_bank_collapse_duplicate_smiles(bank_df_idx, policy=duplicate_policy)
             save_data_bank(bank_df_idx)
             st.success(t('data_bank.updated_success'))
             st.rerun()
 
     if st.checkbox(t('data_bank.show_content_checkbox')):
         st.dataframe(bank_df.reset_index(drop=True), width="stretch")
-        csv_bank = bank_df.to_csv(index=False).encode("utf-8")
+        csv_bank = qspr_core.qspr_csv_download_bytes(bank_df)
         st.download_button(t('data_bank.download_button'), csv_bank, "data_bank.csv", "text/csv")
 
     return bank_df
@@ -6507,10 +8067,10 @@ def saod2_make_review_dataset(original_df, processed, checkability, suspicion):
             )
 
     def auto_decision(row):
-        if row.get("valid_structure") is False:
+        if _qspr_bool_setting(row.get("valid_structure")) is False:
             return t('saod2_review.auto_exclude_invalid')
 
-        if bool(row.get("duplicate_conflict", False)):
+        if _qspr_bool_setting(row.get("duplicate_conflict")) is True:
             return t('saod2_review.auto_check_exclude_conflict')
 
         status = str(row.get("final_status", "")).strip().lower()
@@ -6631,18 +8191,33 @@ SESSION_DEFAULTS = {
     "valid_indices": None,
     "desc_names": None,
     "df_desc": None,
+    "descriptor_bundle": None,
     "logs": [],
     "log_events": [],
+    "analysis_started_at": None,
+    "analysis_finished_at": None,
     "desc_lists": None,
     "descriptor_source_mode": "calculate",
+    "descriptor_source_mode_radio_v2": "calculate",
     "custom_descriptor_cols": [],
+    "custom_descriptor_cols_multiselect": [],
     "custom_descriptors_used": False,
     "custom_descriptor_source": "molecular_calculated",
+    "descriptor_source_code": "molecular_calculated",
+    "descriptor_source_label": "molecular_calculated",
+    "descriptor_source_type": DESCRIPTOR_SOURCE_CALCULATED_MOLECULAR,
+    "descriptor_column_metadata": None,
+    "structure_changed_after_standardization": False,
+    "standardization_changed_structure_count": 0,
+    "uploaded_descriptor_structure_mismatch": False,
+    "uploaded_descriptor_structure_mismatch_message": "",
+    "allow_mismatched_uploaded_descriptors": False,
     "descriptor_calculation_mode": "👁️‍🗨️ Расширенный (Mordred)",
     "molecular_descriptor_calculation_mode": "👁️‍🗨️ Расширенный (Mordred)",
     "validation_done": False,
-    "last_model_group": MODEL_GROUP_LINEAR,
+    "last_model_group": MODEL_GROUP_TREE_ENSEMBLES,
     "last_model_algorithm": "Random Forest",
+    "random_seed": 42,
     "pls_components": 2,
     "ridge_alpha": 1.0,
     "lasso_alpha": 0.01,
@@ -6664,6 +8239,7 @@ SESSION_DEFAULTS = {
     "kfold_results_dict": {},
     "loo_results_dict": {},
     "repeated_holdout_results_dict": {},
+    "montecarlo_results_dict": {},
     "y_randomization_results_dict": {},
     "svr_c": 10.0,
     "svr_epsilon": 0.1,
@@ -6735,6 +8311,7 @@ SESSION_DEFAULTS = {
     "et_min_samples_leaf": 1,
     "et_max_features": "sqrt",
     "ext_validation_result": None,
+    "ext_validation_results_dict": {},
     "adaboost_n_estimators": 300,
     "adaboost_learning_rate": 1.0,
     "methodology_history": [],
@@ -6745,6 +8322,12 @@ SESSION_DEFAULTS = {
     "report_full_history": [],
     "report_full_current_index": 0,
     "report_language": "ru",
+    "analysis_bundle": None,
+    "dataset_signature": "",
+    "current_dataset_signature": "",
+    "dataset_provenance": None,
+    "bootstrap_rmse_p95_ratio_threshold": 2.0,
+    "y_randomization_q2_gap_threshold": 0.10,
     "hgb_max_iter": 300,
     "hgb_learning_rate": 0.1,
     "hgb_max_depth": None,
@@ -6754,13 +8337,17 @@ SESSION_DEFAULTS = {
 
 for key, value in SESSION_DEFAULTS.items():
     if key not in st.session_state:
-        st.session_state[key] = value
+        st.session_state[key] = deepcopy(value)
+
+ensure_analysis_bundle(st.session_state)
 
 def reset_project_state_for_new_file():
     """
     Полный сброс состояния приложения при загрузке нового файла.
     Оставляет только настройки интерфейса и сам новый файл.
     """
+
+    reset_analysis_nodes(st.session_state, "dataset", SESSION_DEFAULTS)
 
     keys_to_reset = [
         # Данные и цель
@@ -6774,9 +8361,18 @@ def reset_project_state_for_new_file():
         "valid_indices",
         "desc_names",
         "df_desc",
+        "descriptor_source_mode",
+        "descriptor_source_mode_radio_v2",
         "custom_descriptors_used",
         "custom_descriptor_source",
+        "descriptor_source_code",
+        "descriptor_source_label",
+        "descriptor_source_type",
         "custom_descriptor_cols",
+        "custom_descriptor_cols_multiselect",
+        "uploaded_descriptor_structure_mismatch",
+        "uploaded_descriptor_structure_mismatch_message",
+        "allow_mismatched_uploaded_descriptors",
 
         # Модели и валидация
         "validation_done",
@@ -6787,6 +8383,7 @@ def reset_project_state_for_new_file():
         "kfold_results_dict",
         "loo_results_dict",
         "repeated_holdout_results_dict",
+        "montecarlo_results_dict",
         "y_randomization_results_dict",
         "auto_tuning_result",
         "model_comparison_df",
@@ -6830,9 +8427,11 @@ def reset_project_state_for_new_file():
 
     for key in keys_to_reset:
         if key in SESSION_DEFAULTS:
-            st.session_state[key] = SESSION_DEFAULTS[key]
+            st.session_state[key] = deepcopy(SESSION_DEFAULTS[key])
         elif key in st.session_state:
             del st.session_state[key]
+
+    ensure_analysis_bundle(st.session_state)
 
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
@@ -6857,12 +8456,19 @@ legacy_prediction_labels = {
     load_language(lang).get("mode", {}).get("prediction")
     for lang in ("ru", "en", "kk")
 }
+legacy_install_diagnostics_labels = {
+    "Диагностика установки",
+    "Installation diagnostics",
+    "Орнатуды диагностикалау",
+}
 
 if legacy_app_mode in legacy_qspr_labels:
     st.session_state["main_app_mode_code"] = "qspr"
 elif legacy_app_mode in legacy_prediction_labels:
     st.session_state["main_app_mode_code"] = "prediction"
-elif legacy_app_mode not in {"qspr", "prediction"}:
+elif legacy_app_mode in legacy_install_diagnostics_labels:
+    st.session_state["main_app_mode_code"] = "install_diagnostics"
+elif legacy_app_mode not in {"qspr", "prediction", "install_diagnostics"}:
     st.session_state["main_app_mode_code"] = "qspr"
 else:
     st.session_state["main_app_mode_code"] = legacy_app_mode
@@ -6871,15 +8477,13 @@ if (not qspr_is_online_mode()) and not is_admin() and st.session_state.get("main
     show_admin_only_notice("prediction_mode")
     st.session_state["main_app_mode_code"] = "qspr"
 
-app_mode_options = ["qspr", "prediction"] if (qspr_is_online_mode() or is_admin()) else ["qspr"]
+app_mode_options = ["qspr", "install_diagnostics"]
+if qspr_is_online_mode() or is_admin():
+    app_mode_options.insert(1, "prediction")
 
 app_mode = st.radio(
     t('mode.select'),
     app_mode_options,
-    format_func=lambda mode: {
-        "qspr": t('mode.qspr'),
-        "prediction": t('mode.prediction'),
-    }[mode],
     horizontal=True,
     key="main_app_mode_code",
 )
@@ -6906,8 +8510,8 @@ with st.sidebar:
         st.rerun()
     # --- конец переключателя ---
 
-    if app_mode != "prediction":
-        padel_unique_count = len(qspr_load_padel_unique_from_file())
+    if app_mode == "qspr":
+        padel_unique_count = len(qspr_core.qspr_load_padel_unique_from_file())
 
         if padel_unique_count:
             st.success(t('sidebar.padel_unique_count', count=padel_unique_count))
@@ -6916,8 +8520,8 @@ with st.sidebar:
 
         if is_admin() and st.button(t('sidebar.update_desc_lists')):
             with st.spinner(t('sidebar.spinner_computing')):
-                lists = qspr_compute_descriptor_lists()
-                qspr_save_descriptor_lists(lists)
+                lists = qspr_core.qspr_compute_descriptor_lists()
+                qspr_core.qspr_save_descriptor_lists(lists)
                 st.session_state.desc_lists = lists
                 add_log(t('sidebar.log_lists_updated',
                     rdkit=len(lists.get('rdkit_all', [])),
@@ -6933,7 +8537,25 @@ with st.sidebar:
                 ))
 
         if st.session_state.desc_lists is None:
-            st.session_state.desc_lists = qspr_load_descriptor_lists()
+            st.session_state.desc_lists = qspr_core.qspr_load_descriptor_lists()
+            descriptor_lists_error = getattr(
+                qspr_core.qspr_load_descriptor_lists,
+                "last_error",
+                None,
+            )
+            if descriptor_lists_error:
+                recovered_from = descriptor_lists_error.get("recovered_from")
+                if recovered_from:
+                    st.warning(
+                        "descriptor_lists.json could not be read; "
+                        f"restored descriptor catalog from backup: {recovered_from}"
+                    )
+                else:
+                    st.warning(
+                        "descriptor_lists.json could not be read. "
+                        f"Status: {descriptor_lists_error.get('status')}. "
+                        f"Details: {descriptor_lists_error.get('error')}"
+                    )
 
         if st.session_state.desc_lists:
             st.info(t('sidebar.lists_loaded',
@@ -6944,6 +8566,10 @@ with st.sidebar:
                 padel_all=len(st.session_state.desc_lists.get('padel_all', [])),
                 padel_unique=len(st.session_state.desc_lists.get('padel_unique', []))
             ))
+            if st.session_state.desc_lists.get("padel_catalog_status") == "fallback_partial":
+                st.warning(
+                    "Full PaDEL catalog is unavailable. Fallback limited unique PaDEL set is used."
+                )
         else:
             st.warning(t('sidebar.lists_not_created'))
 
@@ -6965,13 +8591,17 @@ with st.sidebar:
         else:
             st.session_state.show_data_bank_panel = False
 
+if app_mode == "install_diagnostics":
+    render_installation_diagnostics_section()
+    st.stop()
+
 if app_mode == "prediction" and qspr_is_online_mode():
     st.header(t('mode.prediction'))
     qspr_online_lock_notice("Standalone prediction and model package loading")
     st.stop()
 
 if app_mode == "prediction":
-    qspr_show_standalone_prediction_page()
+    prognostic_model_core.qspr_show_standalone_prediction_page()
     st.stop()
 
 st.header(t('header.qspr'))
@@ -6980,7 +8610,7 @@ st.markdown(t('data_upload.instruction'))
 st.header(t('data_prep.header'))
 render_module_explanation("data_preparation")
 st.caption(t('data_prep.caption'))
-if app_mode != "prediction" and is_admin() and st.session_state.get("show_data_bank_panel", False):
+if app_mode == "qspr" and is_admin() and st.session_state.get("show_data_bank_panel", False):
     with st.expander(t('sidebar.manage_data_bank'), expanded=True):
         manage_data_bank()
 
@@ -7064,6 +8694,12 @@ if uploaded_file is not None:
             st.stop()
 
         data.columns = data.columns.str.strip()
+        data = qspr_ensure_record_ids(data)
+        new_dataset_signature = dataset_signature(
+            data,
+            file_name=uploaded_file.name,
+            file_size=uploaded_file_size,
+        )
 
         if qspr_is_online_mode() and len(data) > ONLINE_MAX_DATA_ROWS:
             st.error(
@@ -7078,6 +8714,18 @@ if uploaded_file is not None:
         st.session_state.uploaded_file_name = uploaded_file.name
         st.session_state.uploaded_file_size = uploaded_file_size
         st.session_state.delimiter = delimiter
+        st.session_state.dataset_signature = new_dataset_signature
+        update_analysis_bundle(
+            st.session_state,
+            "dataset",
+            {
+                "signature": new_dataset_signature,
+                "file_name": uploaded_file.name,
+                "file_size": int(uploaded_file_size),
+                "rows": int(len(data)),
+                "columns": [str(col) for col in data.columns],
+            },
+        )
 
         add_log(
             t('upload.file_loaded', name=uploaded_file.name, rows=len(data)),
@@ -7119,22 +8767,31 @@ if st.session_state.data is None:
 # ------------------------------------------------------------------
 # Basic data preparation
 
-data = st.session_state.data.copy()
+data = qspr_ensure_record_ids(st.session_state.data.copy())
+current_dataset_signature = dataset_signature(
+    data,
+    file_name=st.session_state.get("uploaded_file_name", ""),
+    file_size=st.session_state.get("uploaded_file_size", 0),
+)
+if st.session_state.get("dataset_signature") and st.session_state.get("dataset_signature") != current_dataset_signature:
+    reset_analysis_nodes(st.session_state, "dataset", SESSION_DEFAULTS)
+    st.session_state.dataset_signature = current_dataset_signature
+    update_analysis_bundle(
+        st.session_state,
+        "dataset",
+        {
+            "signature": current_dataset_signature,
+            "file_name": st.session_state.get("uploaded_file_name", ""),
+            "file_size": int(st.session_state.get("uploaded_file_size", 0) or 0),
+            "rows": int(len(data)),
+            "columns": [str(col) for col in data.columns],
+        },
+    )
+elif not st.session_state.get("dataset_signature"):
+    st.session_state.dataset_signature = current_dataset_signature
 
-possible_smiles_cols = [
-    "SMILES",
-    "smiles",
-    "canonical_smiles",
-    "Canonical SMILES",
-    "canonical_SMILES",
-    "can_smiles",
-    "mol_smiles",
-]
-
-available_smiles_cols = [
-    col for col in possible_smiles_cols
-    if col in data.columns
-]
+detected_optional_cols = qspr_detect_optional_columns(data)
+available_smiles_cols = qspr_pick_columns_by_aliases(data.columns, QSPR_SMILES_ALIASES)
 
 if len(available_smiles_cols) == 0:
     st.error(t('data_prep.no_smiles_column'))
@@ -7162,8 +8819,10 @@ smiles_col_current = st.selectbox(
     key="smiles_col_current",
     label_visibility="collapsed"
 )
+st.session_state.smiles_col = smiles_col_current
 
 st.session_state.data = data
+sync_analysis_bundle_from_session(st.session_state)
 
 smiles_values_current = data[smiles_col_current].astype(str).fillna("")
 data = data[smiles_values_current.str.strip() != ""].copy()
@@ -7174,15 +8833,16 @@ if data.empty:
 
 numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
 
-if "SMILES" in numeric_cols:
-    numeric_cols.remove("SMILES")
+for smiles_like_col in available_smiles_cols:
+    if smiles_like_col in numeric_cols:
+        numeric_cols.remove(smiles_like_col)
 
 if not numeric_cols:
     # Попробуем найти числовые строки с запятой
     numeric_like = []
 
     for col in data.columns:
-        if col == "SMILES":
+        if col in available_smiles_cols:
             continue
 
         converted = pd.to_numeric(
@@ -7198,6 +8858,9 @@ if not numeric_cols:
 if not numeric_cols:
     st.error(t('data_prep.no_numeric_columns'))
     st.stop()
+
+property_priority = qspr_pick_columns_by_aliases(numeric_cols, QSPR_PROPERTY_ALIASES)
+numeric_cols = property_priority + [col for col in numeric_cols if col not in property_priority]
 
 st.markdown(
     f"""
@@ -7236,17 +8899,7 @@ target_col = st.selectbox(
 if target_col != old_target:
     st.session_state.target_col = target_col
 
-    st.session_state.desc_calculated = False
-    st.session_state.validation_done = False
-    st.session_state.X_all = None
-    st.session_state.y_all = None
-    st.session_state.valid_indices = None
-    st.session_state.desc_names = None
-    st.session_state.df_desc = None
-    st.session_state.trained_models = {}
-    st.session_state.holdout_results_dict = {}
-    st.session_state.kfold_results_dict = {}
-    st.session_state.loo_results_dict = {}
+    invalidate_descriptor_state()
 
     add_log(
         t('data_prep.target_selected_log', target=target_col)
@@ -7262,6 +8915,86 @@ data[target_col] = pd.to_numeric(
     errors="coerce"
 )
 
+context_cols = qspr_context_columns(data, detected_optional_cols)
+context_diversity = qspr_context_diversity(data, context_cols)
+if not context_diversity.empty:
+    st.warning(
+        "В датасете обнаружены разные экспериментальные контексты. "
+        "Сравнение структурных эффектов может быть некорректным."
+    )
+    with st.expander("Обнаруженные экспериментальные контексты", expanded=False):
+        st.dataframe(context_diversity, width="stretch", hide_index=True)
+
+data, selected_context = qspr_apply_context_selectors(
+    data,
+    context_cols,
+    key_prefix="main_context_filter",
+)
+if selected_context:
+    st.info(
+        "Применен фильтр экспериментального контекста: "
+        + "; ".join(f"{key}={value}" for key, value in selected_context.items())
+        + f". Осталось строк: {len(data)}."
+    )
+
+if data.empty:
+    st.error("После фильтрации экспериментального контекста не осталось строк.")
+    st.stop()
+
+st.session_state.experimental_context_columns = context_cols
+st.session_state.experimental_context_selection = selected_context
+
+property_interpretation, activity_transform, property_interpretation_info = qspr_show_property_interpretation_block(
+    target_col,
+    key_prefix="main",
+)
+
+activity_unit_col = None
+activity_constant_unit = None
+if activity_transform == QSPR_NEG_LOG10_TRANSFORM:
+    detected_unit_col = context_cols.get("activity_unit")
+    unit_options = ["Задать единицу вручную"] + [
+        col for col in data.columns
+        if col == detected_unit_col or qspr_norm_column_name(col) in {"activity_unit", "unit", "units", "standard_units", "standard_unit"}
+    ]
+    unit_options = list(dict.fromkeys(unit_options))
+    selected_unit_source = st.selectbox(
+        "Единицы активности для преобразования",
+        unit_options,
+        index=unit_options.index(detected_unit_col) if detected_unit_col in unit_options else 0,
+        key="activity_transform_unit_source",
+    )
+    if selected_unit_source == "Задать единицу вручную":
+        activity_constant_unit = st.selectbox(
+            "Единица исходных значений",
+            ["M", "mM", "uM", "nM", "pM"],
+            key="activity_transform_constant_unit",
+        )
+    else:
+        activity_unit_col = selected_unit_source
+
+try:
+    data, effective_target_col, transform_unit = qspr_transform_activity_values(
+        data,
+        target_col,
+        activity_transform,
+        unit_col=activity_unit_col,
+        constant_unit=activity_constant_unit,
+    )
+except ValueError as e:
+    st.error(str(e))
+    st.stop()
+
+if effective_target_col != target_col:
+    st.info(f"Для дальнейшего анализа используется преобразованная колонка: {effective_target_col}.")
+    target_col = effective_target_col
+    st.session_state.target_col = target_col
+
+analysis_target_signature = (target_col, activity_transform, property_interpretation)
+if st.session_state.get("analysis_target_signature") != analysis_target_signature:
+    invalidate_descriptor_state()
+    st.session_state.analysis_target_signature = analysis_target_signature
+
 st.markdown(t("data_prep.reading_block_title"))
 
 if st.session_state.get("data_source_note"):
@@ -7269,20 +9002,7 @@ if st.session_state.get("data_source_note"):
 
 st.write(t('data_prep.current_dataset', count=len(data)))
 
-possible_smiles_cols = [
-    "SMILES",
-    "smiles",
-    "canonical_smiles",
-    "Canonical SMILES",
-    "canonical_SMILES",
-    "can_smiles",
-    "mol_smiles",
-]
-
-available_smiles_cols = [
-    c for c in possible_smiles_cols
-    if c in data.columns
-]
+available_smiles_cols = qspr_pick_columns_by_aliases(data.columns, QSPR_SMILES_ALIASES)
 
 if not available_smiles_cols:
     st.error(t('data_prep.no_smiles_column'))
@@ -7330,6 +9050,7 @@ if st.button(
         st.success(t('standardization_ui.success_normalization'))
 
     except Exception as e:
+        qspr_log_exception("qspr_app", "qspr_standardize_molecule_dataset", e)
         st.error(t('standardization_ui.error_normalization', error=e))
         st.exception(e)
 
@@ -7345,16 +9066,21 @@ if isinstance(st.session_state.get("standardization_summary_df"), pd.DataFrame):
 
 if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
     std_df = st.session_state.standardized_molecule_df
-    std_df = std_df.loc[:, ~std_df.columns.duplicated()].copy()
+    std_df = qspr_core.qspr_rename_duplicate_columns(std_df)
 
     if not std_df.empty:
         preview_cols_raw = [
             "Номер исходной строки",
             smiles_col_current,
+            "input_smiles",
             "input_smiles_original",
+            "parent_smiles",
             "standardized_smiles",
             "canonical_smiles",
             "inchikey",
+            "fragment_removed",
+            "charge_changed",
+            "standardization_changed_structure",
             "standardization_status",
             "standardization_warnings",
             target_col,
@@ -7403,7 +9129,20 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                         hide_index=True
                     )
 
-        csv_std = std_df.to_csv(index=False).encode("utf-8")
+        duplicate_policy_report = st.session_state.get("standardization_duplicate_policy_report")
+        if isinstance(duplicate_policy_report, pd.DataFrame) and not duplicate_policy_report.empty:
+            st.caption(
+                "Последняя примененная политика дубликатов: "
+                f"{st.session_state.get('standardization_duplicate_policy', 'оставить все измерения')}"
+            )
+            with st.expander("Отчет по дубликатам после стандартизации", expanded=False):
+                st.dataframe(
+                    duplicate_policy_report.head(300),
+                    width="stretch",
+                    hide_index=True,
+                )
+
+        csv_std = qspr_core.qspr_csv_download_bytes(std_df)
 
         st.download_button(
             t('standardization_ui.download_button'),
@@ -7411,6 +9150,23 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
             "standardized_molecules.csv",
             "text/csv",
             key="download_standardized_molecules"
+        )
+
+        duplicate_policy = st.selectbox(
+            "Политика дубликатов после стандартизации",
+            [
+                "оставить все измерения",
+                "удалить только точные дубликаты",
+                "усреднить",
+                "оставить медиану",
+                "разделить по assay/context",
+            ],
+            index=0,
+            key="standardization_duplicate_policy",
+            help=(
+                "Дубликаты группируются по InChIKey только после стандартизации. "
+                "Режим assay/context не объединяет разные экспериментальные контексты."
+            ),
         )
 
         if st.button(
@@ -7422,7 +9178,7 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                 # std_df — это отчёт стандартизации.
                 # Его нельзя целиком делать рабочим датасетом.
                 std_work = std_df.copy()
-                std_work = std_work.loc[:, ~std_work.columns.duplicated()].copy()
+                std_work = qspr_core.qspr_rename_duplicate_columns(std_work)
 
                 required_std_cols = [
                     "canonical_smiles",
@@ -7442,7 +9198,7 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                 # Берём именно исходный рабочий датасет.
                 # Он может содержать уже рассчитанные/загруженные дескрипторы.
                 applied_df = data.copy()
-                applied_df = applied_df.loc[:, ~applied_df.columns.duplicated()].copy()
+                applied_df = qspr_core.qspr_rename_duplicate_columns(applied_df)
                 applied_df = applied_df.reset_index(drop=True)
 
                 if smiles_col_current not in applied_df.columns:
@@ -7488,9 +9244,70 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                     applied_df.loc[valid_positions, smiles_col_current] = [
                         canonical_map[pos] for pos in valid_positions
                     ]
+                changed_structure_count = 0
+                if "standardization_changed_structure" in ok_std.columns:
+                    changed_structure_count = int(
+                        ok_std["standardization_changed_structure"]
+                        .astype(str)
+                        .str.lower()
+                        .isin(["true", "1", "yes", "y"])
+                        .sum()
+                    )
+                st.session_state.structure_changed_after_standardization = changed_structure_count > 0
+                st.session_state.standardization_changed_structure_count = changed_structure_count
+                if changed_structure_count > 0:
+                    st.session_state.uploaded_descriptor_structure_mismatch = True
+                    st.session_state.uploaded_descriptor_structure_mismatch_message = (
+                        f"Standardization changed structures for {changed_structure_count} rows. "
+                        "Uploaded molecular descriptors may refer to the pre-standardized structures "
+                        "and must be reviewed or recalculated."
+                    )
+                else:
+                    st.session_state.uploaded_descriptor_structure_mismatch = False
+                    st.session_state.uploaded_descriptor_structure_mismatch_message = ""
+
+                metadata_cols = {
+                    "inchikey": "_qspr_inchikey",
+                    "canonical_smiles": "_qspr_canonical_smiles",
+                    "parent_smiles": "_qspr_parent_smiles",
+                    "input_smiles": "_qspr_input_smiles",
+                }
+                for src_col, dst_col in metadata_cols.items():
+                    if src_col in ok_std.columns:
+                        value_map = (
+                            ok_std
+                            .set_index("_original_pos")[src_col]
+                            .astype(str)
+                            .to_dict()
+                        )
+                        applied_df[dst_col] = ""
+                        for pos, value in value_map.items():
+                            if 0 <= int(pos) < len(applied_df):
+                                applied_df.loc[int(pos), dst_col] = value
+
+                duplicate_context_cols = list(
+                    qspr_context_columns(
+                        applied_df,
+                        qspr_detect_optional_columns(applied_df),
+                    ).values()
+                )
+                applied_df, duplicate_policy_report = qspr_apply_duplicate_policy(
+                    applied_df,
+                    target_col=target_col,
+                    policy=duplicate_policy,
+                    context_cols=duplicate_context_cols,
+                )
+                st.session_state.standardization_duplicate_policy_report = duplicate_policy_report
+                st.session_state.standardization_duplicate_policy = duplicate_policy
+
+                private_cols = [
+                    col for col in applied_df.columns
+                    if str(col).startswith("_qspr_")
+                ]
+                applied_df = applied_df.drop(columns=private_cols, errors="ignore")
 
                 # Финальная защита от дублей имён колонок.
-                applied_df = applied_df.loc[:, ~applied_df.columns.duplicated()].copy()
+                applied_df = qspr_core.qspr_rename_duplicate_columns(applied_df)
                 applied_df = applied_df.reset_index(drop=True)
 
                 # Отчёт стандартизации сохраняем отдельно.
@@ -7504,17 +9321,7 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                 st.session_state.data_source_note = t('standardization_ui.data_source_note', count=len(applied_df))
 
                 # Сбрасываем только результаты, которые зависят от структуры/модели.
-                st.session_state.desc_calculated = False
-                st.session_state.validation_done = False
-                st.session_state.X_all = None
-                st.session_state.y_all = None
-                st.session_state.valid_indices = None
-                st.session_state.desc_names = None
-                st.session_state.df_desc = None
-                st.session_state.trained_models = {}
-                st.session_state.holdout_results_dict = {}
-                st.session_state.kfold_results_dict = {}
-                st.session_state.loo_results_dict = {}
+                reset_analysis_nodes(st.session_state, "standardization", SESSION_DEFAULTS)
 
                 add_log(t('standardization_ui.apply_log', rows=len(applied_df), cols=len(applied_df.columns)))
 
@@ -7523,6 +9330,7 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                 st.rerun()
 
             except Exception as e:
+                qspr_log_exception("qspr_app", "apply_standardized_dataset", e)
                 st.error(t('standardization_ui.apply_error', error=e))
                 st.exception(e)
 
@@ -7667,10 +9475,30 @@ with primary_data_analysis_container:
     col_hist, col_box = st.columns(2)
 
     with col_hist:
+        trim_hist_extremes = st.checkbox(
+            "Limit extreme values only on histogram",
+            value=False,
+            key="dataset_passport_trim_hist_extremes",
+            help="If enabled, the chart hides values below P1 and above P99 only for visualization.",
+        )
         fig_hist, ax_hist = plt.subplots(figsize=(4, 3))
-        safe_histplot(ax_hist, data[target_col], kde=True, color='steelblue', edgecolor='black', alpha=0.7)
+        hist_diag = safe_histplot(
+            ax_hist,
+            data[target_col],
+            kde=True,
+            trim_extremes_only_for_plot=trim_hist_extremes,
+            color='steelblue',
+            edgecolor='black',
+            alpha=0.7,
+        )
         ax_hist.set_title(t('dataset_passport.hist_title', col=target_col))
         st.pyplot(fig_hist)
+        if hist_diag.get("trimmed"):
+            st.caption(
+                "For visualization, values below P1 and above P99 are hidden on this histogram only."
+            )
+        if hist_diag.get("kde_status") == "failed":
+            st.caption(f"KDE failed: {hist_diag.get('kde_reason')}")
 
     with col_box:
         fig_box, ax_box = plt.subplots(figsize=(4, 2.5))
@@ -7872,16 +9700,36 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
         )
 
     with col_el_2:
+        if st.session_state.get("struct_filter_element_mode") not in {None, "any", "all"}:
+            st.session_state.struct_filter_element_mode = (
+                structural_filter_core.structural_filter_normalize_match_mode(
+                    st.session_state.get("struct_filter_element_mode")
+                )
+            )
         element_mode = st.radio(
             t('struct_filter.element_logic'),
-            [t('struct_filter.any_selected'), t('struct_filter.all_selected')],
+            ["any", "all"],
             horizontal=True,
-            key="struct_filter_element_mode"
+            key="struct_filter_element_mode",
+            format_func=lambda key: {
+                "any": t('struct_filter.any_selected'),
+                "all": t('struct_filter.all_selected'),
+            }.get(key, str(key)),
         )
 
     st.markdown(t('struct_filter.functional_groups_title'))
 
-    group_options = structural_filter_get_group_options()
+    group_options = structural_filter_core.structural_filter_get_group_options()
+    with st.expander("Functional-group notes", expanded=False):
+        st.caption(
+            "Functional-group SMARTS are substructure matches and are not mutually exclusive. "
+            "For example, carboxylic acids, esters and amides also contain a carbonyl."
+        )
+        st.dataframe(
+            structural_filter_core.structural_filter_group_metadata_table(),
+            width="stretch",
+            hide_index=True,
+        )
 
     col_gr_1, col_gr_2 = st.columns(2)
 
@@ -7894,11 +9742,21 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
         )
 
     with col_gr_2:
+        if st.session_state.get("struct_filter_group_mode") not in {None, "any", "all"}:
+            st.session_state.struct_filter_group_mode = (
+                structural_filter_core.structural_filter_normalize_match_mode(
+                    st.session_state.get("struct_filter_group_mode")
+                )
+            )
         group_mode = st.radio(
             t('struct_filter.group_logic'),
-            [t('struct_filter.any_selected'), t('struct_filter.all_selected')],
+            ["any", "all"],
             horizontal=True,
-            key="struct_filter_group_mode"
+            key="struct_filter_group_mode",
+            format_func=lambda key: {
+                "any": t('struct_filter.any_selected'),
+                "all": t('struct_filter.all_selected'),
+            }.get(key, str(key)),
         )
 
     st.markdown(t('struct_filter.custom_smarts_title'))
@@ -7911,23 +9769,240 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
         placeholder=t('struct_filter.custom_smarts_placeholder')
     )
 
+    if st.session_state.get("struct_filter_custom_smarts_mode") not in {None, "any", "all"}:
+        st.session_state.struct_filter_custom_smarts_mode = (
+            structural_filter_core.structural_filter_normalize_match_mode(
+                st.session_state.get("struct_filter_custom_smarts_mode")
+            )
+        )
     custom_smarts_mode = st.radio(
         t('struct_filter.custom_smarts_logic'),
-        [t('struct_filter.any_smarts'), t('struct_filter.all_smarts')],
+        ["any", "all"],
         horizontal=True,
-        key="struct_filter_custom_smarts_mode"
+        key="struct_filter_custom_smarts_mode",
+        format_func=lambda key: {
+            "any": t('struct_filter.any_smarts'),
+            "all": t('struct_filter.all_smarts'),
+        }.get(key, str(key)),
     )
+    custom_smarts_status_df = structural_filter_core.structural_filter_validate_custom_smarts(
+        custom_smarts_text
+    )
+    custom_smarts_has_errors = (
+        isinstance(custom_smarts_status_df, pd.DataFrame)
+        and not custom_smarts_status_df.empty
+        and custom_smarts_status_df["status"].astype(str).ne("ok").any()
+    )
+    if isinstance(custom_smarts_status_df, pd.DataFrame) and not custom_smarts_status_df.empty:
+        st.dataframe(custom_smarts_status_df, width="stretch", hide_index=True)
+        if custom_smarts_has_errors:
+            st.error("Invalid SMARTS syntax. Fix the table above before running the structural filter.")
+
+    with st.expander("Advanced structural filters", expanded=False):
+        group_count_enabled = st.checkbox(
+            "Filter by functional-group count",
+            value=False,
+            key="struct_filter_group_count_enabled",
+        )
+        group_count_name = None
+        group_count_min = None
+        group_count_max = None
+        group_count_exact = None
+        element_count_enabled = st.checkbox(
+            "Filter by element count",
+            value=False,
+            key="struct_filter_element_count_enabled",
+        )
+        element_count_symbol = None
+        element_count_min = None
+        element_count_max = None
+        element_count_exact = None
+        if element_count_enabled:
+            col_ec_1, col_ec_2, col_ec_3, col_ec_4 = st.columns(4)
+            with col_ec_1:
+                element_count_symbol = st.selectbox(
+                    "Element",
+                    options=common_elements,
+                    key="struct_filter_element_count_symbol",
+                )
+            with col_ec_2:
+                element_count_min = st.number_input(
+                    "Min count",
+                    min_value=0,
+                    max_value=200,
+                    value=0,
+                    step=1,
+                    key="struct_filter_element_count_min",
+                )
+            with col_ec_3:
+                element_count_max = st.number_input(
+                    "Max count",
+                    min_value=0,
+                    max_value=200,
+                    value=20,
+                    step=1,
+                    key="struct_filter_element_count_max",
+                )
+            with col_ec_4:
+                use_element_count_exact = st.checkbox(
+                    "Exact",
+                    value=False,
+                    key="struct_filter_element_count_use_exact",
+                )
+                if use_element_count_exact:
+                    element_count_exact = st.number_input(
+                        "Exact count",
+                        min_value=0,
+                        max_value=200,
+                        value=1,
+                        step=1,
+                        key="struct_filter_element_count_exact",
+                    )
+        if group_count_enabled:
+            col_gc_1, col_gc_2, col_gc_3, col_gc_4 = st.columns(4)
+            with col_gc_1:
+                group_count_name = st.selectbox(
+                    "Functional group",
+                    options=group_options,
+                    key="struct_filter_group_count_name",
+                )
+            with col_gc_2:
+                group_count_exact_enabled = st.checkbox(
+                    "Exactly",
+                    value=False,
+                    key="struct_filter_group_count_exact_enabled",
+                )
+                group_count_exact = st.number_input(
+                    "Exact count",
+                    min_value=0,
+                    max_value=50,
+                    value=1,
+                    step=1,
+                    key="struct_filter_group_count_exact",
+                ) if group_count_exact_enabled else None
+            with col_gc_3:
+                group_count_min = st.number_input(
+                    "Minimum count",
+                    min_value=0,
+                    max_value=50,
+                    value=1,
+                    step=1,
+                    key="struct_filter_group_count_min",
+                )
+            with col_gc_4:
+                group_count_max_enabled = st.checkbox(
+                    "Maximum",
+                    value=False,
+                    key="struct_filter_group_count_max_enabled",
+                )
+                group_count_max = st.number_input(
+                    "Maximum count",
+                    min_value=0,
+                    max_value=50,
+                    value=1,
+                    step=1,
+                    key="struct_filter_group_count_max",
+                ) if group_count_max_enabled else None
+
+        col_charge_1, col_charge_2, col_charge_3 = st.columns(3)
+        with col_charge_1:
+            charge_mode = st.selectbox(
+                "Charge class",
+                ["any", "neutral", "cation", "anion", "zwitterion"],
+                index=0,
+                key="struct_filter_charge_mode",
+            )
+        with col_charge_2:
+            formal_charge_min_enabled = st.checkbox(
+                "Formal charge min",
+                value=False,
+                key="struct_filter_charge_min_enabled",
+            )
+            formal_charge_min = st.number_input(
+                "Min formal charge",
+                min_value=-10,
+                max_value=10,
+                value=0,
+                step=1,
+                key="struct_filter_charge_min",
+            ) if formal_charge_min_enabled else None
+        with col_charge_3:
+            formal_charge_max_enabled = st.checkbox(
+                "Formal charge max",
+                value=False,
+                key="struct_filter_charge_max_enabled",
+            )
+            formal_charge_max = st.number_input(
+                "Max formal charge",
+                min_value=-10,
+                max_value=10,
+                value=0,
+                step=1,
+                key="struct_filter_charge_max",
+            ) if formal_charge_max_enabled else None
+
+        st.caption("Optional drug-like ranges")
+        range_defaults = {
+            "mol_weight": (0.0, 1000.0),
+            "rotatable": (0, 30),
+            "tpsa": (0.0, 300.0),
+            "hbd": (0, 20),
+            "hba": (0, 30),
+            "ring": (0, 20),
+            "aromatic_ring": (0, 20),
+            "fraction_csp3": (0.0, 1.0),
+        }
+        advanced_ranges = {}
+        for key, (default_min, default_max) in range_defaults.items():
+            use_range = st.checkbox(
+                f"Use {key} range",
+                value=False,
+                key=f"struct_filter_use_{key}_range",
+            )
+            if use_range:
+                col_min, col_max = st.columns(2)
+                with col_min:
+                    advanced_ranges[f"{key}_min"] = st.number_input(
+                        f"{key} min",
+                        value=default_min,
+                        key=f"struct_filter_{key}_min",
+                    )
+                with col_max:
+                    advanced_ranges[f"{key}_max"] = st.number_input(
+                        f"{key} max",
+                        value=default_max,
+                        key=f"struct_filter_{key}_max",
+                    )
+            else:
+                advanced_ranges[f"{key}_min"] = None
+                advanced_ranges[f"{key}_max"] = None
 
     st.markdown(t('struct_filter.simple_constraints_title'))
 
     col_sf_1, col_sf_2, col_sf_3 = st.columns(3)
 
     with col_sf_1:
+        if st.session_state.get("struct_filter_aromatic") not in {
+            None,
+            "any",
+            "only_aromatic",
+            "only_non_aromatic",
+        }:
+            st.session_state.struct_filter_aromatic = (
+                structural_filter_core.structural_filter_normalize_aromatic_mode(
+                    st.session_state.get("struct_filter_aromatic")
+                )
+            )
         require_aromatic = st.selectbox(
             t('struct_filter.aromaticity'),
-            [t('struct_filter.aromaticity_any'), t('struct_filter.aromaticity_only'), t('struct_filter.aromaticity_non')],
+            ["any", "only_aromatic", "only_non_aromatic"],
             index=0,
-            key="struct_filter_aromatic"
+            key="struct_filter_aromatic",
+            format_func=lambda key: {
+                "any": t('struct_filter.aromaticity_any'),
+                "only_aromatic": t('struct_filter.aromaticity_only'),
+                "only_non_aromatic": t('struct_filter.aromaticity_non'),
+            }.get(key, str(key)),
         )
 
     with col_sf_2:
@@ -7940,7 +10015,11 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
     with col_sf_3:
         combine_mode = st.radio(
             t('struct_filter.combine_mode'),
-            [t('struct_filter.combine_all'), t('struct_filter.combine_any')],
+            ["all", "any"],
+            format_func=lambda key: {
+                "all": t('struct_filter.combine_all'),
+                "any": t('struct_filter.combine_any'),
+            }.get(key, str(key)),
             horizontal=False,
             key="struct_filter_combine_mode"
         )
@@ -8053,6 +10132,7 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
         run_struct_filter = st.button(
             t('struct_filter.run_button'),
             type="primary",
+            disabled=custom_smarts_has_errors,
             key="run_structural_filter"
         )
 
@@ -8069,7 +10149,7 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
 
     if run_struct_filter:
         try:
-            filtered_df, filter_report = structural_filter_apply(
+            filtered_df, filter_report = structural_filter_core.structural_filter_apply(
                 data=data,
                 smiles_col=smiles_col_current,
                 selected_elements=selected_elements,
@@ -8084,6 +10164,33 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
                 carbon_max=carbon_max,
                 hetero_min=hetero_min,
                 hetero_max=hetero_max,
+                group_count_name=group_count_name,
+                group_count_min=group_count_min,
+                group_count_max=group_count_max,
+                group_count_exact=group_count_exact,
+                element_count_symbol=element_count_symbol,
+                element_count_min=element_count_min,
+                element_count_max=element_count_max,
+                element_count_exact=element_count_exact,
+                charge_mode=charge_mode,
+                formal_charge_min=formal_charge_min,
+                formal_charge_max=formal_charge_max,
+                mol_weight_min=advanced_ranges.get("mol_weight_min"),
+                mol_weight_max=advanced_ranges.get("mol_weight_max"),
+                rotatable_min=advanced_ranges.get("rotatable_min"),
+                rotatable_max=advanced_ranges.get("rotatable_max"),
+                tpsa_min=advanced_ranges.get("tpsa_min"),
+                tpsa_max=advanced_ranges.get("tpsa_max"),
+                hbd_min=advanced_ranges.get("hbd_min"),
+                hbd_max=advanced_ranges.get("hbd_max"),
+                hba_min=advanced_ranges.get("hba_min"),
+                hba_max=advanced_ranges.get("hba_max"),
+                ring_min=advanced_ranges.get("ring_min"),
+                ring_max=advanced_ranges.get("ring_max"),
+                aromatic_ring_min=advanced_ranges.get("aromatic_ring_min"),
+                aromatic_ring_max=advanced_ranges.get("aromatic_ring_max"),
+                fraction_csp3_min=advanced_ranges.get("fraction_csp3_min"),
+                fraction_csp3_max=advanced_ranges.get("fraction_csp3_max"),
                 text_col=text_col,
                 text_query=text_query,
                 combine_mode=combine_mode
@@ -8153,7 +10260,7 @@ if filtered_result is not None:
                 key_prefix="structural_filter_effect"
             )
 
-        csv_filtered = filtered_result.to_csv(index=False).encode("utf-8")
+        csv_filtered = qspr_core.qspr_csv_download_bytes(filtered_result)
 
         st.download_button(
             t('struct_filter_result.download_button'),
@@ -8183,25 +10290,47 @@ if filtered_result is not None:
                     st.error(t('struct_filter_result.cannot_apply_empty'))
                     st.stop()
 
+                parent_df = st.session_state.get("data", data).copy()
+                parent_hash = dataset_signature(parent_df)
+                parent_record_ids = (
+                    parent_df["record_id"].astype(str).tolist()
+                    if isinstance(parent_df, pd.DataFrame) and "record_id" in parent_df.columns
+                    else [str(index) for index in parent_df.index]
+                )
+                kept_record_ids = (
+                    filtered_result["record_id"].astype(str).tolist()
+                    if "record_id" in filtered_result.columns
+                    else [str(index) for index in filtered_result.index]
+                )
+                removed_record_ids = [
+                    record_id for record_id in parent_record_ids
+                    if record_id not in set(kept_record_ids)
+                ]
+                dataset_provenance = {
+                    "parent_hash": parent_hash,
+                    "operation": "structural_filter",
+                    "parameters": deepcopy(filter_report) if isinstance(filter_report, dict) else {},
+                    "parent_row_count": int(len(parent_df)),
+                    "kept_row_count": int(len(filtered_result)),
+                    "removed_row_count": int(max(len(parent_df) - len(filtered_result), 0)),
+                    "kept_record_ids": kept_record_ids,
+                    "removed_record_ids": removed_record_ids,
+                    "applied_at": datetime.now().isoformat(timespec="seconds"),
+                }
+
+                reset_analysis_nodes(st.session_state, "dataset", SESSION_DEFAULTS)
                 st.session_state.data = filtered_result.copy()
+                st.session_state.smiles_col = smiles_col_current
+                st.session_state.target_col = target_col
                 st.session_state.struct_filter_applied = True
+                st.session_state.dataset_provenance = dataset_provenance
+                st.session_state.dataset_signature = dataset_signature(filtered_result)
+                st.session_state.current_dataset_signature = st.session_state.dataset_signature
 
                 st.session_state.data_source_note = t('struct_filter_result.data_source_note',
                     found=len(filtered_result),
                     total=len(data)
                 )
-
-                st.session_state.desc_calculated = False
-                st.session_state.validation_done = False
-                st.session_state.X_all = None
-                st.session_state.y_all = None
-                st.session_state.valid_indices = None
-                st.session_state.desc_names = None
-                st.session_state.df_desc = None
-                st.session_state.trained_models = {}
-                st.session_state.holdout_results_dict = {}
-                st.session_state.kfold_results_dict = {}
-                st.session_state.loo_results_dict = {}
 
                 st.success(t('struct_filter_result.apply_success', count=len(filtered_result)))
 
@@ -8216,16 +10345,27 @@ render_tool_badge()
 with st.expander(t('saod_ui.expander_title'), expanded=False):
     st.markdown(t('saod_ui.description'))
 
+    saod2_source_legacy = {
+        t('saod_ui.source_main'): "main_dataset",
+        t('saod_ui.source_upload'): "uploaded_file",
+    }
+    if st.session_state.get("saod2_source") in saod2_source_legacy:
+        st.session_state.saod2_source = saod2_source_legacy[st.session_state.saod2_source]
+
     saod2_source = st.radio(
         t('saod_ui.source_radio'),
-        [t('saod_ui.source_main'), t('saod_ui.source_upload')],
+        ["main_dataset", "uploaded_file"],
+        format_func=lambda source: {
+            "main_dataset": t('saod_ui.source_main'),
+            "uploaded_file": t('saod_ui.source_upload'),
+        }[source],
         horizontal=True,
         key="saod2_source"
     )
 
     saod2_df = None
 
-    if saod2_source == t('saod_ui.source_main'):
+    if saod2_source == "main_dataset":
         saod2_df = data.copy()
         st.success(t('saod_ui.source_main_success', count=len(saod2_df)))
     else:
@@ -8249,12 +10389,12 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
 
     if saod2_df is not None:
         saod2_columns = saod2_df.columns.tolist()
+        saod2_detected_cols = qspr_detect_optional_columns(saod2_df)
 
         smiles_index = 0
-        for i, col in enumerate(saod2_columns):
-            if col.lower() == "smiles":
-                smiles_index = i
-                break
+        saod2_smiles_candidates = qspr_pick_columns_by_aliases(saod2_columns, QSPR_SMILES_ALIASES)
+        if saod2_smiles_candidates:
+            smiles_index = saod2_columns.index(saod2_smiles_candidates[0])
 
         saod2_smiles_col = st.selectbox(t('saod_ui.smiles_col'), saod2_columns, index=smiles_index, key="saod2_smiles_col")
 
@@ -8266,6 +10406,10 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                 if str(c).strip().lower() not in ["№", "no", "id", "index", "номер"]
             ]
             default_prop = numeric_candidates[0] if numeric_candidates else saod2_columns[0]
+
+        saod2_property_candidates = qspr_pick_columns_by_aliases(saod2_columns, QSPR_PROPERTY_ALIASES)
+        if target_col not in saod2_columns and saod2_property_candidates:
+            default_prop = saod2_property_candidates[0]
 
         saod2_property_state = st.session_state.get("saod2_property_col")
         invalid_property_state = (
@@ -8287,15 +10431,201 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
             key="saod2_property_col"
         )
 
+        saod2_context_cols = qspr_context_columns(saod2_df, saod2_detected_cols)
+        saod2_context_diversity = qspr_context_diversity(saod2_df, saod2_context_cols)
+        if not saod2_context_diversity.empty:
+            st.warning(
+                "В датасете обнаружены разные экспериментальные контексты. "
+                "Сравнение структурных эффектов может быть некорректным."
+            )
+            with st.expander("Экспериментальные контексты SAOD", expanded=False):
+                st.dataframe(saod2_context_diversity, width="stretch", hide_index=True)
+
+        saod2_group_separately = st.checkbox(
+            "Анализировать каждую экспериментальную группу отдельно",
+            value=False,
+            key="saod2_group_separately",
+            disabled=not bool(saod2_context_cols),
+        )
+
+        if not saod2_group_separately:
+            saod2_df, saod2_selected_context = qspr_apply_context_selectors(
+                saod2_df,
+                saod2_context_cols,
+                key_prefix="saod2_context_filter",
+            )
+            if saod2_selected_context:
+                st.info(
+                    "SAOD будет запущен для выбранного контекста: "
+                    + "; ".join(f"{key}={value}" for key, value in saod2_selected_context.items())
+                    + f". Осталось строк: {len(saod2_df)}."
+                )
+
+        saod2_property_interpretation, saod2_activity_transform, saod2_property_info = qspr_show_property_interpretation_block(
+            saod2_property_col,
+            key_prefix="saod2",
+        )
+        saod2_unit_col = None
+        saod2_constant_unit = None
+        if saod2_activity_transform == QSPR_NEG_LOG10_TRANSFORM:
+            detected_unit_col = saod2_context_cols.get("activity_unit")
+            unit_options = ["Задать единицу вручную"] + [
+                col for col in saod2_df.columns
+                if col == detected_unit_col or qspr_norm_column_name(col) in {"activity_unit", "unit", "units", "standard_units", "standard_unit"}
+            ]
+            unit_options = list(dict.fromkeys(unit_options))
+            selected_unit_source = st.selectbox(
+                "Единицы активности для преобразования SAOD",
+                unit_options,
+                index=unit_options.index(detected_unit_col) if detected_unit_col in unit_options else 0,
+                key="saod2_activity_transform_unit_source",
+            )
+            if selected_unit_source == "Задать единицу вручную":
+                saod2_constant_unit = st.selectbox(
+                    "Единица исходных значений SAOD",
+                    ["M", "mM", "uM", "nM", "pM"],
+                    key="saod2_activity_transform_constant_unit",
+                )
+            else:
+                saod2_unit_col = selected_unit_source
+
         saod2_min_rule_points = st.slider(t('saod_ui.min_points'), min_value=3, max_value=10, value=3, step=1, key="saod2_min_rule_points")
+        with st.expander("Advanced SAOD evidence thresholds", expanded=False):
+            st.caption(
+                "Separate thresholds: series size, own trend points, reference "
+                "hierarchy points, and independent transformation contexts."
+            )
+            c_series, c_own = st.columns(2)
+            c_ref, c_trans = st.columns(2)
+            with c_series:
+                saod2_min_series_points = st.number_input(
+                    "Minimum compounds in discovered series",
+                    min_value=2,
+                    max_value=20,
+                    value=int(saod2_min_rule_points),
+                    step=1,
+                    key="saod2_min_series_points",
+                )
+            with c_own:
+                saod2_min_own_series_points = st.number_input(
+                    "Minimum points for own-series trend",
+                    min_value=2,
+                    max_value=20,
+                    value=int(saod2_min_rule_points),
+                    step=1,
+                    key="saod2_min_own_series_points",
+                )
+            with c_ref:
+                saod2_min_reference_points = st.number_input(
+                    "Minimum points for reference hierarchy",
+                    min_value=2,
+                    max_value=20,
+                    value=int(saod2_min_rule_points),
+                    step=1,
+                    key="saod2_min_reference_points",
+                )
+            with c_trans:
+                saod2_min_transformation_contexts = st.number_input(
+                    "Minimum independent transformation contexts",
+                    min_value=1,
+                    max_value=20,
+                    value=int(saod2_min_rule_points),
+                    step=1,
+                    key="saod2_min_transformation_contexts",
+                )
+        saod2_threshold_mode_legacy = {
+        }
+        if st.session_state.get("saod2_threshold_mode") in saod2_threshold_mode_legacy:
+            st.session_state.saod2_threshold_mode = saod2_threshold_mode_legacy[
+                st.session_state.saod2_threshold_mode
+            ]
+        saod2_threshold_mode = st.selectbox(
+            "Режим порогов SAOD",
+            ["standard", "strict", "sensitive"],
+            index=0,
+            key="saod2_threshold_mode",
+            help="Пороговые правила влияют только на приоритизацию ручной проверки, а не доказывают ошибку в данных.",
+        )
+        saod2_threshold_config = saod2_core.saod2_get_threshold_config(saod2_threshold_mode)
+        with st.expander("Используемые пороги SAOD", expanded=False):
+            st.dataframe(
+                saod2_core.saod2_threshold_config_table(saod2_threshold_config),
+                width="stretch",
+                hide_index=True,
+            )
 
         if st.button(t('saod_ui.run_button'), type="primary", key="run_saod2"):
             with st.spinner(t('saod_ui.run_spinner')):
-                st.session_state.saod2_result = run_saod2_analysis(
-                    input_df=saod2_df,
-                    smiles_col=saod2_smiles_col,
-                    property_col=saod2_property_col,
-                    min_rule_points=saod2_min_rule_points,
+                if saod2_group_separately and saod2_context_cols:
+                    group_key = qspr_make_experimental_group_key(saod2_df, saod2_context_cols)
+                    grouped_results = {}
+                    grouped_errors = []
+                    for group_name, group_df in saod2_df.groupby(group_key, dropna=False):
+                        try:
+                            group_work, group_property_col, _ = qspr_transform_activity_values(
+                                group_df,
+                                saod2_property_col,
+                                saod2_activity_transform,
+                                unit_col=saod2_unit_col,
+                                constant_unit=saod2_constant_unit,
+                            )
+                            grouped_results[str(group_name)] = saod2_core.run_saod2_analysis(
+                                input_df=group_work,
+                                smiles_col=saod2_smiles_col,
+                                property_col=group_property_col,
+                                min_rule_points=saod2_min_rule_points,
+                                min_series_points=saod2_min_series_points,
+                                min_own_series_points=saod2_min_own_series_points,
+                                min_reference_points=saod2_min_reference_points,
+                                min_transformation_contexts=saod2_min_transformation_contexts,
+                                threshold_mode=saod2_threshold_mode,
+                            )
+                        except Exception as e:
+                            grouped_errors.append(f"{group_name}: {e}")
+                    st.session_state.saod2_result = {
+                        "grouped": True,
+                        "grouped_results": grouped_results,
+                        "errors": grouped_errors,
+                        "warnings": [],
+                        "property_interpretation": saod2_property_interpretation,
+                        "activity_transform": saod2_activity_transform,
+                        "threshold_config": saod2_threshold_config,
+                    }
+                else:
+                    saod2_work_df, saod2_effective_property_col, _ = qspr_transform_activity_values(
+                        saod2_df,
+                        saod2_property_col,
+                        saod2_activity_transform,
+                        unit_col=saod2_unit_col,
+                        constant_unit=saod2_constant_unit,
+                    )
+                    st.session_state.saod2_result = saod2_core.run_saod2_analysis(
+                        input_df=saod2_work_df,
+                        smiles_col=saod2_smiles_col,
+                        property_col=saod2_effective_property_col,
+                        min_rule_points=saod2_min_rule_points,
+                        min_series_points=saod2_min_series_points,
+                        min_own_series_points=saod2_min_own_series_points,
+                        min_reference_points=saod2_min_reference_points,
+                        min_transformation_contexts=saod2_min_transformation_contexts,
+                        threshold_mode=saod2_threshold_mode,
+                    )
+                    st.session_state.saod2_result["property_interpretation"] = saod2_property_interpretation
+                    st.session_state.saod2_result["activity_transform"] = saod2_activity_transform
+                update_analysis_bundle(
+                    st.session_state,
+                    "saod",
+                    {
+                        "ready": True,
+                        "algorithm_version": ALGORITHM_VERSIONS["saod"],
+                        "min_rule_points": int(saod2_min_rule_points),
+                        "min_series_points": int(saod2_min_series_points),
+                        "min_own_series_points": int(saod2_min_own_series_points),
+                        "min_reference_points": int(saod2_min_reference_points),
+                        "min_transformation_contexts": int(saod2_min_transformation_contexts),
+                        "threshold_mode": str(saod2_threshold_mode),
+                        "grouped": bool(saod2_group_separately and saod2_context_cols),
+                    },
                 )
 
         if "saod2_result" in st.session_state:
@@ -8309,6 +10639,75 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                     st.rerun()
 
                 st.stop()
+
+            if saod2_result_data.get("grouped"):
+                if saod2_result_data.get("errors"):
+                    for err in saod2_result_data["errors"]:
+                        st.error(err)
+
+                grouped_results = saod2_result_data.get("grouped_results", {})
+                for group_name, group_result in grouped_results.items():
+                    if isinstance(group_result, dict) and group_result.get("status") == "failed":
+                        st.error(
+                            f"SAOD failed for group {group_name} at "
+                            f"{group_result.get('failure_stage', 'unknown stage')}: "
+                            + "; ".join(map(str, group_result.get("errors", [])))
+                        )
+                st.subheader("SAOD по экспериментальным группам")
+                group_summary_rows = []
+                for group_name, group_result in grouped_results.items():
+                    processed_group = group_result.get("processed", pd.DataFrame())
+                    coverage_group = group_result.get("analysis_coverage", pd.DataFrame())
+                    analyzed_group = 0
+                    excluded_group = 0
+                    if isinstance(coverage_group, pd.DataFrame) and not coverage_group.empty:
+                        coverage_lookup = dict(
+                            zip(coverage_group.get("metric", []), coverage_group.get("value", []))
+                        )
+                        analyzed_group = int(coverage_lookup.get("analyzed", 0) or 0)
+                        excluded_group = int(coverage_lookup.get("excluded", 0) or 0)
+                    group_summary_rows.append({
+                        "experimental_group": group_name,
+                        "rows": len(processed_group),
+                        "analyzed": analyzed_group,
+                        "excluded": excluded_group,
+                        "errors": "; ".join(group_result.get("errors", [])),
+                        "warnings": "; ".join(group_result.get("warnings", [])),
+                    })
+                if group_summary_rows:
+                    st.dataframe(pd.DataFrame(group_summary_rows), width="stretch", hide_index=True)
+
+                for group_name, group_result in grouped_results.items():
+                    with st.expander(f"Группа: {group_name}", expanded=False):
+                        for err in group_result.get("errors", []):
+                            st.error(err)
+                        for warn in group_result.get("warnings", []):
+                            st.warning(warn)
+                        group_summary = group_result.get("summary", pd.DataFrame())
+                        if isinstance(group_summary, pd.DataFrame) and not group_summary.empty:
+                            saod2_show_table(group_summary)
+                        group_exclusions = group_result.get("exclusion_table", pd.DataFrame())
+                        if isinstance(group_exclusions, pd.DataFrame) and not group_exclusions.empty:
+                            reason_summary = (
+                                group_exclusions.groupby(["status_label", "reason"], dropna=False)
+                                .size()
+                                .reset_index(name="count")
+                                .sort_values("count", ascending=False)
+                            )
+                            st.markdown("Причины исключения")
+                            st.dataframe(reason_summary, width="stretch", hide_index=True)
+                            with st.expander("Исключённые вещества", expanded=False):
+                                st.dataframe(group_exclusions, width="stretch", hide_index=True)
+                st.stop()
+
+            if saod2_result_data.get("status") == "failed":
+                st.error(
+                    "SAOD calculation failed at "
+                    f"{saod2_result_data.get('failure_stage', 'unknown stage')}: "
+                    + "; ".join(map(str, saod2_result_data.get("errors", [])))
+                )
+            elif saod2_result_data.get("status") == "success_no_series":
+                st.info("SAOD completed successfully, but no supported series or rules were found.")
 
             if saod2_result_data["errors"]:
                 for err in saod2_result_data["errors"]:
@@ -8329,6 +10728,125 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
 
                 st.subheader(t('saod_ui.summary_subheader'))
                 saod2_show_table(summary)
+                analysis_coverage = saod2_result_data.get("analysis_coverage", pd.DataFrame())
+                exclusion_table = saod2_result_data.get("exclusion_table", pd.DataFrame())
+                if isinstance(analysis_coverage, pd.DataFrame) and not analysis_coverage.empty:
+                    coverage_lookup = dict(
+                        zip(analysis_coverage.get("metric", []), analysis_coverage.get("value", []))
+                    )
+                    cov_cols = st.columns(3)
+                    cov_cols[0].metric("Загружено", int(coverage_lookup.get("loaded", 0) or 0))
+                    cov_cols[1].metric("Проанализировано", int(coverage_lookup.get("analyzed", 0) or 0))
+                    cov_cols[2].metric("Исключено", int(coverage_lookup.get("excluded", 0) or 0))
+                    with st.expander("Статусы включения в SAOD", expanded=False):
+                        st.dataframe(analysis_coverage, width="stretch", hide_index=True)
+                if isinstance(exclusion_table, pd.DataFrame) and not exclusion_table.empty:
+                    reason_summary = (
+                        exclusion_table.groupby(["status_label", "reason"], dropna=False)
+                        .size()
+                        .reset_index(name="count")
+                        .sort_values("count", ascending=False)
+                    )
+                    st.markdown("Причины исключения из SAOD")
+                    st.dataframe(reason_summary, width="stretch", hide_index=True)
+                    with st.expander("Исключённые вещества и причины", expanded=False):
+                        st.dataframe(exclusion_table, width="stretch", hide_index=True)
+                with st.expander("Калибровка SAOD на искусственно внесённых ошибках", expanded=False):
+                    st.caption(
+                        "Экспериментальный стресс-тест: в копию текущего датасета вносятся контролируемые ошибки, "
+                        "после чего SAOD запускается заново и сравнивается с известными метками вмешательства."
+                    )
+                    cal_cols = st.columns(4)
+                    with cal_cols[0]:
+                        injection_fraction = st.slider(
+                            "Доля веществ",
+                            min_value=0.01,
+                            max_value=0.30,
+                            value=0.05,
+                            step=0.01,
+                            key="saod2_injection_fraction",
+                        )
+                    with cal_cols[1]:
+                        injection_type_label = st.selectbox(
+                            "Тип вмешательства",
+                            [
+                                "изменить свойство",
+                                "поменять значения местами",
+                                "заменить SMILES",
+                                "добавить конфликтующий дубликат",
+                            ],
+                            key="saod2_injection_type",
+                        )
+                    with cal_cols[2]:
+                        injection_percent = st.selectbox(
+                            "Изменение свойства",
+                            [10, 20, 50],
+                            index=1,
+                            key="saod2_injection_percent",
+                        )
+                    with cal_cols[3]:
+                        injection_seed = st.number_input(
+                            "Seed",
+                            min_value=0,
+                            max_value=999999,
+                            value=42,
+                            step=1,
+                            key="saod2_injection_seed",
+                        )
+                    injection_type = {
+                        "изменить свойство": "property_increase_percent",
+                        "поменять значения местами": "swap_values",
+                        "заменить SMILES": "replace_smiles",
+                        "добавить конфликтующий дубликат": "conflicting_duplicate",
+                    }[injection_type_label]
+                    if st.button("Запустить калибровку SAOD", key="run_saod2_artificial_error_calibration"):
+                        with st.spinner("SAOD-калибровка на искусственных ошибках..."):
+                            cal_source_df, cal_property_col, _ = qspr_transform_activity_values(
+                                saod2_df,
+                                saod2_property_col,
+                                saod2_activity_transform,
+                                unit_col=saod2_unit_col,
+                                constant_unit=saod2_constant_unit,
+                            )
+                            injected_df, injected_labels = saod2_core.saod2_inject_artificial_errors(
+                                input_df=cal_source_df,
+                                smiles_col=saod2_smiles_col,
+                                property_col=cal_property_col,
+                                fraction=float(injection_fraction),
+                                error_type=injection_type,
+                                percent=float(injection_percent),
+                                random_state=int(injection_seed),
+                            )
+                            calibration_result = saod2_core.run_saod2_analysis(
+                                input_df=injected_df,
+                                smiles_col=saod2_smiles_col,
+                                property_col=cal_property_col,
+                                min_rule_points=saod2_min_rule_points,
+                                min_series_points=saod2_min_series_points,
+                                min_own_series_points=saod2_min_own_series_points,
+                                min_reference_points=saod2_min_reference_points,
+                                min_transformation_contexts=saod2_min_transformation_contexts,
+                                threshold_mode=saod2_threshold_mode,
+                            )
+                            calibration_metrics = saod2_core.saod2_evaluate_artificial_error_detection(
+                                calibration_result.get("suspicion", pd.DataFrame()),
+                                injected_labels,
+                            )
+                            st.session_state.saod2_calibration_result = {
+                                "metrics": calibration_metrics,
+                                "labels": injected_labels,
+                                "result": calibration_result,
+                            }
+                    calibration_payload = st.session_state.get("saod2_calibration_result")
+                    if isinstance(calibration_payload, dict):
+                        metrics_df = calibration_payload.get("metrics", pd.DataFrame())
+                        labels_df = calibration_payload.get("labels", pd.DataFrame())
+                        if isinstance(metrics_df, pd.DataFrame) and not metrics_df.empty:
+                            st.markdown("**Метрики обнаружения**")
+                            st.dataframe(metrics_df, width="stretch", hide_index=True)
+                        if isinstance(labels_df, pd.DataFrame) and not labels_df.empty:
+                            st.markdown("**Искусственно изменённые записи**")
+                            st.dataframe(labels_df, width="stretch", hide_index=True)
 
                 st.subheader(t('saod_ui.review_subheader'))
 
@@ -8443,17 +10961,12 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             st.session_state.data_source_note = t('saod_ui.manual_cleaned_note', count=len(cleaned_df))
 
                             # Сбрасываем старые дескрипторы и модели
-                            st.session_state.desc_calculated = False
-                            st.session_state.validation_done = False
-                            st.session_state.X_all = None
-                            st.session_state.y_all = None
-                            st.session_state.valid_indices = None
-                            st.session_state.desc_names = None
-                            st.session_state.df_desc = None
-                            st.session_state.trained_models = {}
-                            st.session_state.holdout_results_dict = {}
-                            st.session_state.kfold_results_dict = {}
-                            st.session_state.loo_results_dict = {}
+                            cleaned_note = st.session_state.data_source_note
+                            reset_analysis_nodes(st.session_state, "standardization", SESSION_DEFAULTS)
+                            st.session_state.saod2_original_before_cleaning = data.copy()
+                            st.session_state.saod2_cleaned_df = cleaned_df.copy()
+                            st.session_state.saod2_cleaning_applied = True
+                            st.session_state.data_source_note = cleaned_note
 
                             st.success(t('saod_ui.manual_cleaned_success', count=len(cleaned_df)))
 
@@ -8503,17 +11016,13 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             )
 
                             # Сбрасываем старые дескрипторы и модели
-                            st.session_state.desc_calculated = False
-                            st.session_state.validation_done = False
-                            st.session_state.X_all = None
-                            st.session_state.y_all = None
-                            st.session_state.valid_indices = None
-                            st.session_state.desc_names = None
-                            st.session_state.df_desc = None
-                            st.session_state.trained_models = {}
-                            st.session_state.holdout_results_dict = {}
-                            st.session_state.kfold_results_dict = {}
-                            st.session_state.loo_results_dict = {}
+                            cleaned_note = st.session_state.data_source_note
+                            reset_analysis_nodes(st.session_state, "standardization", SESSION_DEFAULTS)
+                            st.session_state.saod2_original_before_cleaning = data.copy()
+                            st.session_state.saod2_review_df = auto_review_df.copy()
+                            st.session_state.saod2_cleaned_df = cleaned_df.copy()
+                            st.session_state.saod2_cleaning_applied = True
+                            st.session_state.data_source_note = cleaned_note
 
                             st.success(t('saod_ui.auto_cleaned_success',
                                 count=len(cleaned_df),
@@ -8540,7 +11049,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                 with tab_v2_1:
                     show_markdown_help(t('saod_tabs.help_processed'), os.path.join(HELP_DIR, "saod2_processed.md"), expanded=False)
                     saod2_show_table(processed)
-                    st.download_button(t('saod_tabs.download_processed'), processed.to_csv(index=False).encode("utf-8"), "saod2_processed.csv", "text/csv")
+                    st.download_button(t('saod_tabs.download_processed'), qspr_core.qspr_csv_download_bytes(processed), "saod2_processed.csv", "text/csv")
 
                 with tab_v2_2:
                     show_markdown_help(t('saod_tabs.help_checkability'), os.path.join(HELP_DIR, "saod2_checkability.md"), expanded=False)
@@ -8604,27 +11113,27 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         selected_edge = st.selectbox(t('saod_tabs.select_edge'), edge_counts["edge_label"].tolist(), key="saod2_kitchen_edge_select")
 
                         with st.expander(t('saod_tabs.edge_explanation_expander'), expanded=False):
-                            st.markdown(saod2_edge_kitchen_explanation(edge_details=edge_details, edge_label=selected_edge))
+                            st.markdown(saod2_core.saod2_edge_kitchen_explanation(edge_details=edge_details, edge_label=selected_edge))
 
                         st.markdown(t('saod_tabs.delta_plots_title'))
                         col_delta_1, col_delta_2 = st.columns(2)
 
                         with col_delta_1:
-                            fig_delta = saod2_plot_edge_delta(edge_details=edge_details, edge_label=selected_edge)
+                            fig_delta = saod2_core.saod2_plot_edge_delta(edge_details=edge_details, edge_label=selected_edge)
                             if fig_delta is not None:
                                 st.pyplot(fig_delta)
                             else:
                                 st.info(t('saod_tabs.insufficient_points_delta'))
 
                         with col_delta_2:
-                            fig_delta_change = saod2_plot_edge_delta_change(edge_details=edge_details, edge_label=selected_edge)
+                            fig_delta_change = saod2_core.saod2_plot_edge_delta_change(edge_details=edge_details, edge_label=selected_edge)
                             if fig_delta_change is not None:
                                 st.pyplot(fig_delta_change)
                             else:
                                 st.info(t('saod_tabs.insufficient_points_delta_delta'))
 
                         st.markdown(t('saod_tabs.kitchen_table_title'))
-                        kitchen_table = saod2_make_edge_kitchen_table(edge_details=edge_details, edge_label=selected_edge)
+                        kitchen_table = saod2_core.saod2_make_edge_kitchen_table(edge_details=edge_details, edge_label=selected_edge)
                         saod2_show_table(kitchen_table)
 
                         st.markdown(t('saod_tabs.edge_list_title'))
@@ -8779,15 +11288,6 @@ spectra_expander_should_be_open = (
     or st.session_state.get("pending_qspr_descriptor_bundle_ready", False)
 )
 
-# ------------------------------------------------------------------
-# Spectra module UI
-
-spectra_expander_should_be_open = (
-    st.session_state.get("keep_spectra_expander_open", False)
-    or isinstance(st.session_state.get("spectral_descriptors_df"), pd.DataFrame)
-    or st.session_state.get("spectral_descriptors_transferred_ready", False)
-    or st.session_state.get("pending_qspr_descriptor_bundle_ready", False)
-)
 
 st.header(t("feature_sources.header"))
 st.caption(t("feature_sources.caption"))
@@ -8860,7 +11360,7 @@ def render_spectra_descriptor_workbench():
                 os.makedirs(temp_import_dir, exist_ok=True)
 
                 for uploaded_file in uploaded_spectrum_files:
-                    safe_uploaded_name = spectra_safe_filename_part(
+                    safe_uploaded_name = spectra_core_module.spectra_safe_filename_part(
                         uploaded_file.name
                     )
 
@@ -8872,7 +11372,7 @@ def render_spectra_descriptor_workbench():
                     with open(temp_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
 
-                    result = spectra_import_local_spectrum_file(
+                    result = spectra_core_module.spectra_import_local_spectrum_file(
                         filepath=temp_path,
                         spectrum_type=local_import_type,
                         compound_hint=None,
@@ -8948,7 +11448,7 @@ def render_spectra_descriptor_workbench():
                 t('spectra.reindex_button'),
                 key="run_reindex_existing_raw_spectra"
             ):
-                reindex_report_df = spectra_reindex_existing_raw_spectra(
+                reindex_report_df = spectra_core_module.spectra_reindex_existing_raw_spectra(
                     scan_ir=reindex_ir,
                     scan_mass=reindex_mass,
                     overwrite_existing=overwrite_existing,
@@ -9000,7 +11500,7 @@ def render_spectra_descriptor_workbench():
             "Импорт, переиндексация и ручное пополнение базы скрыты в обычном режиме."
         )
 
-    spectra_index = spectra_load_index()
+    spectra_index = spectra_core_module.spectra_load_index()
 
     if spectra_index.empty:
         st.info(t('spectra.bank_empty'))
@@ -9046,13 +11546,13 @@ def render_spectra_descriptor_workbench():
 
         # Нормализация типа спектра.
         idx["_spectrum_type_norm"] = idx["spectrum_type"].apply(
-            spectra_normalize_spectrum_type
+            spectra_core_module.spectra_normalize_spectrum_type
         )
 
         # Нормализация фазы / состояния образца.
         # Функция spectral_normalize_phase_value уже есть в spectra_core.py.
         try:
-            idx["_phase_norm"] = idx["phase"].apply(spectral_normalize_phase_value)
+            idx["_phase_norm"] = idx["phase"].apply(spectra_core_module.spectral_normalize_phase_value)
         except Exception:
             idx["_phase_norm"] = idx["phase"].astype(str).str.lower().replace("", "unknown")
 
@@ -9399,7 +11899,7 @@ def render_spectra_descriptor_workbench():
                     sort=False
                 )
 
-                csv_spectra_summary = spectra_summary_export.to_csv(index=False).encode("utf-8")
+                csv_spectra_summary = qspr_core.qspr_csv_download_bytes(spectra_summary_export)
 
                 st.download_button(
                     t('spectra.download_combined_summary'),
@@ -9417,7 +11917,7 @@ def render_spectra_descriptor_workbench():
 
     current_df = data.copy()
 
-    compounds_for_search = spectra_prepare_compounds_from_df(
+    compounds_for_search = spectra_core_module.spectra_prepare_compounds_from_df(
         current_df,
         smiles_col=smiles_col_current
     )
@@ -9483,7 +11983,7 @@ def render_spectra_descriptor_workbench():
     index_fast["active"] = index_fast["active"].astype(str).str.strip()
 
     index_fast["_spectrum_type_norm"] = index_fast["spectrum_type"].apply(
-        spectra_normalize_spectrum_type
+        spectra_core_module.spectra_normalize_spectrum_type
     )
 
     active_values = ["true", "1", "yes", "y", "да", "active", ""]
@@ -9636,7 +12136,7 @@ def render_spectra_descriptor_workbench():
         details_df = compounds_for_search.copy()
 
         try:
-            debug_index = spectra_load_index()
+            debug_index = spectra_core_module.spectra_load_index()
 
             for col in [
                 "inchikey",
@@ -9664,7 +12164,7 @@ def render_spectra_descriptor_workbench():
             debug_index["_spectrum_type_norm"] = (
                 debug_index["spectrum_type"]
                 .astype(str)
-                .apply(spectra_normalize_spectrum_type)
+                .apply(spectra_core_module.spectra_normalize_spectrum_type)
             )
 
             active_values_debug = [
@@ -9951,7 +12451,7 @@ def render_spectra_descriptor_workbench():
             with st.expander(t('spectra.cache_expander'), expanded=False):
                 st.caption(t('spectra.cache_caption'))
 
-                cache_df = spectra_load_search_cache()
+                cache_df = spectra_core_module.spectra_load_search_cache()
 
                 if cache_df.empty:
                     st.info(t('spectra.cache_empty'))
@@ -9962,7 +12462,7 @@ def render_spectra_descriptor_workbench():
                         cache_view["spectrum_type"] = ""
 
                     cache_view["_spectrum_type_norm"] = cache_view["spectrum_type"].apply(
-                        spectra_normalize_spectrum_type
+                        spectra_core_module.spectra_normalize_spectrum_type
                     )
 
                     n_cache_total = len(cache_view)
@@ -9993,18 +12493,18 @@ def render_spectra_descriptor_workbench():
                 with clear_col_1:
                     if st.button(t('spectra.clear_ir_button'), key="clear_spectra_search_cache_ir"):
                         try:
-                            cache_df = spectra_load_search_cache()
+                            cache_df = spectra_core_module.spectra_load_search_cache()
 
                             if not cache_df.empty and "spectrum_type" in cache_df.columns:
                                 work = cache_df.copy()
                                 work["_spectrum_type_norm"] = work["spectrum_type"].apply(
-                                    spectra_normalize_spectrum_type
+                                    spectra_core_module.spectra_normalize_spectrum_type
                                 )
                                 cache_df = work[
                                     work["_spectrum_type_norm"] != "IR"
                                 ].drop(columns=["_spectrum_type_norm"], errors="ignore")
 
-                                spectra_save_search_cache(cache_df)
+                                spectra_core_module.spectra_save_search_cache(cache_df)
 
                             st.success(t('spectra.clear_ir_success'))
                             st.rerun()
@@ -10015,18 +12515,18 @@ def render_spectra_descriptor_workbench():
                 with clear_col_2:
                     if st.button(t('spectra.clear_mass_button'), key="clear_spectra_search_cache_mass"):
                         try:
-                            cache_df = spectra_load_search_cache()
+                            cache_df = spectra_core_module.spectra_load_search_cache()
 
                             if not cache_df.empty and "spectrum_type" in cache_df.columns:
                                 work = cache_df.copy()
                                 work["_spectrum_type_norm"] = work["spectrum_type"].apply(
-                                    spectra_normalize_spectrum_type
+                                    spectra_core_module.spectra_normalize_spectrum_type
                                 )
                                 cache_df = work[
                                     work["_spectrum_type_norm"] != "Mass"
                                 ].drop(columns=["_spectrum_type_norm"], errors="ignore")
 
-                                spectra_save_search_cache(cache_df)
+                                spectra_core_module.spectra_save_search_cache(cache_df)
 
                             st.success(t('spectra.clear_mass_success'))
                             st.rerun()
@@ -10037,8 +12537,8 @@ def render_spectra_descriptor_workbench():
                 with clear_col_3:
                     if st.button(t('spectra.clear_all_button'), key="clear_spectra_search_cache_all"):
                         try:
-                            cache_df = spectra_load_search_cache()
-                            spectra_save_search_cache(pd.DataFrame(columns=cache_df.columns))
+                            cache_df = spectra_core_module.spectra_load_search_cache()
+                            spectra_core_module.spectra_save_search_cache(pd.DataFrame(columns=cache_df.columns))
 
                             st.success(t('spectra.clear_all_success'))
                             st.rerun()
@@ -10053,7 +12553,7 @@ def render_spectra_descriptor_workbench():
                     key="clear_spectra_search_cache_current_file"
                 ):
                     try:
-                        cache_df = spectra_load_search_cache()
+                        cache_df = spectra_core_module.spectra_load_search_cache()
 
                         if cache_df.empty:
                             st.info(t('spectra.cache_already_empty'))
@@ -10095,7 +12595,7 @@ def render_spectra_descriptor_workbench():
                                 work_cache["_spectrum_type_norm"] = (
                                     work_cache["spectrum_type"]
                                     .astype(str)
-                                    .apply(spectra_normalize_spectrum_type)
+                                    .apply(spectra_core_module.spectra_normalize_spectrum_type)
                                 )
 
                                 remove_mask = work_cache["inchikey"].isin(current_inchikeys)
@@ -10105,7 +12605,7 @@ def render_spectra_descriptor_workbench():
                                     and selected_spectrum_types
                                 ):
                                     selected_types_norm = [
-                                        spectra_normalize_spectrum_type(x)
+                                        spectra_core_module.spectra_normalize_spectrum_type(x)
                                         for x in selected_spectrum_types
                                     ]
 
@@ -10121,7 +12621,7 @@ def render_spectra_descriptor_workbench():
                                     errors="ignore"
                                 )
 
-                                spectra_save_search_cache(new_cache_df)
+                                spectra_core_module.spectra_save_search_cache(new_cache_df)
 
                                 st.success(t('spectra.clear_current_file_success',
                                     removed=removed_count,
@@ -10223,7 +12723,7 @@ def render_spectra_descriptor_workbench():
         if st.button(t('spectra.stop_search_button'), key="stop_spectra_search"):
             st.session_state.stop_spectra_search_requested = True
             st.session_state.spectra_search_status = "stopped_by_user"
-            spectra_request_stop()
+            spectra_core_module.spectra_request_stop()
 
             stop_msg_placeholder = st.empty()
 
@@ -10245,7 +12745,7 @@ def render_spectra_descriptor_workbench():
         ):
             st.session_state.stop_spectra_search_requested = False
             st.session_state.spectra_search_status = "running"
-            spectra_clear_stop()
+            spectra_core_module.spectra_clear_stop()
 
             if not selected_sources:
                 st.error(t('spectra.error_no_source'))
@@ -10281,7 +12781,7 @@ def render_spectra_descriptor_workbench():
             bank_by_smiles = {}
 
             try:
-                bank_index_df = spectra_load_index()
+                bank_index_df = spectra_core_module.spectra_load_index()
             except Exception:
                 bank_index_df = pd.DataFrame()
 
@@ -10305,7 +12805,7 @@ def render_spectra_descriptor_workbench():
                 bank_work["inchikey"] = bank_work["inchikey"].astype(str).str.strip()
                 bank_work["canonical_smiles"] = bank_work["canonical_smiles"].astype(str).str.strip()
                 bank_work["_spectrum_type_norm"] = bank_work["spectrum_type"].astype(str).apply(
-                    spectra_normalize_spectrum_type
+                    spectra_core_module.spectra_normalize_spectrum_type
                 )
 
                 active_values = ["true", "1", "yes", "y", "да", "active", ""]
@@ -10336,7 +12836,7 @@ def render_spectra_descriptor_workbench():
 
             if use_search_cache and not ignore_search_cache:
                 try:
-                    cache_df = spectra_load_search_cache()
+                    cache_df = spectra_core_module.spectra_load_search_cache()
                 except Exception:
                     cache_df = pd.DataFrame()
 
@@ -10364,7 +12864,7 @@ def render_spectra_descriptor_workbench():
                     cache_work["inchikey"] = cache_work["inchikey"].astype(str).str.strip()
                     cache_work["canonical_smiles"] = cache_work["canonical_smiles"].astype(str).str.strip()
                     cache_work["_spectrum_type_norm"] = cache_work["spectrum_type"].astype(str).apply(
-                        spectra_normalize_spectrum_type
+                        spectra_core_module.spectra_normalize_spectrum_type
                     )
 
                     for _, cache_row in cache_work.iterrows():
@@ -10399,7 +12899,7 @@ def render_spectra_descriptor_workbench():
                 structure_status_value = str(compound.get("structure_status", "")).strip()
 
                 for spectrum_type in selected_spectrum_types:
-                    spectrum_type_norm = spectra_normalize_spectrum_type(spectrum_type)
+                    spectrum_type_norm = spectra_core_module.spectra_normalize_spectrum_type(spectrum_type)
 
                     base_result = {
                         "source_line_number": compound.get("source_line_number", compound.get("row_index", "")),
@@ -10479,7 +12979,7 @@ def render_spectra_descriptor_workbench():
                         )
 
                         cached_final_status_norm = str(cached_final_status).strip()
-                        current_sources_key = spectra_make_sources_key(selected_sources)
+                        current_sources_key = spectra_core_module.spectra_make_sources_key(selected_sources)
                         cached_sources_key = str(
                             cache_record.get("selected_sources_key", "")
                         ).strip()
@@ -10775,7 +13275,7 @@ def render_spectra_descriptor_workbench():
 
                 def _spectra_search_task(compound, spectrum_type_norm):
                     try:
-                        result = spectra_search_one_compound(
+                        result = spectra_core_module.spectra_search_one_compound(
                             compound=compound,
                             spectrum_type=spectrum_type_norm,
                             selected_sources=selected_sources,
@@ -10890,7 +13390,7 @@ def render_spectra_descriptor_workbench():
 
                         return source_label[:24]
 
-                    spectrum_type_norm = spectra_normalize_spectrum_type(spectrum_type_norm)
+                    spectrum_type_norm = spectra_core_module.spectra_normalize_spectrum_type(spectrum_type_norm)
 
                     if spectrum_type_norm == "IR":
                         return "NIST"
@@ -10964,7 +13464,7 @@ def render_spectra_descriptor_workbench():
                     cache_write_buffer.clear()
 
                     try:
-                        spectra_add_many_to_search_cache(
+                        spectra_core_module.spectra_add_many_to_search_cache(
                             rows_to_cache,
                             selected_sources
                         )
@@ -10987,7 +13487,7 @@ def render_spectra_descriptor_workbench():
                     def submit_next_task():
                         if (
                             st.session_state.get("stop_spectra_search_requested", False)
-                            or spectra_is_stop_requested()
+                            or spectra_core_module.spectra_is_stop_requested()
                         ):
                             return False
 
@@ -11014,7 +13514,7 @@ def render_spectra_descriptor_workbench():
                     for _ in range(max_workers):
                         if (
                             st.session_state.get("stop_spectra_search_requested", False)
-                            or spectra_is_stop_requested()
+                            or spectra_core_module.spectra_is_stop_requested()
                         ):
                             stop_requested = True
                             break
@@ -11093,7 +13593,10 @@ def render_spectra_descriptor_workbench():
 
                             result_status = str(result_row.get("spectrum_status", "")).strip()
                             result_message = str(result_row.get("message", "")).strip()
-                            from_real_search = bool(result_row.get("_from_real_search", False))
+                            from_real_search = (
+                                _qspr_bool_setting(result_row.get("_from_real_search"))
+                                is True
+                            )
 
                             if from_real_search:
                                 should_cache_result = result_status in [
@@ -11170,7 +13673,7 @@ def render_spectra_descriptor_workbench():
                             # Если остановка запрошена — новые задачи не ставим.
                             if (
                                 st.session_state.get("stop_spectra_search_requested", False)
-                                or spectra_is_stop_requested()
+                                or spectra_core_module.spectra_is_stop_requested()
                             ):
                                 stop_requested = True
                             else:
@@ -11266,7 +13769,7 @@ def render_spectra_descriptor_workbench():
                     search_results_df["spectrum_type"]
                     .astype(str)
                     .str.strip()
-                    .apply(spectra_normalize_spectrum_type)
+                    .apply(spectra_core_module.spectra_normalize_spectrum_type)
                 )
 
                 search_results_df["_compound_key"] = (
@@ -11489,7 +13992,7 @@ def render_spectra_descriptor_workbench():
                         hide_index=True,
                     )
 
-                csv_search = search_results_df.to_csv(index=False).encode("utf-8")
+                csv_search = qspr_core.qspr_csv_download_bytes(search_results_df)
                 st.download_button(
                     t('spectra.download_search_results'),
                     csv_search,
@@ -11656,7 +14159,7 @@ def render_spectra_descriptor_workbench():
     # ------------------------------------------------------------
     # Источники и типы интенсивности
 
-    idx_for_desc_filters = spectra_load_index()
+    idx_for_desc_filters = spectra_core_module.spectra_load_index()
 
     available_spectral_sources = []
     available_intensity_types = []
@@ -11668,11 +14171,11 @@ def render_spectra_descriptor_workbench():
             temp_idx["spectrum_type"] = ""
 
         temp_idx["_spectrum_type_norm"] = temp_idx["spectrum_type"].apply(
-            spectra_normalize_spectrum_type
+            spectra_core_module.spectra_normalize_spectrum_type
         )
 
         selected_type_norms = [
-            spectra_normalize_spectrum_type(x)
+            spectra_core_module.spectra_normalize_spectrum_type(x)
             for x in descriptor_spectrum_types
         ]
         temp_idx = temp_idx[
@@ -11887,7 +14390,7 @@ def render_spectra_descriptor_workbench():
         default_use_svd = True
 
     def spectral_ready_defaults_for_type(spectrum_type_name):
-        spectrum_type_name = spectra_normalize_spectrum_type(spectrum_type_name)
+        spectrum_type_name = spectra_core_module.spectra_normalize_spectrum_type(spectrum_type_name)
 
         if spectrum_type_name == "Mass":
             return {
@@ -11922,7 +14425,7 @@ def render_spectra_descriptor_workbench():
     descriptor_section_start = 2
 
     for spectrum_type_idx, spectrum_type_name in enumerate(descriptor_spectrum_types):
-        prefix_label = spectra_normalize_spectrum_type(spectrum_type_name)
+        prefix_label = spectra_core_module.spectra_normalize_spectrum_type(spectrum_type_name)
         type_defaults = spectral_ready_defaults_for_type(prefix_label)
         section_number = descriptor_section_start + spectrum_type_idx
 
@@ -12155,7 +14658,7 @@ def render_spectra_descriptor_workbench():
                 admin_progress_status.info(msg)
 
             with st.spinner("Рассчитываем готовые спектральные дескрипторы для локального банка..."):
-                cache_df_all, cache_report = spectral_build_descriptor_cache_for_all_indexed_spectra(
+                cache_df_all, cache_report = spectra_core_module.spectral_build_descriptor_cache_for_all_indexed_spectra(
                     spectrum_type=descriptor_spectrum_type,
                     wn_min=wn_min,
                     wn_max=wn_max,
@@ -12273,7 +14776,7 @@ def render_spectra_descriptor_workbench():
 
             with st.spinner(spinner_text):
                 def run_one_spectral_descriptor_builder(cfg):
-                    spectral_builder = spectral_build_descriptors_from_ready_cache_for_dataset
+                    spectral_builder = spectra_core_module.spectral_build_descriptors_from_ready_cache_for_dataset
 
                     def update_typed_progress(current, total, stage, payload):
                         payload = dict(payload or {})
@@ -12493,7 +14996,7 @@ def render_spectra_descriptor_workbench():
                 st.session_state.keep_spectra_expander_open = True
 
                 if descriptors_df is not None and not descriptors_df.empty:
-                    saved_path = spectral_save_descriptors(
+                    saved_path = spectra_core_module.spectral_save_descriptors(
                         descriptors_df,
                         spectrum_type=descriptor_spectrum_label
                     )
@@ -12758,7 +15261,7 @@ def render_spectra_descriptor_workbench():
                 cols=spectral_df.shape[1]
             ))
 
-            csv_spec_desc = spectral_df.to_csv(index=False).encode("utf-8")
+            csv_spec_desc = qspr_core.qspr_csv_download_bytes(spectral_df)
             st.download_button(
                 t('spectra_report.download_csv'),
                 csv_spec_desc,
@@ -12789,17 +15292,7 @@ def render_spectra_descriptor_workbench():
                     st.session_state.pending_qspr_descriptor_bundle_ready = False
                     st.session_state.pending_qspr_descriptor_bundle_message = ""
 
-                    st.session_state.desc_calculated = False
-                    st.session_state.validation_done = False
-                    st.session_state.X_all = None
-                    st.session_state.y_all = None
-                    st.session_state.valid_indices = None
-                    st.session_state.desc_names = None
-                    st.session_state.df_desc = None
-                    st.session_state.trained_models = {}
-                    st.session_state.holdout_results_dict = {}
-                    st.session_state.kfold_results_dict = {}
-                    st.session_state.loo_results_dict = {}
+                    invalidate_descriptor_state()
 
                     add_log(
                         t('spectra_report.transfer_log',
@@ -12876,12 +15369,7 @@ if descriptor_source_mode != st.session_state.descriptor_source_mode:
     if keep_connected_matrix:
         add_log(t("descriptor_source.log_matrix_kept"))
     else:
-        st.session_state.desc_calculated = False
-        st.session_state.validation_done = False
-        st.session_state.trained_models = {}
-        st.session_state.holdout_results_dict = {}
-        st.session_state.kfold_results_dict = {}
-        st.session_state.loo_results_dict = {}
+        invalidate_descriptor_state()
 
         add_log(t(
             "descriptor_source.log_source_changed",
@@ -12916,6 +15404,28 @@ if descriptor_source_mode == "file":
 
     st.session_state.custom_descriptor_cols = custom_descriptor_cols
 
+    descriptor_structure_mismatch = bool(
+        st.session_state.get("uploaded_descriptor_structure_mismatch", False)
+    )
+    if descriptor_structure_mismatch:
+        st.error(
+            st.session_state.get(
+                "uploaded_descriptor_structure_mismatch_message",
+                "Uploaded descriptors may not match the current standardized SMILES."
+            )
+        )
+        st.caption(
+            "Recommended action: recalculate descriptors from the standardized SMILES. "
+            "Continue only if these columns are not molecular descriptors or were recalculated externally."
+        )
+        allow_mismatched_uploaded_descriptors = st.checkbox(
+            "I confirm these uploaded descriptors correspond to the current standardized structures",
+            value=False,
+            key="allow_mismatched_uploaded_descriptors",
+        )
+    else:
+        allow_mismatched_uploaded_descriptors = True
+
     leakage_df = qspr_detect_data_leakage_columns(
         descriptor_cols=custom_descriptor_cols,
         target_col=target_col,
@@ -12933,6 +15443,12 @@ if descriptor_source_mode == "file":
 
     if st.button(t('descriptor_source.use_button'), type="primary"):
         try:
+            if descriptor_structure_mismatch and not allow_mismatched_uploaded_descriptors:
+                st.error(
+                    "Uploaded descriptors are blocked because molecular structures changed during standardization."
+                )
+                st.stop()
+
             leakage_df = qspr_detect_data_leakage_columns(
                 descriptor_cols=st.session_state.custom_descriptor_cols,
                 target_col=target_col,
@@ -12943,7 +15459,7 @@ if descriptor_source_mode == "file":
                 )
             )
 
-            if not leakage_df.empty:
+            if qspr_leakage_has_blockers(leakage_df):
                 qspr_show_data_leakage_warning(
                     leakage_df,
                     title=t('descriptor_source.leakage_stopped_title')
@@ -12951,7 +15467,7 @@ if descriptor_source_mode == "file":
                 st.error(t('descriptor_source.leakage_stopped_error'))
                 st.stop()
 
-            bundle = qspr_prepare_custom_descriptors_from_file(
+            bundle = qspr_core.qspr_prepare_custom_descriptors_from_file(
                 data=data,
                 target_col=target_col,
                 descriptor_cols=st.session_state.custom_descriptor_cols,
@@ -12962,12 +15478,24 @@ if descriptor_source_mode == "file":
             st.session_state.descriptor_calculation_mode = "custom_descriptors"
 
             descriptors_df = bundle["df_desc"].copy()
-            descriptors_df["SMILES"] = data[smiles_col_current].iloc[bundle["valid_indices"]].values
+            descriptor_row_positions = pd.to_numeric(
+                pd.Series(bundle.get("row_positions", bundle["valid_indices"])),
+                errors="coerce",
+            )
+            if (
+                descriptor_row_positions.isna().any()
+                or not descriptor_row_positions.between(0, len(data) - 1).all()
+            ):
+                raise ValueError(
+                    "Descriptor bundle row positions are not valid for the current dataset."
+                )
+            descriptor_row_positions = descriptor_row_positions.astype(int).tolist()
+            descriptors_df["SMILES"] = data[smiles_col_current].iloc[descriptor_row_positions].values
             descriptors_df[target_col] = bundle["y_all"]
             cols = ["SMILES", target_col] + [c for c in descriptors_df.columns if c not in ["SMILES", target_col]]
             descriptors_df = descriptors_df[cols]
 
-            qspr_save_results_auto(descriptors_df, "custom_descriptors", target_col, len(bundle["y_all"]))
+            qspr_core.qspr_save_results_auto(descriptors_df, "custom_descriptors", target_col, len(bundle["y_all"]))
 
             st.success(t('descriptor_source.use_success',
                 n_desc=len(bundle['desc_names']),
@@ -13038,6 +15566,20 @@ else:
     if qspr_is_online_mode():
         use_quantum_descriptors_source = False
         use_spectral_descriptors_source = False
+
+    with st.expander("Descriptor row quality filter", expanded=False):
+        max_descriptor_missing_fraction = st.slider(
+            "Maximum missing descriptor fraction before imputation",
+            min_value=0.0,
+            max_value=0.9,
+            value=0.30,
+            step=0.05,
+            key="max_descriptor_missing_fraction",
+            help=(
+                "Rows with no calculated descriptors, or with a larger missing fraction, "
+                "are excluded before median imputation."
+            ),
+        )
 
     (
         descriptor_tab_molecular,
@@ -13171,12 +15713,58 @@ else:
                         key="xtb_optimize_rdkit"
                     )
 
+                    xtb_conformer_mode = st.selectbox(
+                        "xTB conformer mode",
+                        ["fast", "standard", "ensemble"],
+                        index=1,
+                        key="xtb_conformer_mode",
+                    )
+
+                    xtb_conformer_count = st.number_input(
+                        "xTB conformer count",
+                        min_value=1,
+                        max_value=50,
+                        value=20,
+                        step=1,
+                        key="xtb_conformer_count",
+                    )
+
+                    xtb_max_embed_attempts = st.number_input(
+                        "xTB max embed attempts",
+                        min_value=1,
+                        max_value=100,
+                        value=20,
+                        step=1,
+                        key="xtb_max_embed_attempts",
+                    )
+
                     xtb_limit = st.number_input(
                         t('descriptor_settings.xtb_limit_label'),
                         min_value=0,
                         value=0,
                         step=10,
                         key="xtb_limit"
+                    )
+                    xtb_sampling_strategy = st.selectbox(
+                        "xTB molecule limit strategy",
+                        ["first", "random", "property_range"],
+                        index=0,
+                        format_func=lambda value: {
+                            "first": "First rows",
+                            "random": "Reproducible random sample",
+                            "property_range": "Uniform across target range",
+                        }.get(value, value),
+                        key="xtb_sampling_strategy",
+                    )
+                    xtb_merge_policy = st.selectbox(
+                        "xTB merge policy",
+                        ["inner", "left"],
+                        index=0,
+                        format_func=lambda value: {
+                            "inner": "INNER: keep only rows with xTB",
+                            "left": "LEFT: keep molecular rows and impute missing xTB",
+                        }.get(value, value),
+                        key="xtb_merge_policy",
                     )
 
                     show_markdown_help(
@@ -13291,15 +15879,18 @@ if (
                 "rdkit_fast": "descriptor_mode.speed",
                 "mordred": "descriptor_mode.extended",
                 "mordred_padel_unique": "descriptor_mode.smart",
-                "max_accuracy": "descriptor_mode.accuracy",
+                "max_coverage": "descriptor_mode.accuracy",
             }
 
             DESCRIPTOR_MODE_HELP = {
                 "rdkit_fast": "descriptor_mode.help_speed",
                 "mordred": "descriptor_mode.help_extended",
                 "mordred_padel_unique": "descriptor_mode.help_smart",
-                "max_accuracy": "descriptor_mode.help_accuracy",
+                "max_coverage": "descriptor_mode.help_accuracy",
             }
+
+            if st.session_state.get("descriptor_mode_radio_v2") == "max_accuracy":
+                st.session_state.descriptor_mode_radio_v2 = "max_coverage"
 
             mode = st.radio(
                 t("descriptor_mode.radio_label"),
@@ -13365,6 +15956,7 @@ if (
                 disabled=online_heavy_descriptor_mode,
             ):
                 try:
+                    invalidate_descriptor_state()
                     current_df = data.copy()
                     bundle = None
                     source_label = ""
@@ -13411,7 +16003,7 @@ if (
 
                     if use_molecular_descriptors_source:
                         with st.spinner(t('descriptor_calc.spinner_molecular')):
-                            bundle = qspr_calculate_molecular_descriptors(
+                            bundle = qspr_core.qspr_calculate_molecular_descriptors(
                                 data=data,
                                 smiles_col=smiles_col_current,
                                 target_col=target_col,
@@ -13419,7 +16011,8 @@ if (
                                 desc_lists=st.session_state.desc_lists,
                                 allowed_rdkit_names=allowed_rdkit_names,
                                 allowed_mordred_names=allowed_mordred_names,
-                                allowed_padel_names=allowed_padel_names
+                                allowed_padel_names=allowed_padel_names,
+                                max_descriptor_missing_fraction=float(max_descriptor_missing_fraction),
                             )
 
                         source_label = "molecular_calculated"
@@ -13444,107 +16037,44 @@ if (
                             and abs(float(xtb_etemp) - 300.0) < 1e-12
                             and int(xtb_max_iter) == 250
                             and bool(xtb_optimize_rdkit) is True
+                            and str(xtb_conformer_mode) == "fast"
+                            and int(xtb_conformer_count) == 1
+                            and int(xtb_max_embed_attempts) == 20
+                        )
+
+                        xtb_input_data = qspr_core.qspr_select_xtb_work_rows(
+                            data=data,
+                            target_col=target_col,
+                            max_molecules=xtb_max_molecules,
+                            sampling_strategy=str(xtb_sampling_strategy),
+                            random_seed=1,
                         )
 
                         if use_descriptor_bank and not xtb_use_bank_default_profile:
                             st.warning(t('descriptor_calc.warning_xtb_bank_profile'))
 
-                            if xtb_use_bank_default_profile:
-                                cached_xtb_df, xtb_missing_df, bank_report = descriptor_bank_get_cached_and_missing(
-                                    df=data,
-                                    smiles_col=smiles_col_current,
-                                    descriptor_family="quantum",
-                                    descriptor_source="xtb",
-                                    descriptor_profile="default",
-                                    max_molecules=xtb_max_molecules,
-                                )
+                        if xtb_use_bank_default_profile:
+                            cached_xtb_df, xtb_missing_df, bank_report = descriptor_bank_core.descriptor_bank_get_cached_and_missing(
+                                df=xtb_input_data,
+                                smiles_col=smiles_col_current,
+                                descriptor_family="quantum",
+                                descriptor_source="xtb",
+                                descriptor_profile="default",
+                                max_molecules=None,
+                            )
 
-                                descriptor_bank_show_report(
-                                    bank_report,
-                                    title=t('descriptor_calc.bank_xtb_title'),
-                                )
+                            descriptor_bank_core.descriptor_bank_show_report(
+                                bank_report,
+                                title=t('descriptor_calc.bank_xtb_title'),
+                            )
 
-                                calculated_xtb_df = pd.DataFrame()
-                                calculated_xtb_report = {}
+                            calculated_xtb_df = pd.DataFrame()
+                            calculated_xtb_report = {}
 
-                                if not xtb_missing_df.empty:
-                                    with st.spinner(t('descriptor_calc.spinner_xtb_missing')):
-                                        calculated_xtb_df, calculated_xtb_report = qspr_calc_xtb_descriptors_dataframe(
-                                            data=xtb_missing_df,
-                                            smiles_col=smiles_col_current,
-                                            target_col=target_col,
-                                            method=xtb_method,
-                                            charge=int(xtb_charge),
-                                            uhf=int(xtb_uhf),
-                                            accuracy=float(xtb_accuracy),
-                                            electronic_temperature=float(xtb_etemp),
-                                            max_iterations=int(xtb_max_iter),
-                                            random_seed=1,
-                                            optimize_with_rdkit=bool(xtb_optimize_rdkit),
-                                            max_molecules=None,
-                                        )
-
-                                    if save_descriptor_bank and calculated_xtb_df is not None and not calculated_xtb_df.empty:
-                                        try:
-                                            calculated_xtb_df["descriptor_profile"] = "default"
-                                            calculated_xtb_df["xtb_method"] = str(xtb_method)
-                                            calculated_xtb_df["xtb_charge_setting"] = int(xtb_charge)
-                                            calculated_xtb_df["xtb_uhf_setting"] = int(xtb_uhf)
-                                            calculated_xtb_df["xtb_accuracy_setting"] = float(xtb_accuracy)
-                                            calculated_xtb_df["xtb_electronic_temperature_setting"] = float(xtb_etemp)
-                                            calculated_xtb_df["xtb_max_iterations_setting"] = int(xtb_max_iter)
-                                            calculated_xtb_df["xtb_rdkit_optimize_setting"] = bool(xtb_optimize_rdkit)
-                                            calculated_xtb_df["xtb_random_seed_setting"] = 1
-
-                                            descriptor_bank_append(
-                                                desc_df=calculated_xtb_df,
-                                                descriptor_family="quantum",
-                                                descriptor_source="xtb",
-                                                descriptor_profile="default",
-                                                target_col=target_col,
-                                            )
-                                            st.success(t('descriptor_calc.xtb_bank_success'))
-                                        except Exception as e:
-                                            st.warning(t('descriptor_calc.xtb_bank_error', error=e))
-
-                                if cached_xtb_df is not None and not cached_xtb_df.empty:
-                                    cached_xtb_df = descriptor_bank_attach_target(
-                                        df=cached_xtb_df,
-                                        source_df=data,
-                                        target_col=target_col,
-                                    )
-
-                                if calculated_xtb_df is not None and not calculated_xtb_df.empty:
-                                    calculated_xtb_df = descriptor_bank_attach_target(
-                                        df=calculated_xtb_df,
-                                        source_df=data,
-                                        target_col=target_col,
-                                    )
-
-                                xtb_parts = []
-
-                                if cached_xtb_df is not None and not cached_xtb_df.empty:
-                                    xtb_parts.append(cached_xtb_df)
-
-                                if calculated_xtb_df is not None and not calculated_xtb_df.empty:
-                                    xtb_parts.append(calculated_xtb_df)
-
-                                if xtb_parts:
-                                    xtb_df = pd.concat(xtb_parts, ignore_index=True, sort=False)
-
-                                    if "_original_index" in xtb_df.columns:
-                                        xtb_df = xtb_df.sort_values("_original_index").reset_index(drop=True)
-
-                                    xtb_report = dict(calculated_xtb_report or {})
-                                    xtb_report["descriptor_bank"] = bank_report
-                                else:
-                                    xtb_df = pd.DataFrame()
-                                    xtb_report = {"descriptor_bank": bank_report}
-
-                            else:
-                                with st.spinner(t('descriptor_calc.spinner_xtb_calculating')):
-                                    xtb_df, xtb_report = qspr_calc_xtb_descriptors_dataframe(
-                                        data=data,
+                            if not xtb_missing_df.empty:
+                                with st.spinner(t('descriptor_calc.spinner_xtb_missing')):
+                                    calculated_xtb_df, calculated_xtb_report = qspr_core.qspr_calc_xtb_descriptors_dataframe(
+                                        data=xtb_missing_df,
                                         smiles_col=smiles_col_current,
                                         target_col=target_col,
                                         method=xtb_method,
@@ -13554,9 +16084,93 @@ if (
                                         electronic_temperature=float(xtb_etemp),
                                         max_iterations=int(xtb_max_iter),
                                         random_seed=1,
+                                        conformer_mode=str(xtb_conformer_mode),
+                                        conformer_count=int(xtb_conformer_count),
+                                        max_embed_attempts=int(xtb_max_embed_attempts),
                                         optimize_with_rdkit=bool(xtb_optimize_rdkit),
-                                        max_molecules=xtb_max_molecules,
+                                        max_molecules=None,
                                     )
+
+                                if save_descriptor_bank and calculated_xtb_df is not None and not calculated_xtb_df.empty:
+                                    try:
+                                        calculated_xtb_df["descriptor_profile"] = "default"
+                                        calculated_xtb_df["xtb_method"] = str(xtb_method)
+                                        calculated_xtb_df["xtb_charge_setting"] = int(xtb_charge)
+                                        calculated_xtb_df["xtb_uhf_setting"] = int(xtb_uhf)
+                                        calculated_xtb_df["xtb_accuracy_setting"] = float(xtb_accuracy)
+                                        calculated_xtb_df["xtb_electronic_temperature_setting"] = float(xtb_etemp)
+                                        calculated_xtb_df["xtb_conformer_mode_setting"] = str(xtb_conformer_mode)
+                                        calculated_xtb_df["xtb_conformer_count_setting"] = int(xtb_conformer_count)
+                                        calculated_xtb_df["xtb_max_embed_attempts_setting"] = int(xtb_max_embed_attempts)
+                                        calculated_xtb_df["xtb_max_iterations_setting"] = int(xtb_max_iter)
+                                        calculated_xtb_df["xtb_rdkit_optimize_setting"] = bool(xtb_optimize_rdkit)
+                                        calculated_xtb_df["xtb_random_seed_setting"] = 1
+
+                                        descriptor_bank_core.descriptor_bank_append(
+                                            desc_df=calculated_xtb_df,
+                                            descriptor_family="quantum",
+                                            descriptor_source="xtb",
+                                            descriptor_profile="default",
+                                            target_col=target_col,
+                                        )
+                                        st.success(t('descriptor_calc.xtb_bank_success'))
+                                    except Exception as e:
+                                        st.warning(t('descriptor_calc.xtb_bank_error', error=e))
+
+                            if cached_xtb_df is not None and not cached_xtb_df.empty:
+                                cached_xtb_df = descriptor_bank_core.descriptor_bank_attach_target(
+                                    df=cached_xtb_df,
+                                    source_df=xtb_input_data,
+                                    target_col=target_col,
+                                )
+
+                            if calculated_xtb_df is not None and not calculated_xtb_df.empty:
+                                calculated_xtb_df = descriptor_bank_core.descriptor_bank_attach_target(
+                                    df=calculated_xtb_df,
+                                    source_df=xtb_input_data,
+                                    target_col=target_col,
+                                )
+
+                            xtb_parts = []
+
+                            if cached_xtb_df is not None and not cached_xtb_df.empty:
+                                xtb_parts.append(cached_xtb_df)
+
+                            if calculated_xtb_df is not None and not calculated_xtb_df.empty:
+                                xtb_parts.append(calculated_xtb_df)
+
+                            if xtb_parts:
+                                xtb_df = pd.concat(xtb_parts, ignore_index=True, sort=False)
+
+                                if "_original_index" in xtb_df.columns:
+                                    xtb_df = xtb_df.sort_values("_original_index").reset_index(drop=True)
+
+                                xtb_report = dict(calculated_xtb_report or {})
+                                xtb_report["descriptor_bank"] = bank_report
+                            else:
+                                xtb_df = pd.DataFrame()
+                                xtb_report = {"descriptor_bank": bank_report}
+
+                        else:
+                            with st.spinner(t('descriptor_calc.spinner_xtb_calculating')):
+                                xtb_df, xtb_report = qspr_core.qspr_calc_xtb_descriptors_dataframe(
+                                    data=xtb_input_data,
+                                    smiles_col=smiles_col_current,
+                                    target_col=target_col,
+                                    method=xtb_method,
+                                    charge=int(xtb_charge),
+                                    uhf=int(xtb_uhf),
+                                    accuracy=float(xtb_accuracy),
+                                    electronic_temperature=float(xtb_etemp),
+                                    max_iterations=int(xtb_max_iter),
+                                    random_seed=1,
+                                    conformer_mode=str(xtb_conformer_mode),
+                                    conformer_count=int(xtb_conformer_count),
+                                    max_embed_attempts=int(xtb_max_embed_attempts),
+                                    optimize_with_rdkit=bool(xtb_optimize_rdkit),
+                                    max_molecules=None,
+                                    sampling_strategy=str(xtb_sampling_strategy),
+                                )
 
                             st.session_state.xtb_descriptors_df = xtb_df
                             st.session_state.xtb_descriptors_report = xtb_report
@@ -13573,8 +16187,28 @@ if (
                                 bundle = qspr_append_xtb_to_bundle(
                                     base_bundle=bundle,
                                     xtb_df=xtb_df,
-                                    target_col=target_col
+                                    target_col=target_col,
+                                    merge_policy=str(xtb_merge_policy),
                                 )
+                                join_report = bundle.get("report", {})
+                                lost_rows = int(join_report.get("rows_lost_by_xtb_join", 0) or 0)
+                                if lost_rows > 0:
+                                    st.warning(
+                                        "xTB descriptors were available only for part of the molecular descriptor table: "
+                                        f"before join {join_report.get('molecular_rows_before_xtb_join')}, "
+                                        f"xTB valid {join_report.get('xtb_valid_rows_before_join')}, "
+                                        f"after {join_report.get('xtb_join_type')} join {join_report.get('rows_after_xtb_join')}, "
+                                        f"lost {lost_rows} rows."
+                                    )
+                                elif (
+                                    str(join_report.get("xtb_join_type", "")).lower() == "left"
+                                    and int(join_report.get("xtb_valid_rows_before_join", 0) or 0)
+                                    < int(join_report.get("molecular_rows_before_xtb_join", 0) or 0)
+                                ):
+                                    st.warning(
+                                        "LEFT merge kept all molecular rows, but xTB was missing for some compounds; "
+                                        "missing xTB descriptor values will be imputed in the final matrix."
+                                    )
                                 source_label = "molecular_plus_xtb"
                             else:
                                 bundle = qspr_make_xtb_bundle_from_dataframe(
@@ -13616,7 +16250,7 @@ if (
                             st.warning(t('descriptor_calc.morfeus_bank_profile_warning'))
 
                         if morfeus_use_bank_default_profile:
-                            cached_morfeus_df, morfeus_missing_df, bank_report = descriptor_bank_get_cached_and_missing(
+                            cached_morfeus_df, morfeus_missing_df, bank_report = descriptor_bank_core.descriptor_bank_get_cached_and_missing(
                                 df=data,
                                 smiles_col=smiles_col_current,
                                 descriptor_family="3d",
@@ -13625,7 +16259,7 @@ if (
                                 max_molecules=morfeus_max_molecules,
                             )
 
-                            descriptor_bank_show_report(
+                            descriptor_bank_core.descriptor_bank_show_report(
                                 bank_report,
                                 title=t('descriptor_calc.morfeus_bank_title'),
                             )
@@ -13642,7 +16276,7 @@ if (
                                     progress_text.caption(message)
 
                                 with st.spinner(t('descriptor_calc.spinner_morfeus_missing')):
-                                    calculated_morfeus_df = calculate_morfeus_descriptors_for_dataframe(
+                                    calculated_morfeus_df = morfeus_descriptor_core.calculate_morfeus_descriptors_for_dataframe(
                                         df=morfeus_missing_df,
                                         smiles_col=smiles_col_current,
                                         id_col=None,
@@ -13660,7 +16294,7 @@ if (
 
                                 if save_descriptor_bank and calculated_morfeus_df is not None and not calculated_morfeus_df.empty:
                                     try:
-                                        _morfeus_key_table = descriptor_bank_make_input_key_table(
+                                        _morfeus_key_table = descriptor_bank_core.descriptor_bank_make_input_key_table(
                                             df=morfeus_missing_df,
                                             smiles_col=smiles_col_current,
                                             max_molecules=None,
@@ -13697,7 +16331,7 @@ if (
                                         calculated_morfeus_df["morfeus_optimize_3d_setting"] = bool(morfeus_optimize_3d)
                                         calculated_morfeus_df["morfeus_random_seed_setting"] = 42
 
-                                        descriptor_bank_append(
+                                        descriptor_bank_core.descriptor_bank_append(
                                             desc_df=calculated_morfeus_df,
                                             descriptor_family="3d",
                                             descriptor_source="morfeus",
@@ -13711,14 +16345,14 @@ if (
                                         st.warning(t('descriptor_calc.morfeus_bank_error', error=e))
 
                             if cached_morfeus_df is not None and not cached_morfeus_df.empty:
-                                cached_morfeus_df = descriptor_bank_attach_target(
+                                cached_morfeus_df = descriptor_bank_core.descriptor_bank_attach_target(
                                     df=cached_morfeus_df,
                                     source_df=data,
                                     target_col=target_col,
                                 )
 
                             if calculated_morfeus_df is not None and not calculated_morfeus_df.empty:
-                                calculated_morfeus_df = descriptor_bank_attach_target(
+                                calculated_morfeus_df = descriptor_bank_core.descriptor_bank_attach_target(
                                     df=calculated_morfeus_df,
                                     source_df=data,
                                     target_col=target_col,
@@ -13752,7 +16386,7 @@ if (
                                 progress_text.caption(message)
 
                             with st.spinner(t('descriptor_calc.spinner_morfeus_3d')):
-                                morfeus_df = calculate_morfeus_descriptors_for_dataframe(
+                                morfeus_df = morfeus_descriptor_core.calculate_morfeus_descriptors_for_dataframe(
                                     df=data,
                                     smiles_col=smiles_col_current,
                                     id_col=None,
@@ -13779,12 +16413,31 @@ if (
                             valid_row_mask = morfeus_row_indices.notna()
                             morfeus_df = morfeus_df.loc[valid_row_mask].copy()
                             morfeus_row_indices = morfeus_row_indices.loc[valid_row_mask].astype(int)
+                            source_to_position = {
+                                source_index: position
+                                for position, source_index in enumerate(data.index.tolist())
+                            }
+                            morfeus_positions = morfeus_row_indices.map(source_to_position)
+                            if morfeus_positions.isna().any():
+                                numeric_positions = morfeus_row_indices.where(
+                                    morfeus_row_indices.between(0, len(data) - 1)
+                                )
+                                morfeus_positions = morfeus_positions.fillna(numeric_positions)
+                            valid_position_mask = morfeus_positions.notna()
+                            morfeus_df = morfeus_df.loc[valid_position_mask].copy()
+                            morfeus_row_indices = morfeus_row_indices.loc[valid_position_mask]
+                            morfeus_positions = morfeus_positions.loc[valid_position_mask].astype(int)
+                            morfeus_df["source_index"] = morfeus_row_indices.values
+                            morfeus_df["row_position"] = morfeus_positions.values
+                            morfeus_df["_original_index"] = morfeus_positions.values
 
                             morfeus_df[target_col] = pd.to_numeric(
-                                data.loc[morfeus_row_indices, target_col].values,
+                                data.iloc[morfeus_positions][target_col].values,
                                 errors="coerce"
                             )
                         else:
+                            morfeus_df["row_position"] = np.arange(len(morfeus_df), dtype=int)
+                            morfeus_df["_original_index"] = morfeus_df["row_position"]
                             morfeus_df[target_col] = pd.to_numeric(
                                 data[target_col].values[:len(morfeus_df)],
                                 errors="coerce"
@@ -13875,7 +16528,7 @@ if (
                             st.warning(t('descriptor_calc.dscribe_bank_profile_warning'))
 
                         if dscribe_use_bank_default_profile:
-                            cached_dscribe_df, dscribe_missing_df, bank_report = descriptor_bank_get_cached_and_missing(
+                            cached_dscribe_df, dscribe_missing_df, bank_report = descriptor_bank_core.descriptor_bank_get_cached_and_missing(
                                 df=data,
                                 smiles_col=smiles_col_current,
                                 descriptor_family="atomistic",
@@ -13884,7 +16537,7 @@ if (
                                 max_molecules=dscribe_max_molecules,
                             )
 
-                            descriptor_bank_show_report(
+                            descriptor_bank_core.descriptor_bank_show_report(
                                 bank_report,
                                 title=t('descriptor_calc.dscribe_bank_title'),
                             )
@@ -13901,7 +16554,7 @@ if (
                                     progress_text.caption(message)
 
                                 with st.spinner(t('descriptor_calc.spinner_dscribe_missing')):
-                                    calculated_dscribe_df = calculate_dscribe_descriptors_for_dataframe(
+                                    calculated_dscribe_df = dscribe_descriptor_core.calculate_dscribe_descriptors_for_dataframe(
                                         df=dscribe_missing_df,
                                         smiles_col=smiles_col_current,
                                         id_col=None,
@@ -13918,7 +16571,7 @@ if (
 
                                 if save_descriptor_bank and calculated_dscribe_df is not None and not calculated_dscribe_df.empty:
                                     try:
-                                        _dscribe_key_table = descriptor_bank_make_input_key_table(
+                                        _dscribe_key_table = descriptor_bank_core.descriptor_bank_make_input_key_table(
                                             df=dscribe_missing_df,
                                             smiles_col=smiles_col_current,
                                             max_molecules=None,
@@ -13952,7 +16605,7 @@ if (
                                         calculated_dscribe_df["dscribe_calc_coulomb_setting"] = True
                                         calculated_dscribe_df["dscribe_random_seed_setting"] = 42
 
-                                        descriptor_bank_append(
+                                        descriptor_bank_core.descriptor_bank_append(
                                             desc_df=calculated_dscribe_df,
                                             descriptor_family="atomistic",
                                             descriptor_source="dscribe",
@@ -13964,14 +16617,14 @@ if (
                                         st.warning(t('descriptor_calc.dscribe_bank_error', error=e))
 
                             if cached_dscribe_df is not None and not cached_dscribe_df.empty:
-                                cached_dscribe_df = descriptor_bank_attach_target(
+                                cached_dscribe_df = descriptor_bank_core.descriptor_bank_attach_target(
                                     df=cached_dscribe_df,
                                     source_df=data,
                                     target_col=target_col,
                                 )
 
                             if calculated_dscribe_df is not None and not calculated_dscribe_df.empty:
-                                calculated_dscribe_df = descriptor_bank_attach_target(
+                                calculated_dscribe_df = descriptor_bank_core.descriptor_bank_attach_target(
                                     df=calculated_dscribe_df,
                                     source_df=data,
                                     target_col=target_col,
@@ -14005,7 +16658,7 @@ if (
                                 progress_text.caption(message)
 
                             with st.spinner(t('descriptor_calc.spinner_dscribe_atomistic')):
-                                dscribe_df = calculate_dscribe_descriptors_for_dataframe(
+                                dscribe_df = dscribe_descriptor_core.calculate_dscribe_descriptors_for_dataframe(
                                     df=data,
                                     smiles_col=smiles_col_current,
                                     id_col=None,
@@ -14034,12 +16687,31 @@ if (
                                 .loc[valid_row_mask]
                                 .astype(int)
                             )
+                            source_to_position = {
+                                source_index: position
+                                for position, source_index in enumerate(data.index.tolist())
+                            }
+                            dscribe_positions = dscribe_row_indices.map(source_to_position)
+                            if dscribe_positions.isna().any():
+                                numeric_positions = dscribe_row_indices.where(
+                                    dscribe_row_indices.between(0, len(data) - 1)
+                                )
+                                dscribe_positions = dscribe_positions.fillna(numeric_positions)
+                            valid_position_mask = dscribe_positions.notna()
+                            dscribe_df = dscribe_df.loc[valid_position_mask].copy()
+                            dscribe_row_indices = dscribe_row_indices.loc[valid_position_mask]
+                            dscribe_positions = dscribe_positions.loc[valid_position_mask].astype(int)
+                            dscribe_df["source_index"] = dscribe_row_indices.values
+                            dscribe_df["row_position"] = dscribe_positions.values
+                            dscribe_df["_original_index"] = dscribe_positions.values
 
                             dscribe_df[target_col] = pd.to_numeric(
-                                data.loc[dscribe_row_indices, target_col].values,
+                                data.iloc[dscribe_positions][target_col].values,
                                 errors="coerce"
                             )
                         else:
+                            dscribe_df["row_position"] = np.arange(len(dscribe_df), dtype=int)
+                            dscribe_df["_original_index"] = dscribe_df["row_position"]
                             dscribe_df[target_col] = pd.to_numeric(
                                 data[target_col].values[:len(dscribe_df)],
                                 errors="coerce"
@@ -14132,7 +16804,7 @@ if (
                             st.warning(t('descriptor_calc.spectral_not_found_warning'))
                             st.stop()
 
-                        bundle = qspr_build_descriptor_matrix_from_sources(
+                        bundle = qspr_core.qspr_build_descriptor_matrix_from_sources(
                             current_df=current_df,
                             target_col=target_col,
                             use_molecular=False,
@@ -14168,7 +16840,7 @@ if (
 
                             store_descriptor_bundle(bundle, source_label)
                         else:
-                            bundle = qspr_build_descriptor_matrix_from_sources(
+                            bundle = qspr_core.qspr_build_descriptor_matrix_from_sources(
                                 current_df=current_df,
                                 target_col=target_col,
                                 use_molecular=True,
@@ -14193,8 +16865,17 @@ if (
                             store_descriptor_bundle(bundle, source_label)
 
                             st.session_state.descriptor_calculation_mode = "spectral_or_combined"
-                            st.session_state.custom_descriptor_source = source_label
-                            st.session_state.custom_descriptors_used = True
+                            source_code = descriptor_source_code(source_label)
+                            st.session_state.custom_descriptor_source = source_code
+                            st.session_state.descriptor_source_code = source_code
+                            st.session_state.descriptor_source_label = str(
+                                bundle.get("report", {}).get("descriptor_source_label", source_code)
+                            )
+                            st.session_state.descriptor_source_type = descriptor_source_type(source_code)
+                            st.session_state.custom_descriptors_used = (
+                                st.session_state.descriptor_source_type
+                                != DESCRIPTOR_SOURCE_CALCULATED_MOLECULAR
+                            )
                         pass
                     else:
                         # --- ОСНОВНОЙ ПУТЬ (без спектральных дескрипторов) ---
@@ -14204,13 +16885,15 @@ if (
 
 
                         store_descriptor_bundle(bundle, source_label)
-                        st.session_state.molecular_descriptors_ready = True
-                        st.session_state.molecular_df_desc = bundle["df_desc"].copy()
-                        st.session_state.molecular_valid_indices = list(bundle["valid_indices"])
-                        st.session_state.molecular_desc_names = list(bundle["desc_names"])
-                        st.session_state.molecular_X_all = np.array(bundle["X_all"], copy=True)
-                        st.session_state.molecular_y_all = np.array(bundle["y_all"], copy=True)
-                        st.session_state.molecular_descriptor_source = source_label
+                        st.session_state.update({
+                            "molecular_descriptors_ready": True,
+                            "molecular_df_desc": bundle["df_desc"].copy(),
+                            "molecular_valid_indices": list(bundle["valid_indices"]),
+                            "molecular_desc_names": list(bundle["desc_names"]),
+                            "molecular_X_all": np.array(bundle["X_all"], copy=True),
+                            "molecular_y_all": np.array(bundle["y_all"], copy=True),
+                            "molecular_descriptor_source": source_label,
+                        })
 
                         st.session_state.descriptor_calculation_mode = source_label
                         st.session_state.molecular_descriptor_calculation_mode = (
@@ -14236,7 +16919,7 @@ if (
 
                     descriptors_df = descriptors_df[cols]
 
-                    qspr_save_results_auto(
+                    qspr_core.qspr_save_results_auto(
                         descriptors_df,
                         "descriptors",
                         target_col,
@@ -14251,7 +16934,7 @@ if (
                         source=source_label
                     ))
 
-                    qspr_show_descriptor_meaning_table(
+                    structural_filter_core.qspr_show_descriptor_meaning_table(
                         desc_names=bundle["desc_names"],
                         title=t('descriptor_calc.meaning_table_title'),
                         status_label=t('descriptor_calc.meaning_table_status'),
@@ -14399,9 +17082,15 @@ with st.expander(t('incremental.expander_title'), expanded=False):
             # ------------------------------------------------------------
             # 3. Выбор режима работы
 
+            transfer_custom_desc_action = st.button(
+                t('incremental.transfer_button'),
+                type="primary",
+                key="send_custom_descriptors_to_qspr_direct"
+            )
+
             use_mnk_here = st.checkbox(
                 t('incremental.calc_mnk_checkbox'),
-                value=True,
+                value=False,
                 key="custom_desc_use_mnk",
                 help=t('incremental.calc_mnk_help')
             )
@@ -14427,15 +17116,14 @@ with st.expander(t('incremental.expander_title'), expanded=False):
             # 4. Кнопка запуска в зависимости от режима
 
             if use_mnk_here:
-                run_custom_desc_action = st.button(
+                run_mnk_action = st.button(
                     t('incremental.calc_mnk_button'),
                     key="run_incremental_model"
                 )
             else:
-                run_custom_desc_action = st.button(
-                    t('incremental.transfer_button'),
-                    key="send_custom_descriptors_to_qspr_direct"
-                )
+                run_mnk_action = False
+
+            run_custom_desc_action = transfer_custom_desc_action
 
             # ------------------------------------------------------------
             # 5. Выполнение действия
@@ -14445,67 +17133,70 @@ with st.expander(t('incremental.expander_title'), expanded=False):
                     st.error(t('incremental.error_no_columns'))
                     st.stop()
 
-                if use_mnk_here:
-                    try:
-                        inc_result = fit_incremental_contributions(
-                            data=data,
-                            target_col=target_col,
-                            increment_cols=increment_cols,
-                            use_intercept=use_intercept
+                try:
+                    leakage_df = qspr_detect_data_leakage_columns(
+                        descriptor_cols=increment_cols,
+                        target_col=target_col,
+                        data=data,
+                        y=pd.to_numeric(
+                            data[target_col].astype(str).str.replace(",", ".", regex=False),
+                            errors="coerce"
                         )
+                    )
 
-                        st.session_state.incremental_result = inc_result
-
-                        add_log(t('incremental.log_mnk_calculated', n=len(increment_cols)))
-
-                        st.success(t('incremental.success_mnk_calculated'))
-
-                    except Exception as e:
-                        st.error(t('incremental.error_mnk_calculation', error=e))
-
-                else:
-                    try:
-                        leakage_df = qspr_detect_data_leakage_columns(
-                            descriptor_cols=inc_result["increment_cols"],
-                            target_col=target_col,
-                            data=data,
-                            y=pd.to_numeric(
-                                data[target_col].astype(str).str.replace(",", ".", regex=False),
-                                errors="coerce"
-                            )
+                    if qspr_leakage_has_blockers(leakage_df):
+                        qspr_show_data_leakage_warning(
+                            leakage_df,
+                            title=t('incremental.leakage_stopped_title')
                         )
+                        st.error(t('incremental.leakage_stopped_error'))
+                        st.stop()
+                    prepared = qspr_core.qspr_prepare_custom_descriptors_from_file(
+                        data=data,
+                        target_col=target_col,
+                        descriptor_cols=increment_cols,
+                        smiles_col=smiles_col_current
+                    )
 
-                        if not leakage_df.empty:
-                            qspr_show_data_leakage_warning(
-                                leakage_df,
-                                title=t('incremental.leakage_stopped_title')
-                            )
-                            st.error(t('incremental.leakage_stopped_error'))
-                            st.stop()
-                        prepared = qspr_prepare_custom_descriptors_from_file(
-                            data=data,
-                            target_col=target_col,
-                            descriptor_cols=increment_cols,
-                            smiles_col=smiles_col_current
-                        )
+                    store_descriptor_bundle(
+                        prepared,
+                        "custom_descriptors"
+                    )
+                    st.session_state.descriptor_calculation_mode = "custom_descriptors"
 
-                        store_descriptor_bundle(
-                            prepared,
-                            "custom_descriptors"
-                        )
-                        st.session_state.descriptor_calculation_mode = "custom_descriptors"
+                    add_log(t('incremental.log_transferred', n=len(increment_cols)))
 
-                        add_log(t('incremental.log_transferred', n=len(increment_cols)))
+                    st.success(t('incremental.success_transferred',
+                        n_desc=len(prepared['desc_names']),
+                        n_compounds=len(prepared['y_all'])
+                    ))
 
-                        st.success(t('incremental.success_transferred',
-                            n_desc=len(prepared['desc_names']),
-                            n_compounds=len(prepared['y_all'])
-                        ))
+                    st.rerun()
 
-                        st.rerun()
+                except Exception as e:
+                    st.error(t('incremental.error_transfer', error=e))
 
-                    except Exception as e:
-                        st.error(t('incremental.error_transfer', error=e))
+            if run_mnk_action:
+                if not increment_cols:
+                    st.error(t('incremental.error_no_columns'))
+                    st.stop()
+
+                try:
+                    inc_result = fit_incremental_contributions(
+                        data=data,
+                        target_col=target_col,
+                        increment_cols=increment_cols,
+                        use_intercept=use_intercept
+                    )
+
+                    st.session_state.incremental_result = inc_result
+
+                    add_log(t('incremental.log_mnk_calculated', n=len(increment_cols)))
+
+                    st.success(t('incremental.success_mnk_calculated'))
+
+                except Exception as e:
+                    st.error(t('incremental.error_mnk_calculation', error=e))
 
             # ------------------------------------------------------------
             # 6. Показ результатов МНК
@@ -14597,8 +17288,8 @@ with st.expander(t('incremental.expander_title'), expanded=False):
                     hide_index=True
                 )
 
-                coef_csv = inc_result["coef_table"].to_csv(index=False).encode("utf-8")
-                result_csv = inc_result["result_table"].to_csv(index=False).encode("utf-8")
+                coef_csv = qspr_core.qspr_csv_download_bytes(inc_result["coef_table"])
+                result_csv = qspr_core.qspr_csv_download_bytes(inc_result["result_table"])
 
                 col_inc_download_1, col_inc_download_2 = st.columns(2)
 
@@ -14626,7 +17317,7 @@ with st.expander(t('incremental.expander_title'), expanded=False):
                     key="use_incremental_as_descriptors"
                 ):
                     try:
-                        prepared = qspr_prepare_custom_descriptors_from_file(
+                        prepared = qspr_core.qspr_prepare_custom_descriptors_from_file(
                             data=data,
                             target_col=target_col,
                             descriptor_cols=inc_result["increment_cols"],
@@ -14668,6 +17359,32 @@ df_desc = st.session_state.df_desc
 desc_names_current = st.session_state.desc_names
 
 descriptor_source_message()
+descriptor_quality_view = st.session_state.get("descriptor_quality_df")
+if isinstance(descriptor_quality_view, pd.DataFrame) and not descriptor_quality_view.empty:
+    descriptor_rows_included = descriptor_quality_view.get(
+        "descriptor_row_included",
+        pd.Series(False, index=descriptor_quality_view.index),
+    ).map(_qspr_bool_setting)
+    excluded_descriptor_rows = int(
+        (~descriptor_rows_included).sum()
+    )
+    with st.expander("Descriptor calculation quality by row", expanded=excluded_descriptor_rows > 0):
+        if excluded_descriptor_rows:
+            st.warning(
+                f"{excluded_descriptor_rows} rows were excluded before imputation because descriptor calculation was incomplete."
+            )
+        st.dataframe(
+            _streamlit_safe_table_data(descriptor_quality_view),
+            width="stretch",
+            hide_index=True,
+        )
+        st.download_button(
+            "Download descriptor quality CSV",
+            qspr_core.qspr_csv_download_bytes(descriptor_quality_view),
+            "descriptor_quality.csv",
+            "text/csv",
+            key="download_descriptor_quality_csv",
+        )
 
 # ------------------------------------------------------------------
 # Data leakage control
@@ -14682,6 +17399,7 @@ try:
         y=y_all
     )
 
+    has_leakage_blockers = qspr_leakage_has_blockers(leakage_df)
     if leakage_df.empty:
         st.success(t('leakage_control.success'))
     else:
@@ -14689,16 +17407,20 @@ try:
             leakage_df,
             title=t('leakage_control.warning_title')
         )
-        st.error(t('leakage_control.error_text'))
+        if has_leakage_blockers:
+            st.error(t('leakage_control.error_text'))
+        else:
+            st.info("Only strong predictors were detected; no explicit or possible target-derived leakage was found.")
 
-        allow_leakage_training = st.checkbox(
-            t('leakage_control.checkbox_label'),
-            value=False,
-            key="allow_training_with_possible_leakage"
-        )
+        if has_leakage_blockers:
+            allow_leakage_training = st.checkbox(
+                t('leakage_control.checkbox_label'),
+                value=False,
+                key="allow_training_with_possible_leakage"
+            )
 
-        if not allow_leakage_training:
-            st.stop()
+            if not allow_leakage_training:
+                st.stop()
 
 except Exception as e:
     st.warning(t('leakage_control.failed', error=e))
@@ -15026,9 +17748,12 @@ if mahal_table_for_view is not None and not mahal_table_for_view.empty:
         key_prefix="mahalanobis_outliers_full_width"
     )
 
-remove_outliers_choice = st.checkbox(
-    t('outliers_remove.checkbox_label'),
-    help=t('outliers_remove.help_text')
+mark_target_extremes_choice = st.checkbox(
+    "Mark extreme target values",
+    help=(
+        "IQR and z-score rules only mark extreme property values. "
+        "Do not remove them automatically without structural and experimental review."
+    )
 )
 
 X_all_current = X_all
@@ -15036,7 +17761,7 @@ y_all_current = y_all
 valid_indices_current = list(valid_indices)
 df_desc_current = df_desc
 
-if remove_outliers_choice:
+if mark_target_extremes_choice:
     q1, q3 = np.percentile(y_all_current, [25, 75])
     iqr = q3 - q1
     lower_iqr = q1 - 1.5 * iqr
@@ -15051,18 +17776,110 @@ if remove_outliers_choice:
 
     outliers_iqr = np.where((y_all_current < lower_iqr) | (y_all_current > upper_iqr))[0]
     outliers_z = np.where(z_scores > 3)[0]
-    outliers_all = np.unique(np.concatenate([outliers_iqr, outliers_z]))
+    outlier_iqr_set = set(outliers_iqr.tolist())
+    outlier_z_set = set(outliers_z.tolist())
+    outliers_any = np.array(sorted(outlier_iqr_set | outlier_z_set), dtype=int)
+    outliers_both = np.array(sorted(outlier_iqr_set & outlier_z_set), dtype=int)
+    outlier_policy = st.radio(
+        "Extreme-value action",
+        ["mark_only", "remove_any", "remove_both", "manual_select"],
+        index=0,
+        horizontal=True,
+        format_func=lambda value: {
+            "mark_only": "Only mark",
+            "remove_any": "Remove if any criterion matches",
+            "remove_both": "Remove only if both criteria match",
+            "manual_select": "Select manually",
+        }.get(value, value),
+        key="target_extreme_value_policy",
+    )
+    outliers_all = outliers_any
 
     if len(outliers_all) > 0:
-        keep = np.ones(len(y_all_current), dtype=bool)
-        keep[outliers_all] = False
-
-        X_all_current = X_all_current[keep]
-        y_all_current = y_all_current[keep]
-        valid_indices_current = [valid_indices_current[i] for i in range(len(valid_indices_current)) if keep[i]]
-        df_desc_current = df_desc_current.iloc[keep].reset_index(drop=True)
-
-        st.success(t('outliers_remove.removed_success', removed=len(outliers_all), remaining=len(y_all_current)))
+        marked_rows = []
+        for local_pos in outliers_all:
+            reasons = []
+            if local_pos in outlier_iqr_set:
+                reasons.append("IQR")
+            if local_pos in outlier_z_set:
+                reasons.append("z_score_gt_3")
+            source_index = valid_indices_current[int(local_pos)]
+            marked_rows.append({
+                "local_position": int(local_pos),
+                "source_index": source_index,
+                "target_value": float(y_all_current[int(local_pos)]),
+                "z_score": float(z_scores[int(local_pos)]),
+                "reason": "; ".join(reasons),
+            })
+        marked_outliers_df = pd.DataFrame(marked_rows)
+        st.warning(
+            "Extreme target values were marked only. Removing them can narrow "
+            "the modeled property range and artificially improve metrics."
+        )
+        st.dataframe(marked_outliers_df, width="stretch", hide_index=True)
+        if outlier_policy == "remove_both":
+            removal_candidates = outliers_both
+        elif outlier_policy == "manual_select":
+            selected_labels = st.multiselect(
+                "Rows to remove",
+                marked_outliers_df["local_position"].astype(int).tolist(),
+                default=[],
+                key="manual_target_extreme_rows_to_remove",
+            )
+            removal_candidates = np.array(sorted(set(map(int, selected_labels))), dtype=int)
+        elif outlier_policy == "remove_any":
+            removal_candidates = outliers_any
+        else:
+            removal_candidates = np.array([], dtype=int)
+        st.caption(
+            f"Marked: {len(outliers_any)} by any criterion; "
+            f"{len(outliers_both)} by both criteria; "
+            f"selected for removal: {len(removal_candidates)}."
+        )
+        confirm_extreme_removal = st.checkbox(
+            "I reviewed structures/experimental context and want to remove marked rows",
+            value=False,
+            disabled=len(removal_candidates) == 0,
+            key="confirm_remove_marked_target_extremes",
+        )
+        if confirm_extreme_removal and st.button(
+            "Apply removal and rebuild descriptor bundle",
+            key="apply_remove_marked_target_extremes",
+        ):
+            keep = np.ones(len(y_all_current), dtype=bool)
+            keep[removal_candidates] = False
+            new_bundle = {
+                "df_desc": df_desc_current.iloc[keep].reset_index(drop=True),
+                "X_all": X_all_current[keep],
+                "y_all": y_all_current[keep],
+                "valid_indices": [
+                    valid_indices_current[i]
+                    for i in range(len(valid_indices_current))
+                    if keep[i]
+                ],
+                "desc_names": list(desc_names_current),
+                "row_positions": [
+                    valid_indices_current[i]
+                    for i in range(len(valid_indices_current))
+                    if keep[i]
+                ],
+                "source_indices": [],
+                "record_ids": [],
+                "report": {
+                    "descriptor_source_label": st.session_state.get(
+                        "descriptor_source_label",
+                        st.session_state.get("descriptor_source_code", "rows_filtered"),
+                    )
+                },
+            }
+            store_descriptor_bundle(
+                new_bundle,
+                st.session_state.get("descriptor_source_code", "rows_filtered"),
+            )
+            st.session_state["last_rows_removed_reason"] = "target_extreme_values_reviewed"
+            st.session_state["last_rows_removed_policy"] = outlier_policy
+            st.success(t('outliers_remove.removed_success', removed=len(removal_candidates), remaining=int(keep.sum())))
+            st.rerun()
     else:
         st.info(t('outliers_remove.no_outliers_to_remove'))
 
@@ -15092,12 +17909,16 @@ render_error_analysis_section({**globals(), **locals()})
 
 if model_name in st.session_state.trained_models:
     verified_model_data = st.session_state.trained_models[model_name]
-    verified_validation_completed = any([
-        model_name in st.session_state.get("holdout_results_dict", {}),
-        model_name in st.session_state.get("kfold_results_dict", {}),
-        model_name in st.session_state.get("loo_results_dict", {}),
-        bool(st.session_state.get("ext_validation_result")),
-    ])
+    verified_validation_status = qspr_model_validation_status(model_name)
+    verified_validation_completed = verified_validation_status in {
+        VALIDATION_COMPLETED,
+        VALIDATION_ACCEPTABLE,
+    }
+    if verified_validation_status in {VALIDATION_FAILED, VALIDATION_PARTIAL}:
+        st.warning(
+            f"Validation status for {model_name}: {verified_validation_status}. "
+            "The model can be saved, but it should not be treated as verified."
+        )
     render_verified_model_save(
         model_name=model_name,
         model_data=verified_model_data,
@@ -15129,7 +17950,7 @@ render_consensus_section({**globals(), **locals()})
 # ------------------------------------------------------------------
 # Prognostic model
 
-qspr_show_prognostic_training_section(
+prognostic_model_core.qspr_show_prognostic_training_section(
     data=data,
     model_name=model_name,
     target_col=target_col,
