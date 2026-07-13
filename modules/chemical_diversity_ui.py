@@ -7,8 +7,14 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
-import plotly.graph_objects as go
-import plotly.express as px
+try:
+    import plotly.graph_objects as go
+    import plotly.express as px
+    PLOTLY_AVAILABLE = True
+except Exception:
+    go = None
+    px = None
+    PLOTLY_AVAILABLE = False
 from modules.i18n import t
 from modules.chemical_diversity_core import (
     Butina,
@@ -1299,6 +1305,12 @@ def _localized_diversity_reasons(reasons):
 def render_chemical_diversity_section(data, smiles_col, label_col=None, target_col=None, descriptor_df=None, expanded=False):
     """Render pre-modeling chemical diversity diagnostics."""
     if not isinstance(data, pd.DataFrame) or data.empty or (not smiles_col) or (smiles_col not in data.columns):
+        return
+    if not PLOTLY_AVAILABLE:
+        st.warning(
+            "Chemical diversity diagnostics require Plotly. "
+            "Install plotly or use requirements-online.txt/requirements-local.txt."
+        )
         return
     if not expanded:
         with st.expander(t('chemical_diversity.text_c45333a0db'), expanded=False):
