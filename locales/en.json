@@ -874,7 +874,7 @@
     "warning_empty_table": "Calculation completed, but descriptor table is empty. Check for active spectra of the selected type, phase, source, and grid range.",
     "allowed_phases_title": "Allowed phases / sample states",
     "allowed_phases_caption": "This selection is also applied to the ready spectral-descriptor file: only rows with selected phases are used.",
-    "admin_ready_cache_title": "#### Admin: ready spectral descriptors for GitHub",
+    "admin_ready_cache_title": "#### Local version: ready spectral descriptors for GitHub",
     "admin_ready_cache_caption": "Calculates descriptors for all locally available processed spectra of the selected type and saves a CSV cache in the project folder. SVD is excluded because it depends on the user-specific dataset.",
     "admin_skip_existing_label": "Skip InChIKey values already present in the descriptor bank file",
     "admin_skip_existing_help": "If enabled, the program first reads the existing CSV bank of spectral descriptors and calculates only spectra processed files whose InChIKey is not yet present for the current descriptor settings.",
@@ -1311,7 +1311,8 @@
     "select": "Select operating mode",
     "qspr": "QSPR modelling of molecular properties",
     "prediction": "Predict property for new compounds",
-    "prediction_admin_only": "The \"Predict property for new compounds\" mode is available only to the administrator."
+    "prediction_admin_only": "The \"Predict property for new compounds\" mode is available only in the local version.",
+    "local_version_only": "This function is available only in the local Augur QSPR version."
   },
   "header": {
     "qspr": "🧪 QSPR (Quantitative Structure‑Property Relationship): building mathematical models to predict molecular characteristics from structural descriptors without synthesis."
@@ -3746,9 +3747,9 @@
     "random_seed": "Seed"
   },
   "admin": {
-    "only_notice": "This function is available only to the administrator.",
-    "title": "Administrator",
-    "online_caption": "Online mode runs as a regular user. Local mode is administrator by default."
+    "only_notice": "This function is available only in the local Augur QSPR version.",
+    "title": "Local version",
+    "online_caption": "The online version runs in a restricted mode. The local version enables the full toolset."
   },
   "descriptor_lists": {
     "padel_fallback_warning": "The full PaDEL catalog is unavailable. A fallback limited set of unique PaDEL descriptors is used."

@@ -42,6 +42,26 @@ st.set_page_config(
 )
 
 
+def _patch_streamlit_width_stretch_compat():
+    """Streamlit 1.36 does not accept width='stretch'; map it to use_container_width."""
+    for attr_name in ("dataframe", "data_editor"):
+        original = getattr(st, attr_name, None)
+        if original is None or getattr(original, "_augur_width_patch", False):
+            continue
+
+        def wrapper(*args, _original=original, **kwargs):
+            if kwargs.get("width") == "stretch":
+                kwargs.pop("width", None)
+                kwargs.setdefault("use_container_width", True)
+            return _original(*args, **kwargs)
+
+        wrapper._augur_width_patch = True
+        setattr(st, attr_name, wrapper)
+
+
+_patch_streamlit_width_stretch_compat()
+
+
 def gettext(key, **kwargs):
     return t(key, **kwargs)
 
@@ -1342,6 +1362,27 @@ st.markdown(
     .stTabs [role="tab"] {
         font-size: 22px !important;
         font-weight: 600 !important;
+    }
+
+    section[data-testid="stSidebar"] {
+        min-width: 320px !important;
+        width: 320px !important;
+    }
+
+    section[data-testid="stSidebar"] > div {
+        min-width: 320px !important;
+        width: 320px !important;
+    }
+
+    section[data-testid="stSidebar"] * {
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        word-break: normal !important;
+    }
+
+    section[data-testid="stSidebar"] button {
+        min-height: auto !important;
+        height: auto !important;
     }
 
     .tool-badge {
@@ -5070,7 +5111,7 @@ def log_access_control(feature):
 
 def show_admin_only_notice(feature):
     log_access_control(feature)
-    st.info(t("admin.only_notice"))
+    st.info(t("mode.local_version_only"))
 
 
 def render_admin_login_controls():
@@ -5079,10 +5120,7 @@ def render_admin_login_controls():
         return
 
     st.session_state.admin_authenticated = False
-    with st.sidebar.expander(t("admin.title"), expanded=False):
-        st.info(ONLINE_LOCK_MESSAGE)
-        st.caption(t("admin.online_caption"))
-        return
+    return
 
 
 def show_compact_matplotlib_plot(fig, width=850, dpi=140):

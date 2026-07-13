@@ -32,6 +32,10 @@ def _humanize_key(key: str) -> str:
     leaf = key.rsplit('.', 1)[-1]
     return leaf.replace('_', ' ').strip().capitalize() or key
 
+
+def _is_corrupted_translation(value: Any) -> bool:
+    return isinstance(value, str) and "???" in value
+
 def load_language(lang: str) -> Dict[str, Any]:
     """Загружает JSON-файл с переводами для языка с обработкой ошибок."""
     file_path = os.path.join(LOCALES_DIR, f"{lang}.json")
@@ -64,8 +68,16 @@ def gettext(key: str, **kwargs) -> str:
     """Возвращает перевод по ключу с подстановкой параметров."""
     data = load_language(CURRENT_LANG)
     value = _lookup(data, key)
+    if _is_corrupted_translation(value):
+        value = None
+        if CURRENT_LANG != 'en':
+            value = _lookup(load_language('en'), key)
     if value is None and CURRENT_LANG != 'ru':
         value = _lookup(load_language('ru'), key)
+        if _is_corrupted_translation(value):
+            value = _lookup(load_language('en'), key)
+    if _is_corrupted_translation(value):
+        value = _lookup(load_language('en'), key)
     if value is None:
         return _humanize_key(key)
     if isinstance(value, str):
