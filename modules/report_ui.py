@@ -125,10 +125,10 @@ def render_report_section(context):
     st.markdown(t('report.description'))
     analysis_parameters_df = pd.DataFrame(current_analysis_parameters_table(st.session_state))
     if not analysis_parameters_df.empty:
-        with st.expander("Параметры текущего анализа", expanded=False):
+        with st.expander(t("report.analysis_parameters_title"), expanded=False):
             st.dataframe(analysis_parameters_df, width="stretch", hide_index=True)
             st.download_button(
-                "Скачать параметры анализа CSV",
+                t("report.download_analysis_parameters_csv"),
                 analysis_parameters_df.to_csv(index=False).encode("utf-8-sig"),
                 "analysis_parameters.csv",
                 "text/csv",
@@ -239,44 +239,44 @@ def render_report_section(context):
     
             if holdout_ready_for_report:
                 report_include_holdout = st.checkbox(
-                    "Hold-out",
+                    t("report.include_holdout"),
                     value=True,
                     key="report_include_holdout"
                 )
             else:
                 report_include_holdout = False
-                unavailable_report_sections.append("Hold-out")
+                unavailable_report_sections.append(t("report.include_holdout"))
     
         with report_col_2:
             if kfold_ready_for_report:
                 report_include_kfold = st.checkbox(
-                    "K-Fold",
+                    t("report.include_kfold"),
                     value=True,
                     key="report_include_kfold"
                 )
             else:
                 report_include_kfold = False
-                unavailable_report_sections.append("K-Fold")
+                unavailable_report_sections.append(t("report.include_kfold"))
     
             if loo_ready_for_report:
                 report_include_loo = st.checkbox(
-                    "Leave-One-Out",
+                    t("report.include_loo"),
                     value=True,
                     key="report_include_loo"
                 )
             else:
                 report_include_loo = False
-                unavailable_report_sections.append("Leave-One-Out")
+                unavailable_report_sections.append(t("report.include_loo"))
     
             if current_model_ready_for_report:
                 report_include_ad = st.checkbox(
-                    "Applicability Domain",
+                    t("report.include_applicability_domain"),
                     value=True,
                     key="report_include_ad"
                 )
             else:
                 report_include_ad = False
-                unavailable_report_sections.append("Applicability Domain")
+                unavailable_report_sections.append(t("report.include_applicability_domain"))
     
             if current_model_ready_for_report:
                 report_include_error_outliers = st.checkbox(
@@ -301,7 +301,7 @@ def render_report_section(context):
         with report_col_3:
             if saod_ready_for_report:
                 report_include_saod = st.checkbox(
-                    "*SAOD*",
+                    t("report.include_saod"),
                     value=True,
                     key="report_include_saod"
                 )

@@ -322,7 +322,7 @@ def qspr_apply_context_selectors(df, context_cols, key_prefix):
     if not context_cols:
         return filtered, selected
 
-    st.caption("Экспериментальный контекст")
+    st.caption(t("common.experimental_context"))
     selector_cols = st.columns(2)
     for i, (field, col) in enumerate(context_cols.items()):
         values = (
@@ -1209,8 +1209,8 @@ except Exception:
     shap_available = False
 
 if translation_key_issues:
-    with st.sidebar.expander("⚠️ i18n", expanded=False):
-        st.warning("Обнаружены отсутствующие ключи локализации.")
+    with st.sidebar.expander(t("i18n.expander_title"), expanded=False):
+        st.warning(t("i18n.missing_keys_warning"))
         for issue_lang, issue_keys in translation_key_issues.items():
             st.code(
                 f"{issue_lang}: " + "\n".join(issue_keys),
@@ -1459,7 +1459,7 @@ def show_molecule_viewer(data, target_col, smiles_col="SMILES"):
             legends.append(" | ".join(legend_parts))
 
         if mols and Draw is None:
-            st.warning("Молекулярные изображения недоступны: RDKit Draw не импортирован.")
+            st.warning(t("molecule_grid.rdkit_draw_missing"))
         elif mols:
             try:
                 img = Draw.MolsToGridImage(
@@ -1680,7 +1680,7 @@ def show_molecule_grid_from_table(
                 legends.append(" | ".join(legend_parts))
 
         if mols and Draw is None:
-            st.warning("Молекулярные изображения недоступны: RDKit Draw не импортирован.")
+            st.warning(t("molecule_grid.rdkit_draw_missing"))
         elif mols:
             try:
                 img = Draw.MolsToGridImage(
@@ -2268,7 +2268,7 @@ def show_saod_molecule_grid(
             legends.append("  ".join(legend_parts))
 
         if mols and Draw is None:
-            st.warning("Молекулярные изображения недоступны: RDKit Draw не импортирован.")
+            st.warning(t("molecule_grid.rdkit_draw_missing"))
         elif mols:
             try:
                 img = Draw.MolsToGridImage(
@@ -3356,7 +3356,7 @@ def qspr_show_data_leakage_warning(leakage_df, title=t('data_leakage.warning_tit
     if qspr_leakage_has_blockers(leakage_df):
         st.warning(t('data_leakage.warning_text'))
     else:
-        st.info("High correlation alone is reported as a strong predictor, not as confirmed leakage.")
+        st.info(t("data_leakage.strong_predictor_info"))
 
     with st.expander(title, expanded=True):
         st.dataframe(
@@ -4279,7 +4279,7 @@ def render_spectra_search_results_if_available():
 
     status = st.session_state.get("spectra_search_status", "")
     if status == "stopped_by_user":
-        st.info("Поиск спектров остановлен пользователем. Показаны результаты уже выполненной работы.")
+        st.info(t("spectra.search_stopped_by_user"))
 
     if is_admin() and st.button(t('spectra.clear_results_button'), key="clear_spectra_search_results_global"):
         del st.session_state.spectra_search_results
@@ -4423,7 +4423,7 @@ def render_spectra_search_results_if_available():
         errors="ignore",
     ).pipe(qspr_core.qspr_csv_download_bytes)
     st.download_button(
-        "Скачать текущие результаты CSV",
+        t("spectra.download_current_results_csv"),
         csv_search,
         "spectra_search_results_current.csv",
         "text/csv",
@@ -5005,7 +5005,7 @@ def show_logs():
                 st.caption(log)
 
         st.download_button(
-            "Скачать log.txt",
+            t("logs.download_log_txt"),
             build_log_txt().encode("utf-8"),
             "log.txt",
             "text/plain",
@@ -5052,7 +5052,7 @@ def log_access_control(feature):
 
 def show_admin_only_notice(feature):
     log_access_control(feature)
-    st.info("Эта функция доступна только администратору.")
+    st.info(t("admin.only_notice"))
 
 
 def render_admin_login_controls():
@@ -5061,9 +5061,9 @@ def render_admin_login_controls():
         return
 
     st.session_state.admin_authenticated = False
-    with st.sidebar.expander("Администратор", expanded=False):
+    with st.sidebar.expander(t("admin.title"), expanded=False):
         st.info(ONLINE_LOCK_MESSAGE)
-        st.caption("Online mode runs as a regular user. Local mode is admin by default.")
+        st.caption(t("admin.online_caption"))
         return
 
 
@@ -7717,12 +7717,12 @@ def manage_data_bank():
             st.rerun()
 
     policy_labels = {
-        "overwrite_new": "Overwrite with uploaded values",
-        "keep_existing": "Keep existing bank values",
-        "average_numeric": "Average numeric repeated measurements",
+        "overwrite_new": t("data_bank.policy_overwrite_new"),
+        "keep_existing": t("data_bank.policy_keep_existing"),
+        "average_numeric": t("data_bank.policy_average_numeric"),
     }
     duplicate_policy_label = st.selectbox(
-        "Duplicate/update policy",
+        t("data_bank.duplicate_policy_label"),
         list(policy_labels.values()),
         index=0,
         key="data_bank_duplicate_policy_label",
@@ -7730,7 +7730,7 @@ def manage_data_bank():
     duplicate_policy = {
         value: key for key, value in policy_labels.items()
     }.get(duplicate_policy_label, DATA_BANK_DUPLICATE_POLICY_DEFAULT)
-    st.caption(f"Active data-bank duplicate policy: {duplicate_policy}")
+    st.caption(t("data_bank.active_duplicate_policy", policy=duplicate_policy))
 
     uploaded_bank = st.file_uploader(
         t('data_bank.upload_prompt'),
@@ -7749,7 +7749,7 @@ def manage_data_bank():
             new_data = new_data[new_data["SMILES"] != ""]
             exact_duplicate_count = int(new_data.duplicated(keep="first").sum())
             if exact_duplicate_count:
-                st.info(f"Exact duplicate rows in uploaded bank file: {exact_duplicate_count}.")
+                st.info(t("data_bank.exact_duplicate_rows", count=exact_duplicate_count))
 
             duplicate_smiles_mask = new_data["SMILES"].duplicated(keep=False)
             if bool(duplicate_smiles_mask.any()):
@@ -8565,7 +8565,7 @@ with st.sidebar:
             ))
             if st.session_state.desc_lists.get("padel_catalog_status") == "fallback_partial":
                 st.warning(
-                    "Full PaDEL catalog is unavailable. Fallback limited unique PaDEL set is used."
+                    t("descriptor_lists.padel_fallback_warning")
                 )
         else:
             st.warning(t('sidebar.lists_not_created'))
@@ -9133,10 +9133,12 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
         duplicate_policy_report = st.session_state.get("standardization_duplicate_policy_report")
         if isinstance(duplicate_policy_report, pd.DataFrame) and not duplicate_policy_report.empty:
             st.caption(
-                "Последняя примененная политика дубликатов: "
-                f"{st.session_state.get('standardization_duplicate_policy', 'оставить все измерения')}"
+                t(
+                    "standardization_ui.last_duplicate_policy",
+                    policy=st.session_state.get("standardization_duplicate_policy", "keep_all"),
+                )
             )
-            with st.expander("Отчет по дубликатам после стандартизации", expanded=False):
+            with st.expander(t("standardization_ui.duplicate_report_expander"), expanded=False):
                 st.dataframe(
                     duplicate_policy_report.head(300),
                     width="stretch",
@@ -9153,20 +9155,28 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
             key="download_standardized_molecules"
         )
 
+        duplicate_policy_options = [
+            "keep_all",
+            "exact",
+            "mean",
+            "median",
+            "assay",
+        ]
+        duplicate_policy_labels = {
+            "keep_all": t("standardization_ui.duplicate_policy_keep_all"),
+            "exact": t("standardization_ui.duplicate_policy_drop_exact"),
+            "mean": t("standardization_ui.duplicate_policy_mean"),
+            "median": t("standardization_ui.duplicate_policy_median"),
+            "assay": t("standardization_ui.duplicate_policy_assay_context"),
+        }
         duplicate_policy = st.selectbox(
-            "Политика дубликатов после стандартизации",
-            [
-                "оставить все измерения",
-                "удалить только точные дубликаты",
-                "усреднить",
-                "оставить медиану",
-                "разделить по assay/context",
-            ],
+            t("standardization_ui.duplicate_policy_label"),
+            duplicate_policy_options,
             index=0,
             key="standardization_duplicate_policy",
+            format_func=lambda code: duplicate_policy_labels.get(code, code),
             help=(
-                "Дубликаты группируются по InChIKey только после стандартизации. "
-                "Режим assay/context не объединяет разные экспериментальные контексты."
+                t("standardization_ui.duplicate_policy_help")
             ),
         )
 
@@ -10668,7 +10678,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             f"{group_result.get('failure_stage', 'unknown stage')}: "
                             + "; ".join(map(str, group_result.get("errors", [])))
                         )
-                st.subheader("SAOD по экспериментальным группам")
+                st.subheader(t("saod_ui.experimental_groups_subheader"))
                 group_summary_rows = []
                 for group_name, group_result in grouped_results.items():
                     processed_group = group_result.get("processed", pd.DataFrame())
@@ -10693,7 +10703,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                     st.dataframe(pd.DataFrame(group_summary_rows), width="stretch", hide_index=True)
 
                 for group_name, group_result in grouped_results.items():
-                    with st.expander(f"Группа: {group_name}", expanded=False):
+                    with st.expander(t("saod_ui.group_expander", group=group_name), expanded=False):
                         for err in group_result.get("errors", []):
                             st.error(err)
                         for warn in group_result.get("warnings", []):
@@ -10709,20 +10719,22 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                                 .reset_index(name="count")
                                 .sort_values("count", ascending=False)
                             )
-                            st.markdown("Причины исключения")
+                            st.markdown(t("saod_ui.exclusion_reasons"))
                             st.dataframe(reason_summary, width="stretch", hide_index=True)
-                            with st.expander("Исключённые вещества", expanded=False):
+                            with st.expander(t("saod_ui.excluded_compounds"), expanded=False):
                                 st.dataframe(group_exclusions, width="stretch", hide_index=True)
                 st.stop()
 
             if saod2_result_data.get("status") == "failed":
                 st.error(
-                    "SAOD calculation failed at "
-                    f"{saod2_result_data.get('failure_stage', 'unknown stage')}: "
-                    + "; ".join(map(str, saod2_result_data.get("errors", [])))
+                    t(
+                        "saod_ui.calculation_failed",
+                        stage=saod2_result_data.get("failure_stage", "unknown stage"),
+                        errors="; ".join(map(str, saod2_result_data.get("errors", []))),
+                    )
                 )
             elif saod2_result_data.get("status") == "success_no_series":
-                st.info("SAOD completed successfully, but no supported series or rules were found.")
+                st.info(t("saod_ui.success_no_series"))
 
             if saod2_result_data["errors"]:
                 for err in saod2_result_data["errors"]:
@@ -10750,10 +10762,10 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         zip(analysis_coverage.get("metric", []), analysis_coverage.get("value", []))
                     )
                     cov_cols = st.columns(3)
-                    cov_cols[0].metric("Загружено", int(coverage_lookup.get("loaded", 0) or 0))
-                    cov_cols[1].metric("Проанализировано", int(coverage_lookup.get("analyzed", 0) or 0))
-                    cov_cols[2].metric("Исключено", int(coverage_lookup.get("excluded", 0) or 0))
-                    with st.expander("Статусы включения в SAOD", expanded=False):
+                    cov_cols[0].metric(t("saod_ui.metric_loaded"), int(coverage_lookup.get("loaded", 0) or 0))
+                    cov_cols[1].metric(t("saod_ui.metric_analyzed"), int(coverage_lookup.get("analyzed", 0) or 0))
+                    cov_cols[2].metric(t("saod_ui.metric_excluded"), int(coverage_lookup.get("excluded", 0) or 0))
+                    with st.expander(t("saod_ui.inclusion_statuses"), expanded=False):
                         st.dataframe(analysis_coverage, width="stretch", hide_index=True)
                 if isinstance(exclusion_table, pd.DataFrame) and not exclusion_table.empty:
                     reason_summary = (
@@ -10762,19 +10774,18 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         .reset_index(name="count")
                         .sort_values("count", ascending=False)
                     )
-                    st.markdown("Причины исключения из SAOD")
+                    st.markdown(t("saod_ui.exclusion_reasons_from_saod"))
                     st.dataframe(reason_summary, width="stretch", hide_index=True)
-                    with st.expander("Исключённые вещества и причины", expanded=False):
+                    with st.expander(t("saod_ui.excluded_compounds_and_reasons"), expanded=False):
                         st.dataframe(exclusion_table, width="stretch", hide_index=True)
-                with st.expander("Калибровка SAOD на искусственно внесённых ошибках", expanded=False):
+                with st.expander(t("saod_ui.artificial_calibration_title"), expanded=False):
                     st.caption(
-                        "Экспериментальный стресс-тест: в копию текущего датасета вносятся контролируемые ошибки, "
-                        "после чего SAOD запускается заново и сравнивается с известными метками вмешательства."
+                        t("saod_ui.artificial_calibration_caption")
                     )
                     cal_cols = st.columns(4)
                     with cal_cols[0]:
                         injection_fraction = st.slider(
-                            "Доля веществ",
+                            t("saod_ui.injection_fraction_label"),
                             min_value=0.01,
                             max_value=0.30,
                             value=0.05,
@@ -10783,7 +10794,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         )
                     with cal_cols[1]:
                         injection_type_label = st.selectbox(
-                            "Тип вмешательства",
+                            t("saod_ui.injection_type_label"),
                             [
                                 "изменить свойство",
                                 "поменять значения местами",
@@ -10794,14 +10805,14 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         )
                     with cal_cols[2]:
                         injection_percent = st.selectbox(
-                            "Изменение свойства",
+                            t("saod_ui.injection_percent_label"),
                             [10, 20, 50],
                             index=1,
                             key="saod2_injection_percent",
                         )
                     with cal_cols[3]:
                         injection_seed = st.number_input(
-                            "Seed",
+                            t("common.random_seed"),
                             min_value=0,
                             max_value=999999,
                             value=42,
@@ -10814,8 +10825,8 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         "заменить SMILES": "replace_smiles",
                         "добавить конфликтующий дубликат": "conflicting_duplicate",
                     }[injection_type_label]
-                    if st.button("Запустить калибровку SAOD", key="run_saod2_artificial_error_calibration"):
-                        with st.spinner("SAOD-калибровка на искусственных ошибках..."):
+                    if st.button(t("saod_ui.run_calibration_button"), key="run_saod2_artificial_error_calibration"):
+                        with st.spinner(t("saod_ui.calibration_spinner")):
                             cal_source_df, cal_property_col, _ = qspr_transform_activity_values(
                                 saod2_df,
                                 saod2_property_col,
@@ -10857,10 +10868,10 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         metrics_df = calibration_payload.get("metrics", pd.DataFrame())
                         labels_df = calibration_payload.get("labels", pd.DataFrame())
                         if isinstance(metrics_df, pd.DataFrame) and not metrics_df.empty:
-                            st.markdown("**Метрики обнаружения**")
+                            st.markdown(t("saod_ui.calibration_detection_metrics"))
                             st.dataframe(metrics_df, width="stretch", hide_index=True)
                         if isinstance(labels_df, pd.DataFrame) and not labels_df.empty:
-                            st.markdown("**Искусственно изменённые записи**")
+                            st.markdown(t("saod_ui.calibration_modified_records"))
                             st.dataframe(labels_df, width="stretch", hide_index=True)
 
                 st.subheader(t('saod_ui.review_subheader'))
@@ -11511,8 +11522,7 @@ def render_spectra_descriptor_workbench():
 
     else:
         st.info(
-            "Спектральная база Augur подключается автоматически. "
-            "Импорт, переиндексация и ручное пополнение базы скрыты в обычном режиме."
+            t("spectra.auto_bank_info")
         )
 
     spectra_index = spectra_core_module.spectra_load_index()
@@ -11588,14 +11598,10 @@ def render_spectra_descriptor_workbench():
         ))
 
         if not is_admin():
-            st.subheader("Спектральная база Augur")
-            status_text = "подключена" if len(idx_active) > 0 else "не подключена"
+            st.subheader(t("spectra.bank_subheader"))
+            status_text = t("spectra.connected") if len(idx_active) > 0 else t("spectra.not_connected")
             st.markdown(
-                "Доступно спектров: "
-                f"**{len(idx_active)}**\n\n"
-                f"Статус: **{status_text}**\n\n"
-                "База используется автоматически для проверки ваших SMILES. "
-                "Служебное пополнение, переиндексация и внешние загрузки не показываются."
+                t("spectra.user_bank_status_markdown", count=len(idx_active), status=status_text)
             )
 
         # ------------------------------------------------------------
@@ -11685,21 +11691,21 @@ def render_spectra_descriptor_workbench():
                 col_phase_1, col_phase_2, col_phase_3, col_phase_4 = st.columns(4)
 
                 with col_phase_1:
-                    st.metric("Gas", phase_metric_values.get("gas", 0))
+                    st.metric(t("spectra.phase_gas"), phase_metric_values.get("gas", 0))
 
                 with col_phase_2:
-                    st.metric("Liquid", phase_metric_values.get("liquid", 0))
+                    st.metric(t("spectra.phase_liquid"), phase_metric_values.get("liquid", 0))
 
                 with col_phase_3:
                     st.metric(
-                        "Solution / Film",
+                        t("spectra.phase_solution_film"),
                         phase_metric_values.get("solution", 0)
                         + phase_metric_values.get("film", 0)
                     )
 
                 with col_phase_4:
                     st.metric(
-                        "Solid / KBr / Nujol",
+                        t("spectra.phase_solid_kbr_nujol"),
                         (
                             phase_metric_values.get("solid", 0)
                             + phase_metric_values.get("kbr", 0)
@@ -12716,23 +12722,23 @@ def render_spectra_descriptor_workbench():
         )
 
         spectra_search_workers = st.number_input(
-            "Параллельных задач поиска",
+            t("spectra.search_workers_label"),
             min_value=1,
             max_value=8,
             value=4,
             step=1,
             key="spectra_search_workers",
-            help="Для локальной версии: больше потоков быстрее обрабатывают большой список, но сильнее нагружают внешние источники."
+            help=t("spectra.search_workers_help")
         )
 
         spectra_source_timeout_seconds = st.number_input(
-            "Таймаут внешнего источника, сек",
+            t("spectra.source_timeout_label"),
             min_value=3.0,
             max_value=60.0,
             value=10.0,
             step=1.0,
             key="spectra_source_timeout_seconds",
-            help="Быстрый режим: 8-12 сек. Полный режим: 20-40 сек. Короткий таймаут ускоряет поиск, но может пропустить медленные ответы."
+            help=t("spectra.source_timeout_help")
         )
 
         if st.button(t('spectra.stop_search_button'), key="stop_spectra_search"):
@@ -14029,8 +14035,7 @@ def render_spectra_descriptor_workbench():
 
     else:
         st.info(
-            "Используется автоматически подключенная спектральная база Augur. "
-            "Внешний поиск, управление cache и очистка служебных результатов скрыты в обычном режиме."
+            t("spectra.auto_bank_limited_info")
         )
 
     st.subheader(t('spectra_desc.subheader'))
@@ -14132,10 +14137,9 @@ def render_spectra_descriptor_workbench():
     ]
 
     if spectral_phase_mode in ["manual", "any"]:
-        st.markdown("Разрешённые фазы / состояния образца")
+        st.markdown(t("spectra_desc.allowed_phases_title"))
         st.caption(
-            "Этот выбор применяется и к готовому файлу спектральных дескрипторов: "
-            "будут взяты только строки с отмеченными фазами."
+            t("spectra_desc.allowed_phases_caption")
         )
 
         allowed_phases_for_desc = []
@@ -14597,51 +14601,42 @@ def render_spectra_descriptor_workbench():
     run_admin_cache_all_spectra = False
 
     if is_admin():
-        st.markdown("#### Админ: готовые спектральные дескрипторы для GitHub")
+        st.markdown(t("spectra_desc.admin_ready_cache_title"))
         st.caption(
-            "Рассчитывает дескрипторы для всех локально имеющихся processed-спектров "
-            "выбранного типа и сохраняет CSV-кэш в папке проекта. SVD сюда не входит, "
-            "потому что SVD зависит от конкретного датасета пользователя."
+            t("spectra_desc.admin_ready_cache_caption")
         )
         admin_skip_existing_inchikey = st.checkbox(
-            "Пропускать InChIKey, уже имеющиеся в файле-банке дескрипторов",
+            t("spectra_desc.admin_skip_existing_label"),
             value=True,
             key=f"admin_skip_existing_inchikey_{descriptor_spectrum_type.lower()}",
-            help=(
-                "Если включено, программа сначала читает существующий CSV-банк "
-                "спектральных дескрипторов и считает только те spectra processed-файлы, "
-                "чьего InChIKey ещё нет в банке при текущих настройках дескрипторов."
-            )
+            help=t("spectra_desc.admin_skip_existing_help")
         )
         admin_autosave_every = st.number_input(
-            "Автосохранять файл-банк каждые N новых спектров",
+            t("spectra_desc.admin_autosave_every_label"),
             min_value=1,
             max_value=100,
             value=10,
             step=1,
             key=f"admin_descriptor_cache_autosave_every_{descriptor_spectrum_type.lower()}",
-            help="После каждого такого количества новых рассчитанных спектров CSV в корне проекта будет сразу обновлён."
+            help=t("spectra_desc.admin_autosave_every_help")
         )
         run_admin_cache_all_spectra = st.button(
-            f"Рассчитать готовые {descriptor_spectrum_type}-дескрипторы для всех имеющихся спектров",
+            t("spectra_desc.admin_cache_all_button", spectrum_type=descriptor_spectrum_type),
             key=f"admin_cache_all_spectra_{descriptor_spectrum_type.lower()}",
             type="secondary"
         )
 
     run_ready_spectral_descriptors = st.button(
-        "Использовать готовые спектральные дескрипторы",
+        t("spectra_desc.use_ready_descriptors_button"),
         type="primary",
         key=f"use_ready_spectral_descriptors_{descriptor_spectrum_label.lower().replace(' ', '_').replace('+', 'plus')}",
         disabled=qspr_is_online_mode(),
-        help=(
-            "Берёт готовую таблицу спектральных дескрипторов из локального кэша "
-            "или из GitHub raw URL, без скачивания файлов спектров."
-        )
+        help=t("spectra_desc.use_ready_descriptors_help")
     )
 
     if run_admin_cache_all_spectra:
         if not any([use_grid_desc, use_binary_fp, use_binned_numeric]):
-            st.error("Для готового кэша выберите хотя бы GRID, BIN или BAND. SVD отдельно в кэш не сохраняется.")
+            st.error(t("spectra_desc.ready_cache_no_grid_bin_band"))
         elif wn_min >= wn_max:
             st.error(t('spectra_desc.error_axis_min_max'))
         else:
@@ -14693,7 +14688,7 @@ def render_spectra_descriptor_workbench():
                 )
 
             admin_progress_bar.progress(1.0)
-            admin_progress_status.success("Подготовка готовых спектральных дескрипторов завершена.")
+            admin_progress_status.success(t("spectra_desc.ready_cache_finished"))
 
             st.session_state.spectral_admin_cache_report = cache_report
 
@@ -14945,9 +14940,9 @@ def render_spectra_descriptor_workbench():
 
                 progress_bar.progress(1.0)
                 if use_ready_descriptor_cache_only:
-                    progress_status.success("Готовые спектральные дескрипторы подключены.")
+                    progress_status.success(t("spectra_desc.ready_descriptors_connected"))
                 else:
-                    progress_status.success("Загрузка спектров и расчёт спектральных дескрипторов завершены.")
+                    progress_status.success(t("spectra_desc.spectra_loading_finished"))
 
                 if add_sparring_columns and descriptors_df is not None and not descriptors_df.empty:
                     molwt_rows = []
@@ -15040,10 +15035,10 @@ def render_spectra_descriptor_workbench():
             col_cache_1, col_cache_2 = st.columns(2)
 
             with col_cache_1:
-                st.metric("Готовые дескрипторы найдены", rep.get("descriptor_cache_hits", 0))
+                st.metric(t("spectra_report.ready_descriptors_found"), rep.get("descriptor_cache_hits", 0))
 
             with col_cache_2:
-                st.metric("Готовые дескрипторы не найдены", rep.get("descriptor_cache_misses", 0))
+                st.metric(t("spectra_report.ready_descriptors_missing"), rep.get("descriptor_cache_misses", 0))
 
         if rep.get("combined_intersection_only"):
             partial_reports = rep.get("partial_reports", {})
@@ -15057,20 +15052,17 @@ def render_spectra_descriptor_workbench():
 
             detail_text = "; ".join(detail_parts)
             st.info(
-                "Режим IR + Mass: в итоговую таблицу включены только вещества, "
-                "для которых найдены оба набора готовых дескрипторов."
-                + (f" Найдено по отдельности: {detail_text}." if detail_text else "")
+                t("spectra_report.ir_mass_intersection_info", detail=detail_text)
             )
 
         bank_status = rep.get("spectra_bank_status", {})
 
         if isinstance(bank_status, dict) and rep.get("with_spectrum", 0) == 0:
             st.warning(
-                "Спектральные дескрипторы не созданы, потому что для текущих веществ "
-                "не удалось получить подходящие активные спектры из базы."
+                t("spectra_report.no_active_spectra_for_descriptors")
             )
 
-            with st.expander("Диагностика подключения спектральной базы", expanded=True):
+            with st.expander(t("spectra_report.bank_diagnostics_title"), expanded=True):
                 diagnostic_rows = [
                     {
                         "Параметр": "spectra_index.csv найден",
@@ -15178,29 +15170,19 @@ def render_spectra_descriptor_workbench():
 
                 if not bank_status.get("index_exists") or int(bank_status.get("index_rows", 0) or 0) == 0:
                     st.info(
-                        "На Streamlit Cloud не найден рабочий `spectra_index.csv`. "
-                        "Добавьте в Secrets `AUGUR_SPECTRA_INDEX_FILE_ID` или "
-                        "`AUGUR_SPECTRA_INDEX_URL` для файла `spectra_index.csv`."
+                        t("spectra_report.cloud_index_missing_info")
                     )
                 elif not bank_status.get("manifest_exists") or int(bank_status.get("manifest_rows", 0) or 0) == 0:
                     st.info(
-                        "Индекс найден, но нет `spectra_manifest.csv`. "
-                        "Без manifest приложение видит записи спектров, но не знает, "
-                        "какой файл Google Drive скачать для конкретного спектра."
+                        t("spectra_report.manifest_missing_info")
                     )
                 elif int(bank_status.get("manifest_processed_rows", 0) or 0) == 0:
                     st.info(
-                        "`spectra_manifest.csv` найден, но в нём нет processed-файлов спектров. "
-                        "Добавьте в Secrets `AUGUR_SPECTRA_BANK_FOLDER_ID` и "
-                        "`AUGUR_GOOGLE_DRIVE_API_KEY`, чтобы приложение само обошло "
-                        "Google Drive-папку и построило manifest по файлам `IR/processed` "
-                        "и `Mass/processed`."
+                        t("spectra_report.manifest_no_processed_info")
                     )
                 else:
                     st.info(
-                        "Индекс и manifest найдены. Если совпадений всё равно 0, "
-                        "проверьте выбранный тип спектра, режим фазы, источники, "
-                        "экспериментальность и наличие этих InChIKey/SMILES в индексе."
+                        t("spectra_report.bank_found_no_matches_info")
                     )
 
         if rep.get("used_phases"):
@@ -16222,8 +16204,7 @@ if (
                                     < int(join_report.get("molecular_rows_before_xtb_join", 0) or 0)
                                 ):
                                     st.warning(
-                                        "LEFT merge kept all molecular rows, but xTB was missing for some compounds; "
-                                        "missing xTB descriptor values will be imputed in the final matrix."
+                                        t("descriptor_calc.xtb_left_join_missing_warning")
                                     )
                                 source_label = "molecular_plus_xtb"
                             else:
@@ -16851,7 +16832,7 @@ if (
                             st.warning(t('descriptor_calc.spectral_not_found_warning'))
 
                             if bundle is None:
-                                st.error("bundle is None – расчёт дескрипторов не удался!")
+                                st.error(t("descriptor_calc.bundle_none_error"))
                                 st.stop()
 
                             store_descriptor_bundle(bundle, source_label)
@@ -16896,7 +16877,7 @@ if (
                     else:
                         # --- ОСНОВНОЙ ПУТЬ (без спектральных дескрипторов) ---
                         if bundle is None:
-                            st.error("Ошибка: bundle is None – расчёт дескрипторов не удался!")
+                            st.error(t("descriptor_calc.bundle_none_error"))
                             st.stop()
 
 
@@ -16918,7 +16899,7 @@ if (
 
                         # Проверка, что флаг установлен (дополнительная защита)
                         if not st.session_state.desc_calculated:
-                            st.error("Не удалось установить флаг desc_calculated. Проверьте функцию store_descriptor_bundle.")
+                            st.error(t("descriptor_calc.desc_calculated_flag_error"))
                             st.stop()
 
                     # ---- ОБЩИЙ КОД (выполняется в обеих ветках) ----

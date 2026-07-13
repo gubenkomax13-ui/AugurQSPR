@@ -94,7 +94,7 @@ def render_consensus_section(context):
             key="consensus_min_r2"
         )
         consensus_method = st.selectbox(
-            "Consensus aggregation",
+            t("consensus.aggregation_label"),
             [
                 "equal_mean",
                 "weighted_cv_rmse",
@@ -103,12 +103,16 @@ def render_consensus_section(context):
                 "trimmed_mean",
             ],
             index=0,
+            format_func=lambda value: {
+                "equal_mean": t("consensus.aggregation_equal_mean"),
+                "weighted_cv_rmse": t("consensus.aggregation_weighted_cv_rmse"),
+                "weighted_holdout_rmse": t("consensus.aggregation_weighted_holdout_rmse"),
+                "median": t("consensus.aggregation_median"),
+                "trimmed_mean": t("consensus.aggregation_trimmed_mean"),
+            }.get(value, value),
             key="consensus_aggregation_method",
         )
-        st.caption(
-            "Consensus spread is intermodel disagreement, not a confidence "
-            "interval. Low disagreement does not guarantee correctness."
-        )
+        st.caption(t("consensus.spread_caption"))
     
         if st.button(t('consensus.calc_button'), key="calc_consensus"):
             try:
@@ -174,10 +178,7 @@ def render_consensus_section(context):
                         consensus_method,
                     )
                     if consensus_method.startswith("weighted") and not consensus_weights:
-                        st.warning(
-                            "Weighted consensus needs honest validation RMSE. "
-                            "Falling back to equal weights."
-                        )
+                        st.warning(t("consensus.weighted_fallback_warning"))
                     consensus_df = qspr_consensus_predictions(
                         models_scalers,
                         X_cons,
@@ -191,11 +192,7 @@ def render_consensus_section(context):
     
                 # --- Отображаем таблицу ---
                 st.subheader(t('consensus.subheader_predictions'))
-                st.info(
-                    "Consensus_std / Intermodel_disagreement shows spread "
-                    "between selected models, not prediction uncertainty or a "
-                    "95% confidence interval."
-                )
+                st.info(t("consensus.intermodel_disagreement_info"))
                 # Округление числовых колонок до 1 знака после запятой
                 numeric_cols = consensus_df.select_dtypes(include=[np.number]).columns
                 consensus_display = consensus_df.copy()

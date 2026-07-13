@@ -208,7 +208,7 @@ def render_training_section(context):
     st.session_state.last_model_algorithm = model_name
     st.session_state.random_seed = int(
         st.number_input(
-            "Model random seed",
+            t("model_params.random_seed_label"),
             min_value=0,
             max_value=2_147_483_647,
             value=int(st.session_state.get("random_seed", 42)),
@@ -229,10 +229,7 @@ def render_training_section(context):
     online_model_locked = is_online_mode and model_id not in online_allowed_models
     if online_model_locked:
         st.info(
-            "Эта модель показана как возможность полной локальной версии Augur QSPR, "
-            "но в публичном онлайн-режиме обучение для нее отключено. "
-            "Для онлайн-демо используйте Linear Regression, Ridge, LASSO, "
-            "Elastic Net, Random Forest или SVR."
+            t("model_params.online_model_locked_info")
         )
     
     if model_group == MODEL_GROUP_KERNEL_SIMILARITY:
@@ -514,13 +511,11 @@ def render_training_section(context):
         )
         st.info(t('model_params.stacking_info'))
         st.warning(
-            "Stacking should be treated as a final-training meta-model. "
-            "For an honest estimate, use nested CV: outer validation loop, "
-            "inner Stacking CV/model selection. Non-nested metrics can be optimistic."
+            t("model_params.stacking_method_warning")
         )
     
     elif model_id == "voting_regressor":
-        st.caption("Веса базовых моделей при усреднении прогнозов")
+        st.caption(t("model_params.voting_weights_caption"))
         col_vote_1, col_vote_2, col_vote_3 = st.columns(3)
         with col_vote_1:
             st.session_state.voting_rf_weight = st.number_input(
@@ -552,9 +547,9 @@ def render_training_section(context):
             + st.session_state.voting_extra_trees_weight
             + st.session_state.voting_ridge_weight
         ) <= 0:
-            st.error("Хотя бы один вес Voting Regressor должен быть больше нуля.")
+            st.error(t("model_params.voting_weight_error"))
         else:
-            st.info("Voting Regressor усредняет прогнозы Random Forest, Extra Trees и Ridge.")
+            st.info(t("model_params.voting_info"))
     
     elif model_id == "cart_regression":
         st.session_state.cart_max_depth = st.slider(
@@ -600,7 +595,7 @@ def render_training_section(context):
     
     elif model_id == "spline_regression":
         st.session_state.spline_n_knots = st.slider(
-            "Число узлов сплайна",
+            t("model_params.spline_n_knots_label"),
             min_value=3,
             max_value=12,
             value=int(st.session_state.spline_n_knots),
@@ -608,7 +603,7 @@ def render_training_section(context):
             key="spline_n_knots_slider"
         )
         st.session_state.spline_degree = st.slider(
-            "Степень сплайна",
+            t("model_params.spline_degree_label"),
             min_value=1,
             max_value=5,
             value=int(st.session_state.spline_degree),
@@ -616,18 +611,18 @@ def render_training_section(context):
             key="spline_degree_slider"
         )
         st.session_state.spline_alpha = st.number_input(
-            "Ridge-регуляризация alpha",
+            t("model_params.spline_alpha_label"),
             min_value=0.000001,
             value=float(st.session_state.spline_alpha),
             step=0.1,
             format="%.6f",
             key="spline_alpha_input"
         )
-        st.info("Сплайн-регрессия создаёт гладкие базисные функции для каждого дескриптора.")
+        st.info(t("model_params.spline_info"))
     
     elif model_id == "gam_regression":
         st.session_state.gam_n_splines = st.slider(
-            "Число сплайн-базисов",
+            t("model_params.gam_n_splines_label"),
             min_value=3,
             max_value=15,
             value=int(st.session_state.gam_n_splines),
@@ -635,7 +630,7 @@ def render_training_section(context):
             key="gam_n_splines_slider"
         )
         st.session_state.gam_degree = st.slider(
-            "Степень сплайнов",
+            t("model_params.gam_degree_label"),
             min_value=1,
             max_value=5,
             value=int(st.session_state.gam_degree),
@@ -643,14 +638,14 @@ def render_training_section(context):
             key="gam_degree_slider"
         )
         st.session_state.gam_alpha = st.number_input(
-            "Сила сглаживания alpha",
+            t("model_params.gam_alpha_label"),
             min_value=0.000001,
             value=float(st.session_state.gam_alpha),
             step=0.1,
             format="%.6f",
             key="gam_alpha_input"
         )
-        st.info("GAM суммирует гладкие нелинейные вклады отдельных дескрипторов без автоматического добавления взаимодействий.")
+        st.info(t("model_params.gam_info"))
     
     elif model_id == "gep_symbolic":
         st.session_state.gep_population_size = st.slider(
@@ -682,7 +677,7 @@ def render_training_section(context):
     
     elif model_id == "genetic_programming":
         st.session_state.gp_population_size = st.slider(
-            "Размер популяции GP",
+            t("model_params.gp_population_size_label"),
             min_value=100,
             max_value=5000,
             value=int(st.session_state.gp_population_size),
@@ -690,7 +685,7 @@ def render_training_section(context):
             key="gp_population_size_slider"
         )
         st.session_state.gp_generations = st.slider(
-            "Число поколений GP",
+            t("model_params.gp_generations_label"),
             min_value=5,
             max_value=200,
             value=int(st.session_state.gp_generations),
@@ -698,18 +693,18 @@ def render_training_section(context):
             key="gp_generations_slider"
         )
         st.session_state.gp_max_depth = st.slider(
-            "Максимальная глубина формулы",
+            t("model_params.gp_max_depth_label"),
             min_value=1,
             max_value=8,
             value=int(st.session_state.gp_max_depth),
             step=1,
             key="gp_max_depth_slider"
         )
-        st.info("Генетическое программирование ищет короткую математическую формулу и штрафует избыточную сложность.")
+        st.info(t("model_params.gp_info"))
     
     elif model_id == "pysr":
         st.session_state.pysr_niterations = st.slider(
-            "Число итераций PySR",
+            t("model_params.pysr_niterations_label"),
             min_value=10,
             max_value=500,
             value=int(st.session_state.pysr_niterations),
@@ -717,7 +712,7 @@ def render_training_section(context):
             key="pysr_niterations_slider"
         )
         st.session_state.pysr_populations = st.slider(
-            "Число популяций PySR",
+            t("model_params.pysr_populations_label"),
             min_value=1,
             max_value=32,
             value=int(st.session_state.pysr_populations),
@@ -725,14 +720,14 @@ def render_training_section(context):
             key="pysr_populations_slider"
         )
         st.session_state.pysr_maxsize = st.slider(
-            "Максимальная сложность формулы",
+            t("model_params.pysr_maxsize_label"),
             min_value=5,
             max_value=50,
             value=int(st.session_state.pysr_maxsize),
             step=1,
             key="pysr_maxsize_slider"
         )
-        st.warning("PySR требует установленного пакета pysr и рабочей среды Julia. Поиск формул может занимать значительное время.")
+        st.warning(t("model_params.pysr_warning"))
     
     elif model_id == "extra_trees":
         st.session_state.et_n_estimators = st.slider(
@@ -1150,20 +1145,19 @@ def render_training_section(context):
         "genetic_programming",
     }
     if model_id in stochastic_models_for_seed_stability:
-        with st.expander("Seed stability diagnostic", expanded=False):
+        with st.expander(t("model_params.seed_stability_title"), expanded=False):
             st.caption(
-                "Runs the selected stochastic model with seeds 1, 7, 42, 101, 2026 "
-                "and reports the spread of hold-out metrics."
+                t("model_params.seed_stability_caption")
             )
             seed_test_percent = st.slider(
-                "Seed stability test set, %",
+                t("model_params.seed_stability_test_percent"),
                 min_value=10,
                 max_value=50,
                 value=20,
                 step=5,
                 key="seed_stability_test_percent",
             )
-            if st.button("Run seed stability", key="run_seed_stability"):
+            if st.button(t("model_params.seed_stability_run"), key="run_seed_stability"):
                 try:
                     smiles_for_seed = data[smiles_col_current].iloc[
                         valid_indices_current
@@ -1181,7 +1175,7 @@ def render_training_section(context):
                     )
                     st.session_state.seed_stability_result = seed_result
                 except Exception as e:
-                    st.error(f"Seed stability failed: {e}")
+                    st.error(t("model_params.seed_stability_failed", error=e))
             seed_result = st.session_state.get("seed_stability_result")
             if isinstance(seed_result, dict):
                 st.dataframe(
@@ -1421,7 +1415,7 @@ def render_training_section(context):
             )
         ):
             st.warning(
-                "Stored model belongs to an older data/descriptor/configuration signature. Retrain before using it."
+                t("model_params.stale_model_warning")
             )
             st.stop()
         model = model_data["model"]
@@ -1433,10 +1427,9 @@ def render_training_section(context):
             complexity = core_model.get_formula_complexity()
             if complexity:
                 st.warning(
-                    "Symbolic formula uses Augur evolutionary symbolic regression fallback. "
-                    "Check operation count, tree depth, descriptor count and protected math before publication."
+                    t("model_params.symbolic_formula_warning")
                 )
-                with st.expander("Symbolic formula complexity and domain notes", expanded=False):
+                with st.expander(t("model_params.symbolic_formula_expander"), expanded=False):
                     st.json(complexity)
     
         smiles_current = data[smiles_col_current].iloc[valid_indices_current].values
@@ -1528,8 +1521,7 @@ def render_training_section(context):
     
             if auto_res.get("cv_status") == "failed":
                 st.warning(
-                    "Cross-validation failed. The final model may be fitted on all data, "
-                    "but it must not be treated as validated."
+                    t("model_params.cv_failed_model_warning")
                 )
                 st.caption(
                     f"{auto_res.get('failed_stage', 'CV')}: "

@@ -502,8 +502,7 @@ def render_model_diagnostics_section(context):
     
     st.subheader(t('applicability_domain.header'))
     st.caption(
-        "После моделирования: здесь оценивается область применимости уже обученной модели. "
-        "Это не просто структурное разнообразие датасета и не гарантия точности отдельного будущего прогноза."
+        t("applicability_domain.post_model_caption")
     )
     
     with st.expander(
@@ -589,8 +588,7 @@ def render_model_diagnostics_section(context):
 
         if not bool(ad_info.get("informative", True)):
             st.warning(
-                "Leverage AD threshold is >= 1, so this applicability-domain "
-                "diagnostic is not informative for the current n/p ratio."
+                t("applicability_domain.noninformative_threshold_warning")
             )
         if ad_info.get("warnings"):
             st.caption("AD warnings: " + "; ".join(map(str, ad_info.get("warnings", []))))

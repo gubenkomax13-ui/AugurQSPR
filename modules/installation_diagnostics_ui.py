@@ -8,6 +8,7 @@ from modules.installation_diagnostics import (
     InstallStatusCode,
     collect_installation_diagnostics,
 )
+from modules.i18n import t
 from modules.qspr_core import qspr_csv_download_bytes
 
 
@@ -45,8 +46,8 @@ def _status_renderer(item):
 
 def render_installation_diagnostics_section():
     """Render a standalone installation diagnostics page."""
-    st.header("Installation diagnostics")
-    st.caption("Import availability and lightweight functional checks are reported separately.")
+    st.header(t("installation_diagnostics.header"))
+    st.caption(t("installation_diagnostics.caption"))
 
     diagnostics = collect_installation_diagnostics()
     rows = [
@@ -65,15 +66,15 @@ def render_installation_diagnostics_section():
     for item in diagnostics:
         _status_renderer(item)
 
-    with st.expander("Details", expanded=True):
+    with st.expander(t("installation_diagnostics.details"), expanded=True):
         display = pd.DataFrame(rows)
         st.dataframe(display, width="stretch", hide_index=True)
 
-    with st.expander("Module maturity matrix", expanded=True):
+    with st.expander(t("installation_diagnostics.maturity_matrix"), expanded=True):
         maturity = pd.DataFrame(MODULE_MATURITY_ROWS)
         st.dataframe(maturity, width="stretch", hide_index=True)
         st.download_button(
-            "Download maturity matrix CSV",
+            t("installation_diagnostics.download_maturity_csv"),
             qspr_csv_download_bytes(maturity),
             "module_maturity_matrix.csv",
             "text/csv",
@@ -81,7 +82,7 @@ def render_installation_diagnostics_section():
         )
 
     st.download_button(
-        "Download diagnostics CSV",
+        t("installation_diagnostics.download_diagnostics_csv"),
         qspr_csv_download_bytes(pd.DataFrame(rows)),
         "installation_diagnostics.csv",
         "text/csv",

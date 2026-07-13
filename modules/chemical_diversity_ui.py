@@ -541,8 +541,7 @@ def _render_structural_communities_block(result):
         return
     if similarity_matrix is None:
         st.info(
-            "Structural communities require a full similarity matrix. "
-            "This block is skipped for large/sampled chemical-space results."
+            t('chemical_diversity.communities_need_full_matrix')
         )
         return
     st.markdown(t('chemical_diversity.text_d46a6d9635'))
@@ -556,11 +555,11 @@ def _render_structural_communities_block(result):
         method_options.append('dbscan')
     method_options.extend(['similarity_network', 'singletons_only'])
     method_labels = {
-        'connected_components': 'Connected components',
-        'butina': 'Butina clustering',
+        'connected_components': t('chemical_diversity.method_connected_components'),
+        'butina': t('chemical_diversity.method_butina'),
         'dbscan': 'DBSCAN',
-        'similarity_network': 'Similarity network',
-        'singletons_only': 'Singletons only',
+        'similarity_network': t('chemical_diversity.method_similarity_network'),
+        'singletons_only': t('chemical_diversity.method_singletons_only'),
     }
     old_method = st.session_state.get('chemical_space_communities_method')
     method_aliases = {
@@ -584,27 +583,27 @@ def _render_structural_communities_block(result):
         st.caption(t('chemical_diversity.text_0aae75b8c7'))
     (c1, c2, c3) = st.columns(3)
     with c1:
-        threshold = st.slider('Tanimoto threshold', 0.5, 0.95, 0.75, 0.01, key='chemical_space_communities_threshold')
+        threshold = st.slider(t('chemical_diversity.tanimoto_threshold_label'), 0.5, 0.95, 0.75, 0.01, key='chemical_space_communities_threshold')
     with c2:
-        top_k = st.slider('top-k neighbors', 1, 10, 5, 1, key='chemical_space_communities_top_k')
+        top_k = st.slider(t('chemical_diversity.top_k_neighbors_label'), 1, 10, 5, 1, key='chemical_space_communities_top_k')
     with c3:
         small_limit = st.slider(t('chemical_diversity.text_078fab33c2'), 1, 5, 3, 1, key='chemical_space_communities_small_limit')
     (c4, c5, c6) = st.columns(3)
     with c4:
-        butina_cutoff = st.slider('Butina distance cutoff', 0.05, 0.5, 0.2, 0.01, key='chemical_space_communities_butina_cutoff')
+        butina_cutoff = st.slider(t('chemical_diversity.butina_cutoff_label'), 0.05, 0.5, 0.2, 0.01, key='chemical_space_communities_butina_cutoff')
     with c5:
-        dbscan_eps = st.slider('DBSCAN eps', 0.05, 0.7, 0.25, 0.01, key='chemical_space_communities_dbscan_eps')
+        dbscan_eps = st.slider(t('chemical_diversity.dbscan_eps_label'), 0.05, 0.7, 0.25, 0.01, key='chemical_space_communities_dbscan_eps')
     with c6:
-        dbscan_min_samples = st.slider('DBSCAN min_samples', 1, 10, 2, 1, key='chemical_space_communities_dbscan_min_samples')
+        dbscan_min_samples = st.slider(t('chemical_diversity.dbscan_min_samples_label'), 1, 10, 2, 1, key='chemical_space_communities_dbscan_min_samples')
     (c7, c8, c9) = st.columns(3)
     with c7:
         singleton_options = ['combined', 'component_size_1', 'no_neighbors', 'cluster_size_lte_n', 'dbscan_noise']
         singleton_labels = {
-            'combined': 'combined',
-            'component_size_1': 'component size == 1',
-            'no_neighbors': 'no neighbors above threshold',
-            'cluster_size_lte_n': 'cluster size <= N',
-            'dbscan_noise': 'DBSCAN noise',
+            'combined': t('chemical_diversity.singleton_combined'),
+            'component_size_1': t('chemical_diversity.singleton_component_size_1'),
+            'no_neighbors': t('chemical_diversity.singleton_no_neighbors'),
+            'cluster_size_lte_n': t('chemical_diversity.singleton_cluster_size_lte_n'),
+            'dbscan_noise': t('chemical_diversity.singleton_dbscan_noise'),
         }
         old_singleton = st.session_state.get('chemical_space_communities_singleton_criterion')
         singleton_aliases = {label: code for code, label in singleton_labels.items()}
@@ -927,7 +926,7 @@ def _render_exact_pattern_map_block(result):
         fig.update_xaxes(title=t('chemical_diversity.exact_pattern_groups_axis'))
         fig.update_traces(textposition='top center')
     if plotted_group_size_sum > source_group_size_sum + 1e-9:
-        st.warning("Exact-pattern plot size check failed: displayed group size exceeds source size.")
+        st.warning(t('chemical_diversity.exact_size_check_failed'))
     fig.update_layout(height=620, margin=dict(l=20, r=20, t=70, b=35))
     interpretation_message = exact_interpretation_message(
         exact_payload.get('interpretation', '')
@@ -982,7 +981,16 @@ def _render_pca_map(pca_df):
         return
     color_mode = 'cluster_id'
     if 'target' in pca_df.columns and pd.to_numeric(pca_df['target'], errors='coerce').notna().any():
-        color_mode = st.radio(t('chemical_diversity.text_d11b85826f'), ['cluster_id', 'target'], horizontal=True, key='chemical_diversity_pca_color_mode')
+        color_mode = st.radio(
+            t('chemical_diversity.text_d11b85826f'),
+            ['cluster_id', 'target'],
+            horizontal=True,
+            key='chemical_diversity_pca_color_mode',
+            format_func=lambda value: {
+                'cluster_id': t('chemical_diversity.cluster_id_label'),
+                'target': t('chemical_diversity.target_label'),
+            }.get(value, value),
+        )
     else:
         st.caption(t('chemical_diversity.text_06b088d288'))
     plot_df = pca_df.copy()
@@ -1152,11 +1160,10 @@ def _render_analogue_network(pca_df, network_edges, analogue_threshold=0.85, max
     max_edges = int(max_edges)
     if len(edge_df) > max_edges:
         st.warning(
-            f'Network drawing is limited to the top {max_edges} strongest edges '
-            f'of {len(edge_df)} available edges.'
+            t('chemical_diversity.network_edges_limited', max_edges=max_edges, total=len(edge_df))
         )
         edge_df = edge_df.head(max_edges).copy()
-    st.caption('Coordinates: descriptor PCA; edges: Morgan/Tanimoto similarity.')
+    st.caption(t('chemical_diversity.network_coordinates_caption'))
     (fig, ax) = plt.subplots(figsize=(5.2, 3.4))
     segments = []
     edge_colors = []
@@ -1432,7 +1439,7 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
     if run_clicked or (cached is not None and cached_signature == signature):
         if run_clicked:
             if not threshold_order_valid:
-                st.error("Chemical diversity was not started because similarity thresholds are inconsistent.")
+                st.error(t('chemical_diversity.thresholds_inconsistent_error'))
                 st.stop()
             with st.spinner(t('chemical_diversity.text_df201cd4e3')):
                 try:

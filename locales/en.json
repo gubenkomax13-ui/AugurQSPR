@@ -130,7 +130,24 @@
     },
     "metric_rmse": "RMSE",
     "metric_mae": "MAE",
-    "metric_mape": "MAPE, %"
+    "metric_mape": "MAPE, %",
+    "fold_refit_caption": "Automatic feature selection is refit inside validation folds: imputation -> constant removal/correlation filtering/feature selection -> scaling -> model.",
+    "heuristic_indicators_title": "Heuristic quality indicators",
+    "heuristic_indicators_caption": "These thresholds are diagnostic heuristics, not universal statistical rules. Adjust them for dataset size and measurement noise.",
+    "bootstrap_instability_ratio_label": "Bootstrap is unstable if P95 RMSE / median RMSE is above",
+    "yrandom_gap_label": "Y-randomization is risky if Q2 gap is below",
+    "stratify_holdout_label": "Stratify random split by target quantile bins",
+    "stale_holdout_warning": "The stored hold-out result belongs to an older data, descriptor, or validation configuration. Run hold-out again.",
+    "stale_kfold_warning": "The stored K-fold result belongs to an older data, descriptor, or validation configuration. Run K-fold again.",
+    "stale_loo_warning": "The stored LOO result belongs to an older data, descriptor, or validation configuration. Run LOO again.",
+    "stale_distance_holdout_warning": "The stored distance-based hold-out result belongs to an older data, descriptor, or validation configuration. Run the stress test again.",
+    "unique_test_splits": "Unique test splits",
+    "mean_test_set_jaccard": "Mean test-set Jaccard",
+    "max_test_set_jaccard": "Max test-set Jaccard",
+    "test_selection_frequency": "Test-set selection frequency",
+    "pairwise_test_jaccard": "Pairwise test-set Jaccard similarity",
+    "failed_bootstrap_iterations": "Failed or skipped bootstrap iterations",
+    "download_failed_bootstrap_iterations": "Download failed or skipped bootstrap iterations"
   },
   "model": {
     "train_button": "⚔️ Train Analytical Model"
@@ -201,7 +218,8 @@
     "build_error": "Failed to build structures: {error}",
     "no_molecules": "Could not build structures from selected rows.",
     "invalid_count": "Invalid SMILES among selected rows: {count}",
-    "table_row_number": "Table row"
+    "table_row_number": "Table row",
+    "rdkit_draw_missing": "Molecular images are unavailable: RDKit Draw was not imported."
   },
   "dataset_change": {
     "empty": "Initial dataset is empty.",
@@ -482,7 +500,8 @@
     "reason_near_identical": "values almost identical to target property: {ratio:.1%}",
     "reason_high_correlation": "near-perfect correlation with y: r={corr:.6f}",
     "warning_title": "⚠️ Data leakage control",
-    "warning_text": "⚠️ Potential data leakage columns found. Such features may directly contain the target property and artificially inflate model performance."
+    "warning_text": "⚠️ Potential data leakage columns found. Such features may directly contain the target property and artificially inflate model performance.",
+    "strong_predictor_info": "High correlation alone is reported as a strong predictor, not as confirmed data leakage."
   },
   "descriptor_groups": {
     "other": "Other descriptors",
@@ -533,7 +552,8 @@
   },
   "logs": {
     "title": "📋 Event Log",
-    "empty": "Log is empty."
+    "empty": "Log is empty.",
+    "download_log_txt": "Download log.txt"
   },
   "spectra": {
     "no_spectral_data": "No spectral descriptor table available for connection.",
@@ -771,7 +791,23 @@
     "spectrum_status_label": "Status",
     "show_full_table_expander": "Show full search results table",
     "download_search_results": "📥 Download spectral search results CSV",
-    "refresh_spectra_bank_button": "🔄 Refresh spectra_bank statuses"
+    "refresh_spectra_bank_button": "🔄 Refresh spectra_bank statuses",
+    "search_stopped_by_user": "Spectrum search was stopped by the user. Results from completed work are shown.",
+    "auto_bank_info": "The Augur spectral bank is connected automatically. Import, reindexing, and manual bank maintenance are hidden in normal mode.",
+    "bank_subheader": "Augur spectral bank",
+    "connected": "connected",
+    "not_connected": "not connected",
+    "user_bank_status_markdown": "Available spectra: **{count}**\n\nStatus: **{status}**\n\nThe bank is used automatically to check your SMILES. Service maintenance, reindexing, and external downloads are not shown.",
+    "phase_gas": "Gas",
+    "phase_liquid": "Liquid",
+    "phase_solution_film": "Solution / Film",
+    "phase_solid_kbr_nujol": "Solid / KBr / Nujol",
+    "search_workers_label": "Parallel search tasks",
+    "search_workers_help": "Local version: more workers process large lists faster, but load external sources more heavily.",
+    "source_timeout_label": "External-source timeout, sec",
+    "source_timeout_help": "Fast mode: 8-12 sec. Full mode: 20-40 sec. A shorter timeout speeds up search but may miss slow responses.",
+    "auto_bank_limited_info": "The automatically connected Augur spectral bank is used. External search, cache management, and service-result cleanup are hidden in normal mode.",
+    "download_current_results_csv": "Download current results CSV"
   },
   "spectra_desc": {
     "subheader": "🧮 Converting spectra to QSPR descriptors",
@@ -835,7 +871,22 @@
     "error_axis_min_max": "Spectrum axis minimum must be less than maximum.",
     "spinner_converting": "Converting spectra to descriptors...",
     "success_calculation": "Spectral descriptor calculation complete. Rows created: {count}.",
-    "warning_empty_table": "Calculation completed, but descriptor table is empty. Check for active spectra of the selected type, phase, source, and grid range."
+    "warning_empty_table": "Calculation completed, but descriptor table is empty. Check for active spectra of the selected type, phase, source, and grid range.",
+    "allowed_phases_title": "Allowed phases / sample states",
+    "allowed_phases_caption": "This selection is also applied to the ready spectral-descriptor file: only rows with selected phases are used.",
+    "admin_ready_cache_title": "#### Admin: ready spectral descriptors for GitHub",
+    "admin_ready_cache_caption": "Calculates descriptors for all locally available processed spectra of the selected type and saves a CSV cache in the project folder. SVD is excluded because it depends on the user-specific dataset.",
+    "admin_skip_existing_label": "Skip InChIKey values already present in the descriptor bank file",
+    "admin_skip_existing_help": "If enabled, the program first reads the existing CSV bank of spectral descriptors and calculates only spectra processed files whose InChIKey is not yet present for the current descriptor settings.",
+    "admin_autosave_every_label": "Autosave the bank file after every N new spectra",
+    "admin_autosave_every_help": "After each such number of newly calculated spectra, the CSV in the project root is updated immediately.",
+    "admin_cache_all_button": "Calculate ready {spectrum_type} descriptors for all available spectra",
+    "use_ready_descriptors_button": "Use ready spectral descriptors",
+    "use_ready_descriptors_help": "Uses a ready spectral-descriptor table from the local cache or GitHub raw URL without downloading spectrum files.",
+    "ready_cache_no_grid_bin_band": "For the ready cache, select at least GRID, BIN, or BAND. SVD is not stored separately in the cache.",
+    "ready_cache_finished": "Preparation of ready spectral descriptors is complete.",
+    "ready_descriptors_connected": "Ready spectral descriptors are connected.",
+    "spectra_loading_finished": "Spectrum loading and spectral-descriptor calculation are complete."
   },
   "spectra_report": {
     "subheader": "📌 Summary of spectral descriptors",
@@ -864,7 +915,16 @@
     "transfer_error": "Error connecting spectral descriptors: {error}",
     "matrix_ready": "Spectral matrix connected: {rows} compounds × {cols} descriptors. Source: {source}.",
     "matrix_log": "Assembled spectral matrix for QSPR: {source}, {rows}×{cols}",
-    "matrix_error": "Error assembling spectral descriptor matrix: {error}"
+    "matrix_error": "Error assembling spectral descriptor matrix: {error}",
+    "ready_descriptors_found": "Ready descriptors found",
+    "ready_descriptors_missing": "Ready descriptors missing",
+    "ir_mass_intersection_info": "IR + Mass mode: the final table includes only compounds for which both ready descriptor sets were found. Found separately: {detail}.",
+    "no_active_spectra_for_descriptors": "Spectral descriptors were not created because no suitable active spectra could be obtained from the bank for the current compounds.",
+    "bank_diagnostics_title": "Spectral-bank connection diagnostics",
+    "cloud_index_missing_info": "No working `spectra_index.csv` was found on Streamlit Cloud. Add `AUGUR_SPECTRA_INDEX_FILE_ID` or `AUGUR_SPECTRA_INDEX_URL` to Secrets for the `spectra_index.csv` file.",
+    "manifest_missing_info": "The index was found, but `spectra_manifest.csv` is missing. Without a manifest, the app sees spectrum records but does not know which Google Drive file to download for a specific spectrum.",
+    "manifest_no_processed_info": "`spectra_manifest.csv` was found, but it contains no processed spectrum files. Add `AUGUR_SPECTRA_BANK_FOLDER_ID` and `AUGUR_GOOGLE_DRIVE_API_KEY` to Secrets so the app can scan the Google Drive folder and build the manifest from `IR/processed` and `Mass/processed` files.",
+    "bank_found_no_matches_info": "The index and manifest were found. If matches are still 0, check the selected spectrum type, phase mode, sources, experimental flag, and presence of these InChIKey/SMILES values in the index."
   },
   "morfeus": {
     "bundle_empty": "morfeus table is empty.",
@@ -1126,7 +1186,13 @@
     "no_smiles_column": "The uploaded file does not contain a `SMILES` column.",
     "updated_success": "Bank updated.",
     "show_content_checkbox": "Show bank contents",
-    "download_button": "📥 Download bank as CSV"
+    "download_button": "📥 Download bank as CSV",
+    "policy_overwrite_new": "Overwrite with uploaded values",
+    "policy_keep_existing": "Keep existing bank values",
+    "policy_average_numeric": "Average numeric repeated measurements",
+    "duplicate_policy_label": "Duplicate/update policy",
+    "active_duplicate_policy": "Active data-bank duplicate policy: {policy}",
+    "exact_duplicate_rows": "Exact duplicate rows in uploaded bank file: {count}."
   },
   "saod2_ru": {
     "compound_id": "Compound ID",
@@ -1303,7 +1369,16 @@
     "data_source_note": "Using normalised dataset: {count} rows. All original columns (including descriptors) preserved.",
     "apply_log": "Applied SMILES normalisation and canonicalisation without removing rows: {rows} rows, {cols} columns.",
     "apply_success": "Normalisation and canonicalisation applied. Canonical SMILES applied to working dataset. Row count unchanged; duplicates and conflicting records were not removed.",
-    "apply_error": "Could not apply normalised dataset: {error}"
+    "apply_error": "Could not apply normalised dataset: {error}",
+    "duplicate_report_expander": "Duplicate report after standardization",
+    "duplicate_policy_label": "Duplicate policy after standardization",
+    "duplicate_policy_keep_all": "Keep all measurements",
+    "duplicate_policy_drop_exact": "Remove exact duplicates only",
+    "duplicate_policy_mean": "Use mean",
+    "duplicate_policy_median": "Use median",
+    "duplicate_policy_assay_context": "Separate by assay/context",
+    "duplicate_policy_help": "Duplicates are grouped by InChIKey only after standardization. The assay/context mode does not merge different experimental contexts.",
+    "last_duplicate_policy": "Last applied duplicate policy: {policy}"
   },
   "dataset_passport": {
     "title": "### 📝 Dataset passport",
@@ -1494,7 +1569,28 @@
     "threshold_strict": "Strict",
     "threshold_sensitive": "Sensitive",
     "threshold_mode_help": "Threshold rules only prioritize manual review; they do not prove a data error.",
-    "used_thresholds": "SAOD thresholds used"
+    "used_thresholds": "SAOD thresholds used",
+    "experimental_groups_subheader": "SAOD by experimental groups",
+    "group_expander": "Group: {group}",
+    "exclusion_reasons": "Exclusion reasons",
+    "excluded_compounds": "Excluded compounds",
+    "calculation_failed": "SAOD failed at stage {stage}: {errors}",
+    "success_no_series": "SAOD completed successfully, but no supported series or rules were found.",
+    "metric_loaded": "Loaded",
+    "metric_analyzed": "Analyzed",
+    "metric_excluded": "Excluded",
+    "inclusion_statuses": "SAOD inclusion statuses",
+    "exclusion_reasons_from_saod": "Reasons for exclusion from SAOD",
+    "excluded_compounds_and_reasons": "Excluded compounds and reasons",
+    "artificial_calibration_title": "SAOD calibration with artificially introduced errors",
+    "artificial_calibration_caption": "Experimental stress test: controlled errors are inserted into a copy of the current dataset, then SAOD is rerun and compared with known intervention labels.",
+    "injection_fraction_label": "Compound fraction",
+    "injection_type_label": "Intervention type",
+    "injection_percent_label": "Property change",
+    "run_calibration_button": "Run SAOD calibration",
+    "calibration_spinner": "SAOD calibration on artificial errors...",
+    "calibration_detection_metrics": "**Detection metrics**",
+    "calibration_modified_records": "**Artificially modified records**"
   },
   "saod_tabs": {
     "tab_processed": "Processed data",
@@ -1743,7 +1839,10 @@
     "log_collected": "Descriptors collected: {source}, {n_desc} features",
     "error_calculation": "Descriptor calculation error: {error}",
     "morfeus_bank_success": "Morfeus descriptors were added to the bank.",
-    "morfeus_bank_error": "Failed to add Morfeus descriptors: {error}"
+    "morfeus_bank_error": "Failed to add Morfeus descriptors: {error}",
+    "xtb_left_join_missing_warning": "LEFT merge kept all molecular rows, but xTB was missing for some compounds; missing xTB descriptor values will be imputed in the final matrix.",
+    "bundle_none_error": "bundle is None ? descriptor calculation failed.",
+    "desc_calculated_flag_error": "Could not set the desc_calculated flag. Check store_descriptor_bundle."
   },
   "desc_calc": {
     "pending_bundle_info": "The assembled descriptor matrix is awaiting connection. Click ‘Connect assembled spectral matrix’ in the ‘Descriptor source’ block.",
@@ -1896,7 +1995,38 @@
     "hgb_max_depth_label": "Maximum tree depth (0 = unlimited)",
     "hgb_min_samples_leaf_label": "Minimum samples per leaf",
     "hgb_l2_regularization_label": "L2 regularization",
-    "hgb_info": "Histogram Gradient Boosting is efficient for medium and large tabular datasets."
+    "hgb_info": "Histogram Gradient Boosting is efficient for medium and large tabular datasets.",
+    "random_seed_label": "Model random seed",
+    "online_model_locked_info": "This model is available in the full local Augur QSPR version, but training is disabled in the public online mode. For the online demo, use Linear Regression, Ridge, LASSO, Elastic Net, Random Forest, or SVR.",
+    "stacking_method_warning": "Treat Stacking as a final-training meta-model. For an honest estimate, use nested CV: an outer validation loop and an inner Stacking/model-selection loop. Non-nested metrics can be optimistic.",
+    "voting_weights_caption": "Base-model weights for prediction averaging",
+    "voting_weight_error": "At least one Voting Regressor weight must be greater than zero.",
+    "voting_info": "Voting Regressor averages predictions from Random Forest, Extra Trees, and Ridge.",
+    "spline_n_knots_label": "Number of spline knots",
+    "spline_degree_label": "Spline degree",
+    "spline_alpha_label": "Ridge regularization alpha",
+    "spline_info": "Spline regression creates smooth basis functions for each descriptor.",
+    "gam_n_splines_label": "Number of spline bases",
+    "gam_degree_label": "Spline degree",
+    "gam_alpha_label": "Smoothing strength alpha",
+    "gam_info": "GAM sums smooth nonlinear contributions of individual descriptors without automatically adding interactions.",
+    "gp_population_size_label": "GP population size",
+    "gp_generations_label": "GP generations",
+    "gp_max_depth_label": "Maximum formula depth",
+    "gp_info": "Genetic programming searches for a compact mathematical formula and penalizes excessive complexity.",
+    "pysr_niterations_label": "PySR iterations",
+    "pysr_populations_label": "PySR populations",
+    "pysr_maxsize_label": "Maximum formula complexity",
+    "pysr_warning": "PySR requires the pysr package and a working Julia environment. Formula search may take substantial time.",
+    "seed_stability_title": "Seed stability diagnostic",
+    "seed_stability_caption": "Runs the selected stochastic model with seeds 1, 7, 42, 101, 2026 and reports the spread of hold-out metrics.",
+    "seed_stability_test_percent": "Seed stability test set, %",
+    "seed_stability_run": "Run seed stability",
+    "seed_stability_failed": "Seed stability failed: {error}",
+    "stale_model_warning": "The stored model belongs to an older data, descriptor, or configuration signature. Retrain before using it.",
+    "symbolic_formula_warning": "The symbolic formula uses the Augur evolutionary symbolic-regression fallback. Before publication, check operation count, tree depth, descriptor count, and protected mathematical operations.",
+    "symbolic_formula_expander": "Symbolic formula complexity and domain notes",
+    "cv_failed_model_warning": "Cross-validation failed. The final model may be fitted on all data, but it must not be treated as validated."
   },
   "model_encyclopedia": {
     "title": "## 📚 Model encyclopedia",
@@ -2060,7 +2190,9 @@
     "download_ad_csv": "📥 Download Applicability Domain CSV",
     "mol_grid_outside_ad": "⚛️ Structures of compounds outside the model applicability domain",
     "property_value": "Property value",
-    "error_calculation": "Could not calculate Applicability Domain: {error}"
+    "error_calculation": "Could not calculate Applicability Domain: {error}",
+    "post_model_caption": "After modeling: this block evaluates the applicability domain of an already trained model. It is not merely dataset structural diversity and it is not a guarantee of accuracy for an individual future prediction.",
+    "noninformative_threshold_warning": "The leverage AD threshold is >= 1, so this applicability-domain diagnostic is not informative for the current n/p ratio."
   },
   "coef_table": {
     "subheader": "📌 Model coefficients",
@@ -2134,7 +2266,10 @@
     "errors_expander": "⚠️ Models that failed to compute",
     "switch_button": "✅ Switch to best model",
     "switch_success": "Model selected: {model}",
-    "no_comparison_info": "Click ‘Train, compare models and select the best’. The program will then train the selected algorithms, compute validations, and build the ranking."
+    "no_comparison_info": "Click ‘Train, compare models and select the best’. The program will then train the selected algorithms, compute validations, and build the ranking.",
+    "online_light_info": "The online version uses a lightweight model-comparison mode: fast algorithms are selected by default, K-Fold is limited to 3 folds, and LOO plus additional repeated checks are disabled. Use the local version for full comparison.",
+    "heavy_models_warning": "Heavier models were selected for cloud mode: {models}. If the Cloud app crashes, reduce the model list or run the full comparison locally.",
+    "online_limit_warning": "The online version compares only the first 5 selected models at once. The rest are skipped to avoid overloading Streamlit Cloud."
   },
   "consensus": {
     "header": "🤝 Consensus prediction",
@@ -2161,7 +2296,16 @@
     "hist_title_uncertainty": "Uncertainty distribution",
     "download_csv": "📥 Download consensus predictions CSV",
     "error_calculation": "Consensus prediction calculation error: {error}",
-    "info_train_first": "First train at least one model."
+    "info_train_first": "First train at least one model.",
+    "aggregation_label": "Consensus aggregation",
+    "aggregation_equal_mean": "Equal-weight mean",
+    "aggregation_weighted_cv_rmse": "Weights by CV-RMSE",
+    "aggregation_weighted_holdout_rmse": "Weights by hold-out RMSE",
+    "aggregation_median": "Median consensus",
+    "aggregation_trimmed_mean": "Trimmed mean",
+    "spread_caption": "Consensus spread is intermodel disagreement, not a confidence interval. Low disagreement does not guarantee correctness.",
+    "weighted_fallback_warning": "Weighted consensus needs honest validation RMSE. Falling back to equal weights.",
+    "intermodel_disagreement_info": "Consensus_std / Intermodel_disagreement shows spread between selected models, not prediction uncertainty or a 95% confidence interval."
   },
   "report": {
     "header": "📄 Report on current QSPR analysis",
@@ -2326,7 +2470,14 @@
     "download_word": "📥 Download Word report",
     "include_final_statistics": "Final statistics",
     "section_final_statistics": "Final QSPR analysis statistics",
-    "final_statistics_error": "Final statistics were not added to the report: {error}"
+    "final_statistics_error": "Final statistics were not added to the report: {error}",
+    "analysis_parameters_title": "Current analysis parameters",
+    "download_analysis_parameters_csv": "Download analysis parameters CSV",
+    "include_holdout": "Hold-out",
+    "include_kfold": "K-Fold",
+    "include_loo": "Leave-One-Out",
+    "include_applicability_domain": "Applicability Domain",
+    "include_saod": "SAOD"
   },
   "methodology": {
     "subheader": "📝 Automatic generation of methodology text",
@@ -2759,7 +2910,8 @@
     "spectral_ad_interp_spectral_out": "The structure is similar to training compounds, but the spectral profile is outside the training domain.",
     "spectral_ad_interp_molecular_out": "The spectral profile is similar to training compounds, but the structure is outside the molecular domain.",
     "spectral_ad_interp_combined_out": "The compound is outside the combined model domain: treat the final prediction cautiously.",
-    "spectral_ad_interp_not_calculated": "Separate molecular/spectral AD was calculated only partially or is unavailable for this model."
+    "spectral_ad_interp_not_calculated": "Separate molecular/spectral AD was calculated only partially or is unavailable for this model.",
+    "trusted_model_warning": "Upload only models from trusted sources. Pickle/joblib files can execute Python code when loaded."
   },
   "prediction_uncertainty": {
     "header": "🔮 New-compound prediction and uncertainty",
@@ -2950,7 +3102,8 @@
     "multicollinearity_title": "Multicollinearity",
     "residual_table_title": "Residuals by object",
     "download_csv": "Download CSV",
-    "download_json": "Download JSON"
+    "download_json": "Download JSON",
+    "header": "?? Final QSPR analysis statistics"
   },
   "chemical_diversity": {
     "premodeling_scope_caption": "Before modelling: this is dataset structural coverage and chemical diversity. It is not the applicability domain of an already trained model and not confidence in an individual prediction.",
@@ -3019,6 +3172,27 @@
     "projection_quality_caption": "UMAP/t-SNE/MDS coordinates are diagnostic; check how well they preserve original distances.",
     "cluster_sensitivity_title": "Cluster sensitivity to Tanimoto threshold",
     "cluster_sensitivity_caption": "The Tanimoto threshold depends on fingerprint configuration and chemical class; it is not a universal boundary.",
+    "communities_need_full_matrix": "Structural communities require a full similarity matrix. This block is skipped for large or sampled chemical-space results.",
+    "method_connected_components": "Connected components",
+    "method_butina": "Butina clustering",
+    "method_similarity_network": "Similarity network",
+    "method_singletons_only": "Singletons only",
+    "tanimoto_threshold_label": "Tanimoto threshold",
+    "top_k_neighbors_label": "top-k neighbors",
+    "butina_cutoff_label": "Butina distance cutoff",
+    "dbscan_eps_label": "DBSCAN eps",
+    "dbscan_min_samples_label": "DBSCAN min_samples",
+    "singleton_combined": "Combined criterion",
+    "singleton_component_size_1": "Component size == 1",
+    "singleton_no_neighbors": "No neighbors above threshold",
+    "singleton_cluster_size_lte_n": "Cluster size <= N",
+    "singleton_dbscan_noise": "DBSCAN noise",
+    "exact_size_check_failed": "Exact-pattern plot size check failed: displayed group size exceeds source size.",
+    "cluster_id_label": "Cluster ID",
+    "target_label": "Target property",
+    "network_edges_limited": "Network drawing is limited to the top {max_edges} strongest edges of {total} available edges.",
+    "network_coordinates_caption": "Coordinates: descriptor PCA; edges: Morgan/Tanimoto similarity.",
+    "thresholds_inconsistent_error": "Chemical diversity was not started because similarity thresholds are inconsistent.",
     "text_10dd2c1e6e": "Total molecules",
     "text_9afccebb18": "Valid structures",
     "text_ae171e42c2": "Invalid or empty SMILES",
@@ -3470,7 +3644,39 @@
     "learning_curve_error": "Learning curve error: {error}",
     "audit_interval_coverage": "Audit interval coverage",
     "interval_coverage_complete": "Prediction interval coverage audit complete.",
-    "interval_coverage_error": "Prediction interval coverage error: {error}"
+    "interval_coverage_error": "Prediction interval coverage error: {error}",
+    "repeated_kfold_title": "Repeated K-Fold",
+    "folds": "Folds",
+    "repeats": "Repeats",
+    "random_state": "random_state",
+    "repeated_kfold_progress": "Repeated K-Fold: {done}/{total}",
+    "r2_per_fold": "R² per fold",
+    "count": "Count",
+    "repeated_kfold_distribution": "Repeated K-Fold R² distribution",
+    "group_scaffold_title": "Group / Scaffold split",
+    "group_mode_scaffold": "Bemis-Murcko scaffold",
+    "group_mode_dataset_column": "Dataset column",
+    "test_groups_percent": "Test groups, %",
+    "train_test_groups_caption": "Train groups: {train}; test groups: {test}",
+    "learning_curves_title": "Learning curves",
+    "train_rmse": "Train RMSE",
+    "cv_rmse": "CV RMSE",
+    "training_set_size": "Training set size",
+    "learning_curve_title": "Learning curve: {diagnosis}",
+    "interval_coverage_title": "Prediction interval hold-out coverage",
+    "nominal_coverage": "Nominal coverage",
+    "holdout_test_percent": "Hold-out test, %",
+    "calibration_cv_folds": "Calibration CV folds",
+    "observed_coverage": "Observed coverage",
+    "interval_radius": "Interval radius"
+  },
+  "installation_diagnostics": {
+    "header": "Installation diagnostics",
+    "caption": "Import availability and lightweight functional checks are reported separately.",
+    "details": "Details",
+    "maturity_matrix": "Module maturity matrix",
+    "download_maturity_csv": "Download maturity matrix CSV",
+    "download_diagnostics_csv": "Download diagnostics CSV"
   },
   "primary_data_analysis": {
     "header": "Primary Data Analysis Module"
@@ -3488,5 +3694,67 @@
   "feature_sources": {
     "header": "Descriptor Sources Module",
     "caption": "Here feature sources are selected, descriptor types are configured, and the final X/y matrix for QSPR modelling is assembled."
+  },
+  "structural_filter": {
+    "descriptor_meanings_caption": "Descriptor explanations are read from `descriptor_meanings.json`. If ?No explanation? is shown, this descriptor should be added to the JSON file.",
+    "download_descriptor_meanings_csv": "?? Download descriptor explanations CSV"
+  },
+  "prognostic": {
+    "ad_summary_caption": "After prediction: this block concerns confidence in specific new predictions. It uses AD/uncertainty indicators and does not replace analysis of structural coverage in the source dataset.",
+    "metric_new_compounds": "New compounds",
+    "metric_outside_ad": "Outside AD",
+    "metric_outside_ad_percent": "Outside AD, %",
+    "metric_h_threshold": "h* threshold",
+    "warning_new_outside_ad": "Some new compounds are outside the applicability domain of the prognostic model. Their predictions should be interpreted as extrapolations and as less reliable.",
+    "success_all_inside_ad": "All new compounds are inside the prognostic model applicability domain by leverage.",
+    "ad_explanation_title": "?? Applicability Domain explanation for new predictions",
+    "ad_explanation_markdown": "**Leverage h** indicates how far a new compound is from the training set in descriptor space.\n\nClassical threshold:\n\n`h* = 3(p + 1) / n`\n\nwhere `p` is the number of descriptors and `n` is the number of compounds in the prognostic-model training set.\n\nIf `h > h*`, the prediction is considered **outside the model applicability domain** and should be interpreted cautiously.",
+    "outside_ad_table_title": "### New compounds outside the applicability domain",
+    "header": "?? Prognostic model",
+    "training_description": "All compounds are selected by default. Clear the checkboxes for compounds that should be excluded from the final prognostic model.",
+    "train_analytical_model_first": "Train at least one analytical model first.",
+    "source_model_label": "Which model should be used as the basis for the prognostic model",
+    "source_model_help": "If model comparison has been performed, the model ranked first in the comparison table is selected by default.",
+    "training_prediction_error": "Could not obtain analytical-model calculated values for the prognostic-selection table. The model was probably trained on another descriptor set, or the feature-matrix dimensionality changed after automatic selection.",
+    "retrain_current_descriptors": "Retrain the analytical model on the current descriptor set.",
+    "use_column_label": "Use",
+    "use_column_help": "Clear the checkbox if the compound should be excluded from the prognostic model",
+    "train_selected_button": "?? Train prognostic model on selected compounds",
+    "training_success": "The prognostic model was trained on {count} compounds.",
+    "metric_train_r2": "Training R?",
+    "training_error": "Prognostic model training error: {error}",
+    "save_full_package_button": "?? Save full prognostic model package",
+    "metric_objects": "Objects",
+    "metric_high_reliability": "High reliability",
+    "metric_medium_reliability": "Medium reliability",
+    "metric_low_reliability": "Low reliability",
+    "uncertainty_diagnostics_title": "?? Uncertainty diagnostics",
+    "col_indicator": "Indicator",
+    "col_value": "Value",
+    "col_model": "Model",
+    "col_consensus_weight": "Consensus weight",
+    "prediction_interval_caption": "Prediction interval is calibrated from out-of-fold residuals. Bootstrap, consensus, and GPR std do not replace the prediction interval.",
+    "nearest_analogues_title": "?? Nearest training analogues",
+    "download_nearest_analogues_csv": "?? Download analogue table CSV",
+    "download_prediction_csv": "?? Download prediction CSV",
+    "molecular_ad_metric": "Molecular AD",
+    "spectral_ad_metric": "Spectral AD",
+    "combined_ad_metric": "Combined AD"
+  },
+  "common": {
+    "experimental_context": "Experimental context",
+    "random_seed": "Seed"
+  },
+  "admin": {
+    "only_notice": "This function is available only to the administrator.",
+    "title": "Administrator",
+    "online_caption": "Online mode runs as a regular user. Local mode is administrator by default."
+  },
+  "descriptor_lists": {
+    "padel_fallback_warning": "The full PaDEL catalog is unavailable. A fallback limited set of unique PaDEL descriptors is used."
+  },
+  "i18n": {
+    "expander_title": "?? i18n",
+    "missing_keys_warning": "Missing localization keys detected."
   }
 }

@@ -124,19 +124,17 @@ def render_validation_section(context):
     st.header(t('validation.header'))
     if selector_config_current:
         st.caption(
-            "Automatic feature selection is refit inside validation folds: "
-            "imputation -> constant/correlation/feature selection -> scaling -> model."
+            t("validation.fold_refit_caption")
         )
     render_module_explanation("validation")
-    with st.expander("Heuristic quality indicators", expanded=False):
+    with st.expander(t("validation.heuristic_indicators_title"), expanded=False):
         st.caption(
-            "These thresholds are heuristic diagnostic indicators, not universal "
-            "statistical rules. Adjust them for dataset size and endpoint noise."
+            t("validation.heuristic_indicators_caption")
         )
         col_hq_1, col_hq_2 = st.columns(2)
         with col_hq_1:
             st.number_input(
-                "Bootstrap unstable if P95 RMSE / median RMSE is above",
+                t("validation.bootstrap_instability_ratio_label"),
                 min_value=1.0,
                 max_value=10.0,
                 value=float(st.session_state.get("bootstrap_rmse_p95_ratio_threshold", 2.0)),
@@ -145,7 +143,7 @@ def render_validation_section(context):
             )
         with col_hq_2:
             st.number_input(
-                "Y-randomization risky if Q2 gap is below",
+                t("validation.yrandom_gap_label"),
                 min_value=0.0,
                 max_value=1.0,
                 value=float(st.session_state.get("y_randomization_q2_gap_threshold", 0.10)),
@@ -183,7 +181,7 @@ def render_validation_section(context):
                 key="holdout_rs"
             )
             stratify_y_quantiles = st.checkbox(
-                "Stratify random split by target quantile bins",
+                t("validation.stratify_holdout_label"),
                 value=bool(st.session_state.get("holdout_stratify_y_quantiles", False)),
                 key="holdout_stratify_y_quantiles",
             )
@@ -301,7 +299,7 @@ def render_validation_section(context):
             )
             if not cached_result_is_current(res, expected_hash):
                 st.warning(
-                    "Stored hold-out result belongs to an older data/descriptor/validation configuration. Run hold-out again."
+                    t("validation.stale_holdout_warning")
                 )
                 res = None
     
@@ -681,7 +679,7 @@ def render_validation_section(context):
             )
             if not cached_result_is_current(res, expected_hash):
                 st.warning(
-                    "Stored K-fold result belongs to an older data/descriptor/validation configuration. Run K-fold again."
+                    t("validation.stale_kfold_warning")
                 )
                 res = None
     
@@ -900,7 +898,7 @@ def render_validation_section(context):
             )
             if not cached_result_is_current(res, expected_hash):
                 st.warning(
-                    "Stored LOO result belongs to an older data/descriptor/validation configuration. Run LOO again."
+                    t("validation.stale_loo_warning")
                 )
                 res = None
     
@@ -1184,8 +1182,7 @@ def render_validation_section(context):
                 )
                 if not cached_result_is_current(ext_res, expected_ext_hash):
                     st.warning(
-                        "Stored distance-based hold-out result belongs to an older "
-                        "data/descriptor/validation configuration. Run the stress test again."
+                        t("validation.stale_distance_holdout_warning")
                     )
                     ext_res = None
             else:
@@ -1224,30 +1221,30 @@ def render_validation_section(context):
             col_split_1, col_split_2, col_split_3 = st.columns(3)
             with col_split_1:
                 st.metric(
-                    "Unique test splits",
+                    t("validation.unique_test_splits"),
                     int(summary.get("unique_test_splits", 0) or 0)
                 )
             with col_split_2:
                 mean_jaccard = summary.get("mean_test_split_jaccard", np.nan)
                 st.metric(
-                    "Mean test-set Jaccard",
+                    t("validation.mean_test_set_jaccard"),
                     f"{mean_jaccard:.3f}" if np.isfinite(mean_jaccard) else "n/a"
                 )
             with col_split_3:
                 max_jaccard = summary.get("max_test_split_jaccard", np.nan)
                 st.metric(
-                    "Max test-set Jaccard",
+                    t("validation.max_test_set_jaccard"),
                     f"{max_jaccard:.3f}" if np.isfinite(max_jaccard) else "n/a"
                 )
 
-            with st.expander("Test-set selection frequency", expanded=False):
+            with st.expander(t("validation.test_selection_frequency"), expanded=False):
                 st.dataframe(
                     ext_res.get("test_selection_frequency", pd.DataFrame()),
                     width="stretch",
                     hide_index=True
                 )
 
-            with st.expander("Pairwise test-set Jaccard similarity", expanded=False):
+            with st.expander(t("validation.pairwise_test_jaccard"), expanded=False):
                 st.dataframe(
                     ext_res.get("test_split_jaccard", pd.DataFrame()),
                     width="stretch",
@@ -1801,7 +1798,7 @@ def render_validation_section(context):
                     pd.DataFrame()
                 )
                 if isinstance(bootstrap_failed_iterations, pd.DataFrame) and not bootstrap_failed_iterations.empty:
-                    with st.expander("Failed / skipped bootstrap iterations", expanded=False):
+                    with st.expander(t("validation.failed_bootstrap_iterations"), expanded=False):
                         st.dataframe(
                             bootstrap_failed_iterations,
                             width="stretch",
@@ -1809,7 +1806,7 @@ def render_validation_section(context):
                         )
     
                     st.download_button(
-                        "Download failed / skipped bootstrap iterations",
+                        t("validation.download_failed_bootstrap_iterations"),
                         qspr_csv_download_bytes(bootstrap_failed_iterations),
                         f"bootstrap_failed_iterations_{current_model_for_bootstrap}.csv",
                         "text/csv",

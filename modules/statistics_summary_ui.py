@@ -518,7 +518,7 @@ def _render_table(df, max_rows=None, **kwargs):
 
 
 def render_final_statistics_summary(context):
-    st.header("📊 Модуль итоговой статистики QSPR-анализа")
+    st.header(t("final_stats.header"))
     render_module_explanation("final_statistics")
     summary = build_final_statistics_summary(context)
     flat = final_statistics_to_flat_dataframe(summary)

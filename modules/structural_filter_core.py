@@ -17,6 +17,15 @@ from rdkit import Chem
 from rdkit.Chem import Descriptors
 from rdkit.Chem import rdMolDescriptors
 
+try:
+    from .i18n import t
+except Exception:
+    try:
+        from i18n import t  # type: ignore
+    except Exception:
+        def t(key, **kwargs):  # type: ignore
+            return key.format(**kwargs) if kwargs else key
+
 
 FUNCTIONAL_GROUP_SMARTS = {
     "Гидроксил / спиртовая OH": "[OX2H]",
@@ -184,8 +193,7 @@ def qspr_show_descriptor_meaning_table(
 
     with st.expander(title, expanded=expanded):
         st.caption(
-            "Расшифровка берётся из файла `descriptor_meanings.json`. "
-            "Если написано «Нет расшифровки», значит этот дескриптор нужно добавить в JSON."
+            t("structural_filter.descriptor_meanings_caption")
         )
 
         st.dataframe(
@@ -195,7 +203,7 @@ def qspr_show_descriptor_meaning_table(
         )
 
         st.download_button(
-            "📥 Скачать расшифровку дескрипторов CSV",
+            t("structural_filter.download_descriptor_meanings_csv"),
             meaning_df.to_csv(index=False).encode("utf-8-sig"),
             f"{key_prefix}.csv",
             "text/csv",

@@ -75,10 +75,7 @@ def render_model_comparison_section(context):
     else:
         if online_light_mode:
             st.info(
-                "Онлайн-версия работает в облегчённом режиме сравнения моделей: "
-                "по умолчанию выбраны быстрые алгоритмы, K-Fold ограничен 3 блоками, "
-                "LOO и дополнительные многократные проверки отключены. "
-                "Для полного сравнения используйте локальную версию."
+                t("model_comparison.online_light_info")
             )
             cloud_widget_limits = {
                 "cmp_top_n": 5,
@@ -236,16 +233,12 @@ def render_model_comparison_section(context):
 
                 if heavy_selected:
                     st.warning(
-                        "Выбраны более тяжёлые модели для облачного режима: "
-                        + ", ".join(heavy_selected)
-                        + ". При падении Cloud-приложения уменьшите список моделей "
-                        "или запустите полное сравнение локально."
+                        t("model_comparison.heavy_models_warning", models=", ".join(heavy_selected))
                     )
 
                 if len(selected_compare_models) > 5:
                     st.warning(
-                        "В онлайн-версии одновременно сравниваются первые 5 выбранных моделей. "
-                        "Остальные пропущены, чтобы не перегружать Streamlit Cloud."
+                        t("model_comparison.online_limit_warning")
                     )
                     selected_compare_models = selected_compare_models[:5]
             

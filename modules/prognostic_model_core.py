@@ -2355,9 +2355,9 @@ def qspr_prog_show_extended_ad_summary(pred_df):
         )
 
     ad_cols = st.columns(3)
-    ad_cols[0].metric("Molecular AD", status_summary("molecular_ad_status"))
-    ad_cols[1].metric("Spectral AD", status_summary("spectral_ad_status"))
-    ad_cols[2].metric("Combined AD", status_summary("combined_ad_status"))
+    ad_cols[0].metric(t("prognostic.molecular_ad_metric"), status_summary("molecular_ad_status"))
+    ad_cols[1].metric(t("prognostic.spectral_ad_metric"), status_summary("spectral_ad_status"))
+    ad_cols[2].metric(t("prognostic.combined_ad_metric"), status_summary("combined_ad_status"))
 
     interpretations = [
         str(value)
@@ -2381,8 +2381,7 @@ def qspr_prog_show_ad_summary(pred_df):
     n_out = int((pred_df["AD-статус"] == "вне AD").sum())
 
     st.caption(
-        "После прогноза: этот блок относится к доверию к конкретным новым прогнозам. "
-        "Он использует AD/uncertainty признаки и не заменяет анализ структурного покрытия исходного датасета."
+        t("prognostic.ad_summary_caption")
     )
 
     qspr_prog_show_extended_ad_summary(pred_df)
@@ -2390,45 +2389,31 @@ def qspr_prog_show_ad_summary(pred_df):
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric("Новых веществ", n_total)
+        st.metric(t("prognostic.metric_new_compounds"), n_total)
     with col2:
-        st.metric("Вне AD", n_out)
+        st.metric(t("prognostic.metric_outside_ad"), n_out)
     with col3:
-        st.metric("Вне AD, %", f"{n_out / n_total * 100:.1f}%" if n_total else "0.0%")
+        st.metric(t("prognostic.metric_outside_ad_percent"), f"{n_out / n_total * 100:.1f}%" if n_total else "0.0%")
     with col4:
         if "Порог h*" in pred_df.columns and len(pred_df) > 0:
-            st.metric("Порог h*", f"{float(pred_df['Порог h*'].iloc[0]):.4f}")
+            st.metric(t("prognostic.metric_h_threshold"), f"{float(pred_df['Порог h*'].iloc[0]):.4f}")
         else:
-            st.metric("Порог h*", "—")
+            st.metric(t("prognostic.metric_h_threshold"), "—")
 
     if n_out > 0:
         st.warning(
-            "Часть новых веществ находится вне применимой области прогностической модели. "
-            "Для них прогноз следует считать экстраполяционным и менее надёжным."
+            t("prognostic.warning_new_outside_ad")
         )
     else:
-        st.success("Все новые вещества находятся внутри применимой области прогностической модели по leverage.")
+        st.success(t("prognostic.success_all_inside_ad"))
 
-    with st.expander("🧭 Пояснение Applicability Domain для новых прогнозов", expanded=False):
+    with st.expander(t("prognostic.ad_explanation_title"), expanded=False):
         st.markdown(
-            """
-            **Leverage h** показывает, насколько новое вещество далеко от обучающей
-            выборки в пространстве дескрипторов.
-
-            Классический порог:
-
-            `h* = 3(p + 1) / n`
-
-            где `p` — число дескрипторов, `n` — число веществ в обучающей выборке
-            прогностической модели.
-
-            Если `h > h*`, прогноз считается находящимся **вне применимой области модели**
-            и должен интерпретироваться осторожно.
-            """
+            t("prognostic.ad_explanation_markdown")
         )
 
     if n_out > 0:
-        st.markdown("### Новые вещества вне применимой области")
+        st.markdown(t("prognostic.outside_ad_table_title"))
         st.dataframe(
             pred_df[pred_df["AD-статус"] == "вне AD"].copy(),
             width="stretch",
@@ -2451,11 +2436,9 @@ def qspr_show_prognostic_training_section(
     """
     Streamlit-блок обучения и сохранения прогностической модели.
     """
-    st.header("🔮 Прогностическая модель")
+    st.header(t("prognostic.header"))
     st.markdown(
-        "Все вещества выбраны по умолчанию. "
-        "Снимите галочки у веществ, которые нужно исключить "
-        "из финальной прогностической модели."
+        t("prognostic.training_description")
     )
 
     trained_models_available = list(
@@ -2463,7 +2446,7 @@ def qspr_show_prognostic_training_section(
     )
 
     if not trained_models_available:
-        st.info("Сначала обучите хотя бы одну аналитическую модель.")
+        st.info(t("prognostic.train_analytical_model_first"))
         return
 
     best_model_from_comparison = st.session_state.get(
@@ -2484,13 +2467,12 @@ def qspr_show_prognostic_training_section(
     default_model_index = trained_models_available.index(default_model_for_prog)
 
     model_name_for_prog = st.selectbox(
-        "Какую модель использовать как основу прогностической модели",
+        t("prognostic.source_model_label"),
         trained_models_available,
         index=default_model_index,
         key="prog_model_source_select",
         help=(
-            "Если выполнено сравнение моделей, по умолчанию выбирается модель, "
-            "занявшая 1 место в таблице сравнения."
+            t("prognostic.source_model_help")
         )
     )
 
@@ -2527,13 +2509,10 @@ def qspr_show_prognostic_training_section(
             params={"model_name": model_name_for_prog},
         )
         st.error(
-            "Не удалось получить расчётные значения аналитической модели для "
-            "таблицы прогностического отбора. Скорее всего, модель была обучена "
-            "на другом наборе дескрипторов или после автоотбора изменилась "
-            "размерность матрицы признаков."
+            t("prognostic.training_prediction_error")
         )
         st.exception(e)
-        st.info("Переобучите аналитическую модель на текущем наборе дескрипторов.")
+        st.info(t("prognostic.retrain_current_descriptors"))
         return
 
     prog_table = qspr_prog_make_training_table(
@@ -2548,8 +2527,8 @@ def qspr_show_prognostic_training_section(
         prog_table,
         column_config={
             "Выбрать": st.column_config.CheckboxColumn(
-                "Использовать",
-                help="Снимите галочку, если вещество нужно исключить из прогностической модели",
+                t("prognostic.use_column_label"),
+                help=t("prognostic.use_column_help"),
                 default=True,
             ),
         },
@@ -2561,7 +2540,7 @@ def qspr_show_prognostic_training_section(
 
     selected_positions = edited.index[edited["Выбрать"] == True].tolist()
 
-    if st.button("🧭 Обучить прогностическую модель на отобранных веществах", type="primary", key=f"train_prog_{model_name_for_prog}"):
+    if st.button(t("prognostic.train_selected_button"), type="primary", key=f"train_prog_{model_name_for_prog}"):
         try:
             package = qspr_prog_train_selected_model(
                 data=data,
@@ -2579,17 +2558,17 @@ def qspr_show_prognostic_training_section(
             qspr_save_results_auto(package["train_df"], "prognostic", target_col, len(package["y_train"]))
             qspr_prog_store_model_in_session(package)
 
-            st.success(f"Прогностическая модель обучена на {len(package['y_train'])} веществах.")
-            st.metric("R² на обучающих данных", f"{package['r2_train']:.3f}")
+            st.success(t("prognostic.training_success", count=len(package["y_train"])))
+            st.metric(t("prognostic.metric_train_r2"), f"{package['r2_train']:.3f}")
 
         except Exception as e:
-            st.error(f"Ошибка обучения прогностической модели: {e}")
+            st.error(t("prognostic.training_error", error=e))
 
     if "prog_model" in st.session_state and qspr_prog_is_online_mode():
         st.info(ONLINE_LOCK_MESSAGE)
 
     if "prog_model" in st.session_state and st.button(
-        "💾 Сохранить прогностическую модель полным пакетом",
+        t("prognostic.save_full_package_button"),
         key="save_prog",
         disabled=qspr_prog_is_online_mode(),
     ):
@@ -3056,19 +3035,19 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
         medium = int((statuses == "средняя").sum())
         low = int((statuses == "низкая").sum())
         col_rel_1, col_rel_2, col_rel_3, col_rel_4 = st.columns(4)
-        col_rel_1.metric("Объектов", len(pred_df))
-        col_rel_2.metric("Высокая надёжность", high)
-        col_rel_3.metric("Средняя надёжность", medium)
-        col_rel_4.metric("Низкая надёжность", low)
+        col_rel_1.metric(t("prognostic.metric_objects"), len(pred_df))
+        col_rel_2.metric(t("prognostic.metric_high_reliability"), high)
+        col_rel_3.metric(t("prognostic.metric_medium_reliability"), medium)
+        col_rel_4.metric(t("prognostic.metric_low_reliability"), low)
 
     st.dataframe(pred_df, width="stretch", hide_index=True)
 
     diagnostics = uncertainty_payload.get("diagnostics", {})
     if diagnostics:
-        with st.expander("📊 Диагностика неопределённости", expanded=False):
+        with st.expander(t("prognostic.uncertainty_diagnostics_title"), expanded=False):
             diagnostic_df = pd.DataFrame({
-                "Показатель": list(diagnostics.keys()),
-                "Значение": list(diagnostics.values()),
+                t("prognostic.col_indicator"): list(diagnostics.keys()),
+                t("prognostic.col_value"): list(diagnostics.values()),
             })
             st.dataframe(
                 diagnostic_df,
@@ -3082,8 +3061,8 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
             if model_names:
                 model_df = pd.DataFrame([
                     {
-                        "Модель": name,
-                        "Вес consensus": weights.get(name, np.nan),
+                        t("prognostic.col_model"): name,
+                        t("prognostic.col_consensus_weight"): weights.get(name, np.nan),
                         "CV RMSE": cv_rmse.get(name, np.nan),
                     }
                     for name in model_names
@@ -3095,20 +3074,19 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
                 )
 
             st.caption(
-                "Prediction interval калибруется по out-of-fold остаткам. "
-                "Bootstrap, consensus и GPR std не заменяют prediction interval."
+                t("prognostic.prediction_interval_caption")
             )
 
     neighbours = uncertainty_payload.get("neighbours")
     if isinstance(neighbours, pd.DataFrame) and not neighbours.empty:
-        with st.expander("🧭 Ближайшие обучающие аналоги", expanded=False):
+        with st.expander(t("prognostic.nearest_analogues_title"), expanded=False):
             st.dataframe(
                 neighbours,
                 width="stretch",
                 hide_index=True,
             )
             st.download_button(
-                "📥 Скачать таблицу аналогов CSV",
+                t("prognostic.download_nearest_analogues_csv"),
                 neighbours.to_csv(index=False).encode("utf-8"),
                 "prediction_nearest_analogues.csv",
                 "text/csv",
@@ -3116,7 +3094,7 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
             )
 
     st.download_button(
-        "📥 Скачать прогноз CSV",
+        t("prognostic.download_prediction_csv"),
         pred_df.to_csv(index=False).encode("utf-8"),
         "new_compounds_predictions.csv",
         "text/csv",
@@ -3428,7 +3406,7 @@ def qspr_show_prediction_sidebar():
 
     if model_file is not None:
         st.warning(
-            "Upload only models from trusted sources. Pickle/joblib files can execute Python code when loaded."
+            t("prediction_page.trusted_model_warning")
         )
         try:
             package = joblib.load(model_file)
@@ -3504,7 +3482,7 @@ def qspr_show_prediction_model_source_controls():
 
     if model_file is not None:
         st.warning(
-            "Upload only models from trusted sources. Pickle/joblib files can execute Python code when loaded."
+            t("prediction_page.trusted_model_warning")
         )
         try:
             package = joblib.load(model_file)
