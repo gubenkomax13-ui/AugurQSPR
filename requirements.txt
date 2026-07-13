@@ -1,4 +1,4 @@
-# Streamlit Cloud uses environment.yml for the scientific stack.
-# Keep requirements.txt intentionally minimal to avoid pip/conda ABI mixing.
-numpy<2
-streamlit-ketcher==0.0.1
+# Streamlit Cloud may install either requirements.txt or environment.yml depending
+# on the build path. Keep the online scientific stack here so the app can start
+# even when conda dependencies are not applied.
+-r requirements-online.txt
