@@ -83,7 +83,8 @@ def t(key, **kwargs):
         "install.missing_required_command": "Install only the missing required packages:",
         "install.optional_extensions_command": "Optional extensions are installed separately when needed:",
         "install.requirements_files_hint": (
-            "Use requirements-online.txt, requirements-local.txt, requirements-full.txt, or environment.yml "
+            "Use requirements.txt for Streamlit Cloud, or requirements-local.txt, requirements-full.txt, "
+            "and environment-local.yml for local/full installations "
             "from a terminal or deployment installer."
         ),
         "install.restart_required": (
