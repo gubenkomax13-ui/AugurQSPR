@@ -1,6 +1,9 @@
 name: augur-qspr
 channels:
   - conda-forge
+variables:
+  AUGUR_RUNTIME_MODE: local
+  AUGUR_SHOW_ONLINE_DEMO_NOTICE: "false"
 dependencies:
   - python=3.11
   - pip

@@ -35,6 +35,7 @@ import time
 
 import streamlit as st
 import streamlit.components.v1 as components
+from modules.runtime_mode import qspr_runtime_mode as shared_qspr_runtime_mode
 
 st.set_page_config(
     page_title="Augur QSPR",
@@ -832,11 +833,11 @@ translation_key_issues = validate_translation_keys(
 # ------------------------------------------------------------------
 # Проверка обязательных пакетов до тяжёлых импортов
 
-REQUIRED_PACKAGES = {
+FULL_REQUIRED_PACKAGES = {
     "pandas": "pandas",
     "numpy": "numpy",
     "matplotlib": "matplotlib",
-    "rdkit-pypi": "rdkit",
+    "rdkit": "rdkit",
     "scikit-learn": "sklearn",
     "joblib": "joblib",
     "seaborn": "seaborn",
@@ -844,6 +845,21 @@ REQUIRED_PACKAGES = {
     "Pillow": "PIL",
     "openpyxl": "openpyxl",
 }
+
+ONLINE_REQUIRED_PACKAGES = {
+    "pandas": "pandas",
+    "numpy": "numpy",
+    "matplotlib": "matplotlib",
+    "rdkit": "rdkit",
+    "scikit-learn": "sklearn",
+    "joblib": "joblib",
+    "seaborn": "seaborn",
+    "scipy": "scipy",
+    "Pillow": "PIL",
+    "openpyxl": "openpyxl",
+}
+
+REQUIRED_PACKAGES = ONLINE_REQUIRED_PACKAGES if qspr_is_online_mode() else FULL_REQUIRED_PACKAGES
 
 OPTIONAL_PACKAGES = {
     "xgboost": "xgboost",
@@ -1024,7 +1040,6 @@ from modules.statistics_summary_ui import render_final_statistics_summary
 from modules.chemical_diversity_ui import render_chemical_diversity_section
 from modules.model_catalog import MODEL_GROUP_LINEAR
 from modules.training_ui import MODEL_GROUP_TREE_ENSEMBLES
-from modules.runtime_mode import qspr_runtime_mode as shared_qspr_runtime_mode
 from modules.analysis_state import (
     ALGORITHM_VERSIONS,
     analysis_config_from_session,
