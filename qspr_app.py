@@ -836,7 +836,7 @@ REQUIRED_PACKAGES = {
     "pandas": "pandas",
     "numpy": "numpy",
     "matplotlib": "matplotlib",
-    "rdkit": "rdkit",
+    "rdkit-pypi": "rdkit",
     "scikit-learn": "sklearn",
     "joblib": "joblib",
     "seaborn": "seaborn",
