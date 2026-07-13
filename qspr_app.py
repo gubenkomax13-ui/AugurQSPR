@@ -665,10 +665,7 @@ def qspr_runtime_mode():
 
 
 def qspr_is_online_mode():
-    try:
-        return qspr_runtime_mode() == "online"
-    except NameError:
-        return qspr_is_online_streamlit_version()
+    return qspr_runtime_mode() == "online"
 
 
 def qspr_online_lock_notice(feature_name=""):
@@ -676,294 +673,6 @@ def qspr_online_lock_notice(feature_name=""):
         st.info(f"{feature_name}: {ONLINE_LOCK_MESSAGE}")
     else:
         st.info(ONLINE_LOCK_MESSAGE)
-
-
-def _online_light_text(lang, key):
-    lang = _normalize_lang_code(lang) or "ru"
-    texts = {
-        "ru": {
-            "title": "Augur QSPR онлайн",
-            "caption": "Лёгкая онлайн-версия: быстрый табличный QSPR без RDKit, Mordred, PaDEL, xTB, PySR и тяжёлых проверок.",
-            "local_note": "Полная химическая версия со структурными дескрипторами, SAOD, спектрами и отчётами доступна локально.",
-        "upload": "Загрузите CSV или XLSX с готовыми числовыми дескрипторами",
-        "smiles": "Колонка SMILES",
-        "use_rdkit": "Рассчитать базовые RDKit-дескрипторы из SMILES",
-        "invalid_smiles": "Строк с невалидными SMILES: {count}. Они не попадут в обучение.",
-            "target": "Целевое свойство",
-            "features": "Дескрипторы для модели",
-            "model": "Модель",
-            "test_size": "Тестовая выборка, %",
-            "seed": "Seed",
-            "run": "Обучить лёгкую модель",
-            "not_enough": "Нужно минимум 5 строк с целевым свойством и числовыми дескрипторами.",
-            "no_features": "Не найдено числовых дескрипторов. В онлайн-версии структуры SMILES не превращаются в дескрипторы.",
-            "metrics": "Метрики тестовой выборки",
-            "predictions": "Прогнозы",
-            "download": "Скачать прогнозы CSV",
-            "install_hint": "Если нужна полная химическая функциональность, запустите локальную версию Augur QSPR.",
-        },
-        "kk": {
-            "title": "Augur QSPR онлайн",
-            "caption": "Жеңіл онлайн-нұсқа: RDKit, Mordred, PaDEL, xTB, PySR және ауыр тексерулерсіз жылдам кестелік QSPR.",
-            "local_note": "Құрылымдық дескрипторлар, SAOD, спектрлер және есептер бар толық химиялық нұсқа жергілікті түрде қолжетімді.",
-        "upload": "Дайын сандық дескрипторлары бар CSV немесе XLSX файлын жүктеңіз",
-        "smiles": "SMILES бағаны",
-        "use_rdkit": "SMILES бойынша базалық RDKit-дескрипторларды есептеу",
-        "invalid_smiles": "Жарамсыз SMILES жолдары: {count}. Олар оқытуға кірмейді.",
-            "target": "Мақсатты қасиет",
-            "features": "Модель дескрипторлары",
-            "model": "Модель",
-            "test_size": "Тест жиыны, %",
-            "seed": "Seed",
-            "run": "Жеңіл модельді оқыту",
-            "not_enough": "Мақсатты қасиеті және сандық дескрипторлары бар кемінде 5 жол керек.",
-            "no_features": "Сандық дескрипторлар табылмады. Онлайн-нұсқада SMILES құрылымдары дескрипторларға түрлендірілмейді.",
-            "metrics": "Тест жиыны метрикалары",
-            "predictions": "Болжамдар",
-            "download": "Болжамдарды CSV ретінде жүктеу",
-            "install_hint": "Толық химиялық функционал қажет болса, Augur QSPR жергілікті нұсқасын іске қосыңыз.",
-        },
-        "en": {
-            "title": "Augur QSPR online",
-            "caption": "Light online version: fast tabular QSPR without RDKit, Mordred, PaDEL, xTB, PySR, or heavy diagnostics.",
-            "local_note": "The full chemistry version with structural descriptors, SAOD, spectra, and reports is available locally.",
-        "upload": "Upload a CSV or XLSX file with prepared numeric descriptors",
-        "smiles": "SMILES column",
-        "use_rdkit": "Calculate basic RDKit descriptors from SMILES",
-        "invalid_smiles": "Rows with invalid SMILES: {count}. They will not be used for training.",
-            "target": "Target property",
-            "features": "Model descriptors",
-            "model": "Model",
-            "test_size": "Test set, %",
-            "seed": "Seed",
-            "run": "Train lightweight model",
-            "not_enough": "At least 5 rows with a target value and numeric descriptors are required.",
-            "no_features": "No numeric descriptors were found. The online version does not convert SMILES structures into descriptors.",
-            "metrics": "Test-set metrics",
-            "predictions": "Predictions",
-            "download": "Download predictions CSV",
-            "install_hint": "Run the local Augur QSPR version for the full chemistry functionality.",
-        },
-    }
-    return texts.get(lang, texts["ru"]).get(key, key)
-
-
-def render_online_light_app():
-    import numpy as _np
-    import pandas as _pd
-    from rdkit import Chem
-    from rdkit.Chem import Descriptors
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.impute import SimpleImputer
-    from sklearn.linear_model import LinearRegression, Ridge
-    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-    from sklearn.model_selection import train_test_split
-    from sklearn.pipeline import Pipeline
-    from sklearn.preprocessing import StandardScaler
-
-    query_lang = _query_param_lang()
-    if query_lang:
-        st.session_state.lang = query_lang
-    elif "lang" not in st.session_state:
-        st.session_state.lang = _browser_lang() or "ru"
-    lang = st.session_state.get("lang", "ru")
-
-    def lt(key):
-        return _online_light_text(lang, key)
-
-    st.sidebar.header("⚙️ " + {"ru": "Управление", "kk": "Басқару", "en": "Controls"}.get(lang, "Управление"))
-    selected_lang = st.sidebar.selectbox(
-        {"ru": "Язык", "kk": "Тіл", "en": "Language"}.get(lang, "Язык"),
-        options=["ru", "kk", "en"],
-        index=["ru", "kk", "en"].index(lang) if lang in ["ru", "kk", "en"] else 0,
-        format_func=lambda code: {"ru": "Русский", "kk": "Қазақша", "en": "English"}[code],
-        key="online_light_lang",
-    )
-    if selected_lang != lang:
-        st.session_state.lang = selected_lang
-        _remember_lang_in_url(selected_lang)
-        st.rerun()
-
-    st.title("🧪 " + lt("title"))
-    st.info(lt("caption"))
-    st.caption(lt("local_note"))
-
-    uploaded_file = st.file_uploader(lt("upload"), type=["csv", "xlsx", "xls"])
-    if uploaded_file is None:
-        st.warning(lt("install_hint"))
-        st.stop()
-
-    try:
-        if uploaded_file.name.lower().endswith((".xlsx", ".xls")):
-            data = _pd.read_excel(uploaded_file)
-        else:
-            data = _pd.read_csv(uploaded_file)
-    except UnicodeDecodeError:
-        uploaded_file.seek(0)
-        data = _pd.read_csv(uploaded_file, sep=None, engine="python", encoding="cp1251")
-    except Exception as exc:
-        st.error(str(exc))
-        st.stop()
-
-    if data.empty or len(data) < 5:
-        st.error(lt("not_enough"))
-        st.dataframe(data.head(), use_container_width=True)
-        st.stop()
-
-    st.dataframe(data.head(20), use_container_width=True)
-    target_col = st.selectbox(lt("target"), options=list(data.columns))
-
-    smiles_candidates = [
-        column for column in data.columns
-        if str(column).strip().lower() in {"smiles", "canonical_smiles", "canonical smiles"}
-    ]
-    smiles_options = [""] + list(data.columns)
-    smiles_default = smiles_options.index(smiles_candidates[0]) if smiles_candidates else 0
-    smiles_col = st.selectbox(lt("smiles"), options=smiles_options, index=smiles_default)
-    use_rdkit = bool(smiles_col) and st.checkbox(lt("use_rdkit"), value=bool(smiles_col))
-
-    numeric = data.copy()
-    for column in numeric.columns:
-        numeric[column] = _pd.to_numeric(
-            numeric[column].astype(str).str.replace(",", ".", regex=False),
-            errors="coerce",
-        )
-
-    if use_rdkit:
-        rdkit_rows = []
-        invalid_smiles = 0
-        for smiles in data[smiles_col].astype(str):
-            mol = Chem.MolFromSmiles(smiles)
-            if mol is None:
-                invalid_smiles += 1
-                rdkit_rows.append({
-                    "RDKit::MolWt": _np.nan,
-                    "RDKit::MolLogP": _np.nan,
-                    "RDKit::TPSA": _np.nan,
-                    "RDKit::NumHDonors": _np.nan,
-                    "RDKit::NumHAcceptors": _np.nan,
-                    "RDKit::NumRotatableBonds": _np.nan,
-                    "RDKit::RingCount": _np.nan,
-                    "RDKit::HeavyAtomCount": _np.nan,
-                    "RDKit::FractionCSP3": _np.nan,
-                })
-                continue
-            rdkit_rows.append({
-                "RDKit::MolWt": Descriptors.MolWt(mol),
-                "RDKit::MolLogP": Descriptors.MolLogP(mol),
-                "RDKit::TPSA": Descriptors.TPSA(mol),
-                "RDKit::NumHDonors": Descriptors.NumHDonors(mol),
-                "RDKit::NumHAcceptors": Descriptors.NumHAcceptors(mol),
-                "RDKit::NumRotatableBonds": Descriptors.NumRotatableBonds(mol),
-                "RDKit::RingCount": Descriptors.RingCount(mol),
-                "RDKit::HeavyAtomCount": Descriptors.HeavyAtomCount(mol),
-                "RDKit::FractionCSP3": Descriptors.FractionCSP3(mol),
-            })
-        if invalid_smiles:
-            st.warning(lt("invalid_smiles").format(count=invalid_smiles))
-        rdkit_df = _pd.DataFrame(rdkit_rows, index=data.index)
-        numeric = _pd.concat([numeric, rdkit_df], axis=1)
-
-    candidate_features = [
-        column for column in numeric.columns
-        if column != target_col and numeric[column].notna().sum() >= 3
-    ]
-    if not candidate_features:
-        st.error(lt("no_features"))
-        st.stop()
-
-    default_features = candidate_features[: min(50, len(candidate_features))]
-    feature_cols = st.multiselect(
-        lt("features"),
-        options=candidate_features,
-        default=default_features,
-    )
-    if not feature_cols:
-        st.error(lt("no_features"))
-        st.stop()
-
-    col_model, col_test, col_seed = st.columns(3)
-    with col_model:
-        model_name = st.selectbox(lt("model"), ["Ridge", "Linear Regression", "Random Forest"])
-    with col_test:
-        test_percent = st.slider(lt("test_size"), 10, 40, 20, 5)
-    with col_seed:
-        seed = st.number_input(lt("seed"), min_value=0, max_value=100000, value=42, step=1)
-
-    if not st.button("🚀 " + lt("run"), type="primary"):
-        st.stop()
-
-    work = numeric[[target_col] + feature_cols].copy()
-    work = work[_np.isfinite(work[target_col])]
-    X = work[feature_cols]
-    y = work[target_col]
-    if len(work) < 5 or y.nunique(dropna=True) < 2:
-        st.error(lt("not_enough"))
-        st.stop()
-
-    if model_name == "Random Forest":
-        estimator = RandomForestRegressor(
-            n_estimators=120,
-            random_state=int(seed),
-            n_jobs=1,
-            min_samples_leaf=2,
-        )
-        steps = [("impute", SimpleImputer(strategy="median")), ("model", estimator)]
-    elif model_name == "Linear Regression":
-        steps = [
-            ("impute", SimpleImputer(strategy="median")),
-            ("scale", StandardScaler()),
-            ("model", LinearRegression()),
-        ]
-    else:
-        steps = [
-            ("impute", SimpleImputer(strategy="median")),
-            ("scale", StandardScaler()),
-            ("model", Ridge(alpha=1.0)),
-        ]
-
-    model = Pipeline(steps)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=float(test_percent) / 100.0,
-        random_state=int(seed),
-    )
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    rmse = float(_np.sqrt(mean_squared_error(y_test, y_pred)))
-    mae = float(mean_absolute_error(y_test, y_pred))
-    try:
-        r2 = float(r2_score(y_test, y_pred))
-    except Exception:
-        r2 = _np.nan
-
-    st.subheader(lt("metrics"))
-    st.dataframe(
-        _pd.DataFrame([{
-            "model": model_name,
-            "n_train": int(len(X_train)),
-            "n_test": int(len(X_test)),
-            "R2": r2,
-            "RMSE": rmse,
-            "MAE": mae,
-        }]),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    pred_table = data.loc[X_test.index].copy()
-    pred_table["observed"] = y_test.to_numpy()
-    pred_table["predicted"] = y_pred
-    pred_table["residual"] = pred_table["observed"] - pred_table["predicted"]
-    st.subheader(lt("predictions"))
-    st.dataframe(pred_table, use_container_width=True)
-    st.download_button(
-        lt("download"),
-        data=pred_table.to_csv(index=False).encode("utf-8-sig"),
-        file_name="augur_qspr_online_predictions.csv",
-        mime="text/csv",
-    )
 
 
 def qspr_show_online_demo_notice():
@@ -1123,7 +832,7 @@ translation_key_issues = validate_translation_keys(
 # ------------------------------------------------------------------
 # Проверка обязательных пакетов до тяжёлых импортов
 
-FULL_REQUIRED_PACKAGES = {
+REQUIRED_PACKAGES = {
     "pandas": "pandas",
     "numpy": "numpy",
     "matplotlib": "matplotlib",
@@ -1135,16 +844,6 @@ FULL_REQUIRED_PACKAGES = {
     "Pillow": "PIL",
     "openpyxl": "openpyxl",
 }
-
-ONLINE_REQUIRED_PACKAGES = {
-    "pandas": "pandas",
-    "numpy": "numpy",
-    "rdkit": "rdkit",
-    "scikit-learn": "sklearn",
-    "openpyxl": "openpyxl",
-}
-
-REQUIRED_PACKAGES = ONLINE_REQUIRED_PACKAGES if qspr_is_online_mode() else FULL_REQUIRED_PACKAGES
 
 OPTIONAL_PACKAGES = {
     "xgboost": "xgboost",
@@ -1297,10 +996,6 @@ if missing_required or numpy_conflict:
 
     st.warning(t("install.restart_required"))
     st.info(t("install.streamlit_missing_hint"))
-    st.stop()
-
-if qspr_is_online_mode():
-    render_online_light_app()
     st.stop()
 
 # ------------------------------------------------------------------
