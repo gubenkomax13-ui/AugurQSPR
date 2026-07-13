@@ -55,6 +55,22 @@ def t(key, **kwargs):
         "install.title": "Augur QSPR installation",
         "install.missing_packages": "Missing or broken packages: {packages}",
         "install.numpy_conflict": "Installed NumPy version is outside the supported range.",
+        "install.auto_install_disabled": (
+            "Automatic package installation from the interface is disabled: it can break the environment "
+            "and does not cover external dependencies such as Java for PaDEL, Julia for PySR, or xTB system libraries."
+        ),
+        "install.missing_required_command": "Install only the missing required packages:",
+        "install.optional_extensions_command": "Optional extensions are installed separately when needed:",
+        "install.requirements_files_hint": (
+            "Use requirements-online.txt, requirements-local.txt, requirements-full.txt, or environment.yml "
+            "from a terminal or deployment installer."
+        ),
+        "install.restart_required": (
+            "After installing packages, restart the Streamlit/Python process so the app can load the new environment."
+        ),
+        "install.streamlit_missing_hint": (
+            "If Streamlit itself is missing, run the external installer or install dependencies from the terminal."
+        ),
     }.get(str(key), str(key))
     try:
         return fallback.format(**kwargs)
@@ -798,7 +814,7 @@ translation_key_issues = validate_translation_keys(
 
 REQUIRED_PACKAGES = {
     "pandas": "pandas",
-    "numpy<2": ("numpy", "numpy<2"),
+    "numpy": "numpy",
     "matplotlib": "matplotlib",
     "rdkit-pypi": "rdkit",
     "scikit-learn": "sklearn",
@@ -891,26 +907,28 @@ try:
     try:
         from packaging.version import Version
         numpy_version = Version(str(_np_check.__version__))
-        numpy_supported = Version("1.23") <= numpy_version < Version("2.0")
+        numpy_supported = Version("1.23") <= numpy_version < Version("3.0")
     except Exception:
         version_parts = str(_np_check.__version__).split(".")
         numpy_supported = (
             len(version_parts) >= 2
             and version_parts[0].isdigit()
             and version_parts[1].isdigit()
-            and int(version_parts[0]) == 1
-            and int(version_parts[1]) >= 23
+            and (
+                (int(version_parts[0]) == 1 and int(version_parts[1]) >= 23)
+                or int(version_parts[0]) == 2
+            )
         )
     if not numpy_supported:
         numpy_conflict = True
-        numpy_version_details = f"installed numpy={_np_check.__version__}; required >=1.23,<2.0"
-        if "numpy<2" not in missing_required:
-            missing_required.append("numpy<2")
+        numpy_version_details = f"installed numpy={_np_check.__version__}; required >=1.23,<3.0"
+        if "numpy" not in missing_required:
+            missing_required.append("numpy")
 except ImportError:
     numpy_conflict = True
-    numpy_version_details = "numpy is not importable; required >=1.23,<2.0"
-    if "numpy<2" not in missing_required:
-        missing_required.append("numpy<2")
+    numpy_version_details = "numpy is not importable; required >=1.23,<3.0"
+    if "numpy" not in missing_required:
+        missing_required.append("numpy")
 
 if missing_required or numpy_conflict:
     st.title(t('install.title'))
@@ -937,10 +955,10 @@ if missing_required or numpy_conflict:
     missing_required_packages = [
         str(item).split(" (", 1)[0]
         for item in missing_required
-        if str(item).split(" (", 1)[0] != "numpy<2"
+        if str(item).split(" (", 1)[0] != "numpy"
     ]
-    if numpy_conflict and "numpy<2" not in missing_required_packages:
-        missing_required_packages.append("numpy<2")
+    if numpy_conflict and "numpy" not in missing_required_packages:
+        missing_required_packages.append("numpy")
     if missing_required_packages:
         st.markdown(t("install.missing_required_command"))
         st.code(
