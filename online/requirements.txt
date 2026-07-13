@@ -1,0 +1,11 @@
+# Lightweight public Augur QSPR demo.
+# Full local app dependencies live in the repository root environment.yml /
+# requirements-local.txt / requirements-full.txt.
+streamlit==1.36.0
+pandas==2.2.2
+numpy==1.26.4
+scipy==1.13.1
+scikit-learn==1.5.1
+openpyxl==3.1.5
+plotly==5.22.0
+rdkit==2024.3.5
