@@ -659,40 +659,6 @@ def qspr_is_online_streamlit_version():
     return any(marker in host or marker in url for marker in online_hosts)
 
 
-def qspr_is_streamlit_cloud_runtime_early():
-    streamlit_env_markers = [
-        "STREAMLIT_CLOUD",
-        "STREAMLIT_SHARING_MODE",
-        "STREAMLIT_RUNTIME_ENV",
-    ]
-    for env_name in streamlit_env_markers:
-        value = str(os.environ.get(env_name, "")).strip().lower()
-        if value and value not in {"0", "false", "local", "development"}:
-            return True
-
-    context = getattr(st, "context", None)
-    headers = getattr(context, "headers", {}) if context is not None else {}
-    try:
-        host = str(headers.get("host") or headers.get("Host") or "").lower()
-    except AttributeError:
-        host = ""
-
-    try:
-        url = str(getattr(context, "url", "") or "").lower()
-    except Exception:
-        url = ""
-
-    online_hosts = ("streamlit.app", "share.streamlit.io")
-    return any(marker in host or marker in url for marker in online_hosts)
-
-
-if qspr_is_streamlit_cloud_runtime_early():
-    from online.streamlit_app import main as _render_online_app
-
-    _render_online_app()
-    st.stop()
-
-
 def qspr_runtime_mode():
     """Return `online` or `local` for feature gating."""
     return shared_qspr_runtime_mode()

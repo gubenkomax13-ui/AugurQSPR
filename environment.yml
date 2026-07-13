@@ -1,14 +1,25 @@
 name: augur-qspr-online
 channels:
   - conda-forge
+  - nodefaults
 dependencies:
   - python=3.11
   - pip
-  - streamlit=1.36.0
-  - pandas=2.2.2
-  - numpy=1.26.4
-  - scipy=1.13.1
-  - scikit-learn=1.5.1
-  - openpyxl=3.1.5
-  - plotly=5.22.0
-  - rdkit=2024.03.5
+  - rdkit
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - joblib
+  - openpyxl
+  - xlsxwriter
+  - requests
+  - pillow
+  - plotly
+  - python-docx
+  - reportlab
+  - streamlit
+  - pip:
+      - streamlit-ketcher==0.0.1
