@@ -1464,10 +1464,24 @@ def show_molecule_viewer(data, target_col, smiles_col="SMILES"):
 
         st.write(t('molecule_viewer.molecules_count', count=max_available))
 
+        if qspr_is_online_mode():
+            st.info(t("molecule_viewer.online_manual_render_info"))
+            if not st.button(
+                t("molecule_viewer.online_render_button"),
+                key="mol_view_online_render_button",
+            ):
+                return
+
         col_mol_1, col_mol_2, col_mol_3, col_mol_4 = st.columns(4)
 
         with col_mol_1:
-            n_show_mols = st.selectbox(t('molecule_viewer.molecules_per_page'), [20, 50, 100, 200], index=2, key="mol_view_n_per_page")
+            mol_page_options = [20] if qspr_is_online_mode() else [20, 50, 100, 200]
+            n_show_mols = st.selectbox(
+                t('molecule_viewer.molecules_per_page'),
+                mol_page_options,
+                index=0 if qspr_is_online_mode() else 2,
+                key="mol_view_n_per_page",
+            )
 
         with col_mol_2:
             total_pages = int(np.ceil(max_available / n_show_mols))

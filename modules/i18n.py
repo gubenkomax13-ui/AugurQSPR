@@ -17,6 +17,30 @@ CURRENT_LANG = 'ru'
 _cache = {}
 _cache_mtime = {}
 
+BUILTIN_FALLBACKS = {
+    "ru": {
+        "molecule_viewer.online_manual_render_info": (
+            "В онлайн-режиме структуры не строятся автоматически сразу после загрузки файла, "
+            "чтобы избежать падения процесса на проблемных SMILES или нативной отрисовке RDKit."
+        ),
+        "molecule_viewer.online_render_button": "Показать первые 20 структур",
+    },
+    "en": {
+        "molecule_viewer.online_manual_render_info": (
+            "In online mode, structures are not rendered automatically immediately after upload "
+            "to avoid process crashes on problematic SMILES or native RDKit drawing."
+        ),
+        "molecule_viewer.online_render_button": "Show first 20 structures",
+    },
+    "kk": {
+        "molecule_viewer.online_manual_render_info": (
+            "Онлайн режимінде файл жүктелгеннен кейін құрылымдар автоматты түрде салынбайды: "
+            "бұл қате SMILES немесе RDKit-тің нативті сызуындағы үзілістерден қорғайды."
+        ),
+        "molecule_viewer.online_render_button": "Алғашқы 20 құрылымды көрсету",
+    },
+}
+
 
 def _lookup(data: Dict[str, Any], key: str):
     value = data
@@ -78,6 +102,10 @@ def gettext(key: str, **kwargs) -> str:
             value = _lookup(load_language('en'), key)
     if _is_corrupted_translation(value):
         value = _lookup(load_language('en'), key)
+    if value is None:
+        value = BUILTIN_FALLBACKS.get(CURRENT_LANG, {}).get(key)
+        if value is None:
+            value = BUILTIN_FALLBACKS.get('ru', {}).get(key)
     if value is None:
         return _humanize_key(key)
     if isinstance(value, str):
