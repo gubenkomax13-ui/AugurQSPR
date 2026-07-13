@@ -3104,7 +3104,7 @@
     "residual_table_title": "Residuals by object",
     "download_csv": "Download CSV",
     "download_json": "Download JSON",
-    "header": "?? Final QSPR analysis statistics"
+    "header": "📊 Final QSPR analysis statistics"
   },
   "chemical_diversity": {
     "premodeling_scope_caption": "Before modelling: this is dataset structural coverage and chemical diversity. It is not the applicability domain of an already trained model and not confidence in an individual prediction.",
@@ -3698,7 +3698,7 @@
   },
   "structural_filter": {
     "descriptor_meanings_caption": "Descriptor explanations are read from `descriptor_meanings.json`. If ?No explanation? is shown, this descriptor should be added to the JSON file.",
-    "download_descriptor_meanings_csv": "?? Download descriptor explanations CSV"
+    "download_descriptor_meanings_csv": "📥 Download descriptor explanations CSV"
   },
   "prognostic": {
     "ad_summary_caption": "After prediction: this block concerns confidence in specific new predictions. It uses AD/uncertainty indicators and does not replace analysis of structural coverage in the source dataset.",
@@ -3708,10 +3708,10 @@
     "metric_h_threshold": "h* threshold",
     "warning_new_outside_ad": "Some new compounds are outside the applicability domain of the prognostic model. Their predictions should be interpreted as extrapolations and as less reliable.",
     "success_all_inside_ad": "All new compounds are inside the prognostic model applicability domain by leverage.",
-    "ad_explanation_title": "?? Applicability Domain explanation for new predictions",
+    "ad_explanation_title": "🧭 Applicability Domain explanation for new predictions",
     "ad_explanation_markdown": "**Leverage h** indicates how far a new compound is from the training set in descriptor space.\n\nClassical threshold:\n\n`h* = 3(p + 1) / n`\n\nwhere `p` is the number of descriptors and `n` is the number of compounds in the prognostic-model training set.\n\nIf `h > h*`, the prediction is considered **outside the model applicability domain** and should be interpreted cautiously.",
     "outside_ad_table_title": "### New compounds outside the applicability domain",
-    "header": "?? Prognostic model",
+    "header": "🔮 Prognostic model",
     "training_description": "All compounds are selected by default. Clear the checkboxes for compounds that should be excluded from the final prognostic model.",
     "train_analytical_model_first": "Train at least one analytical model first.",
     "source_model_label": "Which model should be used as the basis for the prognostic model",
@@ -3720,24 +3720,24 @@
     "retrain_current_descriptors": "Retrain the analytical model on the current descriptor set.",
     "use_column_label": "Use",
     "use_column_help": "Clear the checkbox if the compound should be excluded from the prognostic model",
-    "train_selected_button": "?? Train prognostic model on selected compounds",
+    "train_selected_button": "🧭 Train prognostic model on selected compounds",
     "training_success": "The prognostic model was trained on {count} compounds.",
     "metric_train_r2": "Training R?",
     "training_error": "Prognostic model training error: {error}",
-    "save_full_package_button": "?? Save full prognostic model package",
+    "save_full_package_button": "💾 Save full prognostic model package",
     "metric_objects": "Objects",
     "metric_high_reliability": "High reliability",
     "metric_medium_reliability": "Medium reliability",
     "metric_low_reliability": "Low reliability",
-    "uncertainty_diagnostics_title": "?? Uncertainty diagnostics",
+    "uncertainty_diagnostics_title": "📊 Uncertainty diagnostics",
     "col_indicator": "Indicator",
     "col_value": "Value",
     "col_model": "Model",
     "col_consensus_weight": "Consensus weight",
     "prediction_interval_caption": "Prediction interval is calibrated from out-of-fold residuals. Bootstrap, consensus, and GPR std do not replace the prediction interval.",
-    "nearest_analogues_title": "?? Nearest training analogues",
-    "download_nearest_analogues_csv": "?? Download analogue table CSV",
-    "download_prediction_csv": "?? Download prediction CSV",
+    "nearest_analogues_title": "🧭 Nearest training analogues",
+    "download_nearest_analogues_csv": "📥 Download analogue table CSV",
+    "download_prediction_csv": "📥 Download prediction CSV",
     "molecular_ad_metric": "Molecular AD",
     "spectral_ad_metric": "Spectral AD",
     "combined_ad_metric": "Combined AD"
@@ -3755,7 +3755,7 @@
     "padel_fallback_warning": "The full PaDEL catalog is unavailable. A fallback limited set of unique PaDEL descriptors is used."
   },
   "i18n": {
-    "expander_title": "?? i18n",
+    "expander_title": "🌐 i18n",
     "missing_keys_warning": "Missing localization keys detected."
   }
 }
