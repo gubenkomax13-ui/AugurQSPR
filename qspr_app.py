@@ -170,82 +170,82 @@ def qspr_infer_property_interpretation(property_col):
     if any(marker in compact for marker in higher_markers):
         return {
             "kind": "activity",
-            "label": "Лекарственная активность",
+            "label": t("property_interpretation.label_activity"),
             "interpretation": QSPR_INTERPRET_HIGHER_ACTIVITY,
-            "message": f"Обнаружен показатель {property_col}. Более высокое значение обычно соответствует большей активности.",
+            "message": t("property_interpretation.message_higher_activity", col=property_col),
         }
     if any(marker in compact for marker in lower_markers):
         return {
             "kind": "activity",
-            "label": "Лекарственная активность",
+            "label": t("property_interpretation.label_activity"),
             "interpretation": QSPR_INTERPRET_LOWER_ACTIVITY,
-            "message": f"Обнаружен показатель {property_col}. Более низкое значение обычно соответствует большей активности.",
+            "message": t("property_interpretation.message_lower_activity", col=property_col),
         }
     if any(marker in compact for marker in physchem_markers):
         return {
             "kind": "physchem",
-            "label": "Физико-химическое",
+            "label": t("property_interpretation.label_physchem"),
             "interpretation": QSPR_INTERPRET_NUMERIC_ONLY,
-            "message": (
-                f"Выбрано физико-химическое свойство: {property_col}. "
-                "SAOD будет анализировать числовые изменения свойства. "
-                "Оценка «усиления» или «ослабления» эффекта не применяется."
-            ),
+            "message": t("property_interpretation.message_physchem", col=property_col),
         }
     return {
         "kind": "numeric",
-        "label": "Числовое свойство",
+        "label": t("property_interpretation.label_numeric"),
         "interpretation": QSPR_INTERPRET_NUMERIC_ONLY,
-        "message": (
-            "SAOD оценивает рост, снижение или отсутствие устойчивого изменения свойства. "
-            "Понятия «усиление» и «ослабление эффекта» не используются."
-        ),
+        "message": t("property_interpretation.message_numeric"),
     }
 
 
 def qspr_show_property_interpretation_block(property_col, key_prefix):
     info = qspr_infer_property_interpretation(property_col)
-    st.subheader("Интерпретация свойства")
-    st.markdown(f"**Тип свойства:** {info['label']}")
-    st.markdown(f"**Выбранное свойство:** {property_col}")
+    st.subheader(t("property_interpretation.title"))
+    st.markdown(t("property_interpretation.property_type", label=info["label"]))
+    st.markdown(t("property_interpretation.selected_property", col=property_col))
     st.info(info["message"])
     if info["kind"] == "activity":
-        st.caption("Определено автоматически по названию колонки. Проверьте корректность интерпретации.")
+        st.caption(t("property_interpretation.auto_detected_caption"))
 
     interpretation = info["interpretation"]
     transform_mode = QSPR_NO_ACTIVITY_TRANSFORM
 
-    with st.expander("Расширенные настройки", expanded=False):
+    with st.expander(t("property_interpretation.advanced_settings"), expanded=False):
         if info["kind"] == "activity":
             override = st.checkbox(
-                "Переопределить автоматическую интерпретацию",
+                t("property_interpretation.override_checkbox"),
                 value=False,
                 key=f"{key_prefix}_override_property_interpretation",
             )
             if override:
                 interpretation = st.radio(
-                    "Интерпретация свойства",
+                    t("property_interpretation.interpretation_radio"),
                     [
                         QSPR_INTERPRET_HIGHER_ACTIVITY,
                         QSPR_INTERPRET_LOWER_ACTIVITY,
                         QSPR_INTERPRET_NUMERIC_ONLY,
                     ],
+                    format_func=lambda value: {
+                        QSPR_INTERPRET_HIGHER_ACTIVITY: t("property_interpretation.interpret_higher_activity"),
+                        QSPR_INTERPRET_LOWER_ACTIVITY: t("property_interpretation.interpret_lower_activity"),
+                        QSPR_INTERPRET_NUMERIC_ONLY: t("property_interpretation.interpret_numeric_only"),
+                    }.get(value, value),
                     key=f"{key_prefix}_property_interpretation_override",
                 )
             transform_mode = st.selectbox(
-                "Преобразование активности",
+                t("property_interpretation.activity_transform"),
                 [
                     QSPR_NO_ACTIVITY_TRANSFORM,
                     QSPR_NEG_LOG10_TRANSFORM,
                     QSPR_ALREADY_TRANSFORMED_ACTIVITY,
                 ],
+                format_func=lambda value: {
+                    QSPR_NO_ACTIVITY_TRANSFORM: t("property_interpretation.transform_none"),
+                    QSPR_NEG_LOG10_TRANSFORM: t("property_interpretation.transform_neg_log10"),
+                    QSPR_ALREADY_TRANSFORMED_ACTIVITY: t("property_interpretation.transform_already"),
+                }.get(value, value),
                 key=f"{key_prefix}_activity_transform",
             )
         else:
-            st.caption(
-                "Для этого типа свойства преобразование активности скрыто. "
-                "Анализируются только числовое увеличение, снижение или отсутствие устойчивого направления."
-            )
+            st.caption(t("property_interpretation.transform_hidden_caption"))
 
     return interpretation, transform_mode, info
 
@@ -933,10 +933,7 @@ if missing_required or numpy_conflict:
         if numpy_version_details:
             st.code(numpy_version_details)
 
-    st.warning(
-        "Автоматическая установка пакетов из интерфейса отключена: она может сломать окружение "
-        "и не покрывает внешние зависимости вроде Java для PaDEL, Julia для PySR и системных библиотек xTB."
-    )
+    st.warning(t("install.auto_install_disabled"))
     missing_required_packages = [
         str(item).split(" (", 1)[0]
         for item in missing_required
@@ -945,22 +942,22 @@ if missing_required or numpy_conflict:
     if numpy_conflict and "numpy<2" not in missing_required_packages:
         missing_required_packages.append("numpy<2")
     if missing_required_packages:
-        st.markdown("Install only the missing required packages:")
+        st.markdown(t("install.missing_required_command"))
         st.code(
             f"{sys.executable} -m pip install " + " ".join(missing_required_packages),
             language="bash",
         )
-    st.markdown("Optional extensions are installed separately when needed:")
+    st.markdown(t("install.optional_extensions_command"))
     st.code(
         f"{sys.executable} -m pip install xgboost lightgbm catboost\n"
         f"{sys.executable} -m pip install mordred padelpy shap jcamp\n"
         f"{sys.executable} -m pip install pysr xtb",
         language="bash",
     )
-    st.info("Используйте `requirements-online.txt`, `requirements-local.txt` или `requirements-full.txt` в отдельном установщике/терминале.")
+    st.info(t("install.requirements_files_hint"))
 
-    st.warning("After installing packages, restart the Streamlit/Python process so the app can load the new environment.")
-    st.info("If Streamlit itself is missing, run `py install_augur.py --profile local` from a terminal first.")
+    st.warning(t("install.restart_required"))
+    st.info(t("install.streamlit_missing_hint"))
     st.stop()
 
 # ------------------------------------------------------------------
@@ -8919,10 +8916,9 @@ context_cols = qspr_context_columns(data, detected_optional_cols)
 context_diversity = qspr_context_diversity(data, context_cols)
 if not context_diversity.empty:
     st.warning(
-        "В датасете обнаружены разные экспериментальные контексты. "
-        "Сравнение структурных эффектов может быть некорректным."
+        t("data_prep.context_diversity_warning")
     )
-    with st.expander("Обнаруженные экспериментальные контексты", expanded=False):
+    with st.expander(t("data_prep.contexts_expander"), expanded=False):
         st.dataframe(context_diversity, width="stretch", hide_index=True)
 
 data, selected_context = qspr_apply_context_selectors(
@@ -8932,13 +8928,15 @@ data, selected_context = qspr_apply_context_selectors(
 )
 if selected_context:
     st.info(
-        "Применен фильтр экспериментального контекста: "
-        + "; ".join(f"{key}={value}" for key, value in selected_context.items())
-        + f". Осталось строк: {len(data)}."
+        t(
+            "data_prep.context_filter_applied",
+            context="; ".join(f"{key}={value}" for key, value in selected_context.items()),
+            rows=len(data),
+        )
     )
 
 if data.empty:
-    st.error("После фильтрации экспериментального контекста не осталось строк.")
+    st.error(t("data_prep.context_filter_empty"))
     st.stop()
 
 st.session_state.experimental_context_columns = context_cols
@@ -8958,15 +8956,18 @@ if activity_transform == QSPR_NEG_LOG10_TRANSFORM:
         if col == detected_unit_col or qspr_norm_column_name(col) in {"activity_unit", "unit", "units", "standard_units", "standard_unit"}
     ]
     unit_options = list(dict.fromkeys(unit_options))
+    manual_unit_label = t("property_interpretation.manual_unit")
+    unit_display_map = {"Задать единицу вручную": manual_unit_label}
     selected_unit_source = st.selectbox(
-        "Единицы активности для преобразования",
+        t("property_interpretation.activity_unit_source"),
         unit_options,
         index=unit_options.index(detected_unit_col) if detected_unit_col in unit_options else 0,
+        format_func=lambda value: unit_display_map.get(value, value),
         key="activity_transform_unit_source",
     )
     if selected_unit_source == "Задать единицу вручную":
         activity_constant_unit = st.selectbox(
-            "Единица исходных значений",
+            t("property_interpretation.constant_unit"),
             ["M", "mM", "uM", "nM", "pM"],
             key="activity_transform_constant_unit",
         )
@@ -9476,10 +9477,10 @@ with primary_data_analysis_container:
 
     with col_hist:
         trim_hist_extremes = st.checkbox(
-            "Limit extreme values only on histogram",
+            t("dataset_passport.trim_hist_extremes"),
             value=False,
             key="dataset_passport_trim_hist_extremes",
-            help="If enabled, the chart hides values below P1 and above P99 only for visualization.",
+            help=t("dataset_passport.trim_hist_extremes_help"),
         )
         fig_hist, ax_hist = plt.subplots(figsize=(4, 3))
         hist_diag = safe_histplot(
@@ -9495,10 +9496,10 @@ with primary_data_analysis_container:
         st.pyplot(fig_hist)
         if hist_diag.get("trimmed"):
             st.caption(
-                "For visualization, values below P1 and above P99 are hidden on this histogram only."
+                t("dataset_passport.trimmed_hist_caption")
             )
         if hist_diag.get("kde_status") == "failed":
-            st.caption(f"KDE failed: {hist_diag.get('kde_reason')}")
+            st.caption(t("dataset_passport.kde_failed", reason=hist_diag.get("kde_reason")))
 
     with col_box:
         fig_box, ax_box = plt.subplots(figsize=(4, 2.5))
@@ -9720,10 +9721,9 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
     st.markdown(t('struct_filter.functional_groups_title'))
 
     group_options = structural_filter_core.structural_filter_get_group_options()
-    with st.expander("Functional-group notes", expanded=False):
+    with st.expander(t("struct_filter.group_notes_title"), expanded=False):
         st.caption(
-            "Functional-group SMARTS are substructure matches and are not mutually exclusive. "
-            "For example, carboxylic acids, esters and amides also contain a carbonyl."
+            t("struct_filter.group_notes_caption")
         )
         st.dataframe(
             structural_filter_core.structural_filter_group_metadata_table(),
@@ -9796,11 +9796,11 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
     if isinstance(custom_smarts_status_df, pd.DataFrame) and not custom_smarts_status_df.empty:
         st.dataframe(custom_smarts_status_df, width="stretch", hide_index=True)
         if custom_smarts_has_errors:
-            st.error("Invalid SMARTS syntax. Fix the table above before running the structural filter.")
+            st.error(t("struct_filter.invalid_smarts_error"))
 
-    with st.expander("Advanced structural filters", expanded=False):
+    with st.expander(t("struct_filter.advanced_filters"), expanded=False):
         group_count_enabled = st.checkbox(
-            "Filter by functional-group count",
+            t("struct_filter.filter_group_count"),
             value=False,
             key="struct_filter_group_count_enabled",
         )
@@ -9809,7 +9809,7 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
         group_count_max = None
         group_count_exact = None
         element_count_enabled = st.checkbox(
-            "Filter by element count",
+            t("struct_filter.filter_element_count"),
             value=False,
             key="struct_filter_element_count_enabled",
         )
@@ -9821,13 +9821,13 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
             col_ec_1, col_ec_2, col_ec_3, col_ec_4 = st.columns(4)
             with col_ec_1:
                 element_count_symbol = st.selectbox(
-                    "Element",
+                    t("struct_filter.element"),
                     options=common_elements,
                     key="struct_filter_element_count_symbol",
                 )
             with col_ec_2:
                 element_count_min = st.number_input(
-                    "Min count",
+                    t("struct_filter.min_count"),
                     min_value=0,
                     max_value=200,
                     value=0,
@@ -9836,7 +9836,7 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
                 )
             with col_ec_3:
                 element_count_max = st.number_input(
-                    "Max count",
+                    t("struct_filter.max_count"),
                     min_value=0,
                     max_value=200,
                     value=20,
@@ -9845,13 +9845,13 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
                 )
             with col_ec_4:
                 use_element_count_exact = st.checkbox(
-                    "Exact",
+                    t("struct_filter.exact"),
                     value=False,
                     key="struct_filter_element_count_use_exact",
                 )
                 if use_element_count_exact:
                     element_count_exact = st.number_input(
-                        "Exact count",
+                        t("struct_filter.exact_count"),
                         min_value=0,
                         max_value=200,
                         value=1,
@@ -9862,18 +9862,18 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
             col_gc_1, col_gc_2, col_gc_3, col_gc_4 = st.columns(4)
             with col_gc_1:
                 group_count_name = st.selectbox(
-                    "Functional group",
+                    t("struct_filter.functional_group"),
                     options=group_options,
                     key="struct_filter_group_count_name",
                 )
             with col_gc_2:
                 group_count_exact_enabled = st.checkbox(
-                    "Exactly",
+                    t("struct_filter.exactly"),
                     value=False,
                     key="struct_filter_group_count_exact_enabled",
                 )
                 group_count_exact = st.number_input(
-                    "Exact count",
+                    t("struct_filter.exact_count"),
                     min_value=0,
                     max_value=50,
                     value=1,
@@ -9882,7 +9882,7 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
                 ) if group_count_exact_enabled else None
             with col_gc_3:
                 group_count_min = st.number_input(
-                    "Minimum count",
+                    t("struct_filter.minimum_count"),
                     min_value=0,
                     max_value=50,
                     value=1,
@@ -9891,12 +9891,12 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
                 )
             with col_gc_4:
                 group_count_max_enabled = st.checkbox(
-                    "Maximum",
+                    t("struct_filter.maximum"),
                     value=False,
                     key="struct_filter_group_count_max_enabled",
                 )
                 group_count_max = st.number_input(
-                    "Maximum count",
+                    t("struct_filter.maximum_count"),
                     min_value=0,
                     max_value=50,
                     value=1,
@@ -9907,19 +9907,26 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
         col_charge_1, col_charge_2, col_charge_3 = st.columns(3)
         with col_charge_1:
             charge_mode = st.selectbox(
-                "Charge class",
+                t("struct_filter.charge_class"),
                 ["any", "neutral", "cation", "anion", "zwitterion"],
                 index=0,
+                format_func=lambda key: {
+                    "any": t("struct_filter.charge_any"),
+                    "neutral": t("struct_filter.charge_neutral"),
+                    "cation": t("struct_filter.charge_cation"),
+                    "anion": t("struct_filter.charge_anion"),
+                    "zwitterion": t("struct_filter.charge_zwitterion"),
+                }.get(key, str(key)),
                 key="struct_filter_charge_mode",
             )
         with col_charge_2:
             formal_charge_min_enabled = st.checkbox(
-                "Formal charge min",
+                t("struct_filter.formal_charge_min_enabled"),
                 value=False,
                 key="struct_filter_charge_min_enabled",
             )
             formal_charge_min = st.number_input(
-                "Min formal charge",
+                t("struct_filter.min_formal_charge"),
                 min_value=-10,
                 max_value=10,
                 value=0,
@@ -9928,12 +9935,12 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
             ) if formal_charge_min_enabled else None
         with col_charge_3:
             formal_charge_max_enabled = st.checkbox(
-                "Formal charge max",
+                t("struct_filter.formal_charge_max_enabled"),
                 value=False,
                 key="struct_filter_charge_max_enabled",
             )
             formal_charge_max = st.number_input(
-                "Max formal charge",
+                t("struct_filter.max_formal_charge"),
                 min_value=-10,
                 max_value=10,
                 value=0,
@@ -9941,7 +9948,7 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
                 key="struct_filter_charge_max",
             ) if formal_charge_max_enabled else None
 
-        st.caption("Optional drug-like ranges")
+        st.caption(t("struct_filter.optional_drug_like_ranges"))
         range_defaults = {
             "mol_weight": (0.0, 1000.0),
             "rotatable": (0, 30),
@@ -9955,7 +9962,7 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
         advanced_ranges = {}
         for key, (default_min, default_max) in range_defaults.items():
             use_range = st.checkbox(
-                f"Use {key} range",
+                t("struct_filter.use_range", name=key),
                 value=False,
                 key=f"struct_filter_use_{key}_range",
             )
@@ -9963,13 +9970,13 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
                 col_min, col_max = st.columns(2)
                 with col_min:
                     advanced_ranges[f"{key}_min"] = st.number_input(
-                        f"{key} min",
+                        t("struct_filter.range_min", name=key),
                         value=default_min,
                         key=f"struct_filter_{key}_min",
                     )
                 with col_max:
                     advanced_ranges[f"{key}_max"] = st.number_input(
-                        f"{key} max",
+                        t("struct_filter.range_max", name=key),
                         value=default_max,
                         key=f"struct_filter_{key}_max",
                     )
@@ -10435,14 +10442,13 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
         saod2_context_diversity = qspr_context_diversity(saod2_df, saod2_context_cols)
         if not saod2_context_diversity.empty:
             st.warning(
-                "В датасете обнаружены разные экспериментальные контексты. "
-                "Сравнение структурных эффектов может быть некорректным."
+                t("saod_ui.context_diversity_warning")
             )
-            with st.expander("Экспериментальные контексты SAOD", expanded=False):
+            with st.expander(t("saod_ui.contexts_expander"), expanded=False):
                 st.dataframe(saod2_context_diversity, width="stretch", hide_index=True)
 
         saod2_group_separately = st.checkbox(
-            "Анализировать каждую экспериментальную группу отдельно",
+            t("saod_ui.group_separately"),
             value=False,
             key="saod2_group_separately",
             disabled=not bool(saod2_context_cols),
@@ -10456,9 +10462,11 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
             )
             if saod2_selected_context:
                 st.info(
-                    "SAOD будет запущен для выбранного контекста: "
-                    + "; ".join(f"{key}={value}" for key, value in saod2_selected_context.items())
-                    + f". Осталось строк: {len(saod2_df)}."
+                    t(
+                        "saod_ui.selected_context_info",
+                        context="; ".join(f"{key}={value}" for key, value in saod2_selected_context.items()),
+                        rows=len(saod2_df),
+                    )
                 )
 
         saod2_property_interpretation, saod2_activity_transform, saod2_property_info = qspr_show_property_interpretation_block(
@@ -10474,15 +10482,18 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                 if col == detected_unit_col or qspr_norm_column_name(col) in {"activity_unit", "unit", "units", "standard_units", "standard_unit"}
             ]
             unit_options = list(dict.fromkeys(unit_options))
+            manual_unit_label = t("saod_ui.manual_unit")
+            unit_display_map = {"Задать единицу вручную": manual_unit_label}
             selected_unit_source = st.selectbox(
-                "Единицы активности для преобразования SAOD",
+                t("saod_ui.activity_unit_source"),
                 unit_options,
                 index=unit_options.index(detected_unit_col) if detected_unit_col in unit_options else 0,
+                format_func=lambda value: unit_display_map.get(value, value),
                 key="saod2_activity_transform_unit_source",
             )
             if selected_unit_source == "Задать единицу вручную":
                 saod2_constant_unit = st.selectbox(
-                    "Единица исходных значений SAOD",
+                    t("saod_ui.constant_unit"),
                     ["M", "mM", "uM", "nM", "pM"],
                     key="saod2_activity_transform_constant_unit",
                 )
@@ -10490,16 +10501,15 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                 saod2_unit_col = selected_unit_source
 
         saod2_min_rule_points = st.slider(t('saod_ui.min_points'), min_value=3, max_value=10, value=3, step=1, key="saod2_min_rule_points")
-        with st.expander("Advanced SAOD evidence thresholds", expanded=False):
+        with st.expander(t("saod_ui.advanced_thresholds"), expanded=False):
             st.caption(
-                "Separate thresholds: series size, own trend points, reference "
-                "hierarchy points, and independent transformation contexts."
+                t("saod_ui.advanced_thresholds_caption")
             )
             c_series, c_own = st.columns(2)
             c_ref, c_trans = st.columns(2)
             with c_series:
                 saod2_min_series_points = st.number_input(
-                    "Minimum compounds in discovered series",
+                    t("saod_ui.min_series_points"),
                     min_value=2,
                     max_value=20,
                     value=int(saod2_min_rule_points),
@@ -10508,7 +10518,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                 )
             with c_own:
                 saod2_min_own_series_points = st.number_input(
-                    "Minimum points for own-series trend",
+                    t("saod_ui.min_own_series_points"),
                     min_value=2,
                     max_value=20,
                     value=int(saod2_min_rule_points),
@@ -10517,7 +10527,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                 )
             with c_ref:
                 saod2_min_reference_points = st.number_input(
-                    "Minimum points for reference hierarchy",
+                    t("saod_ui.min_reference_points"),
                     min_value=2,
                     max_value=20,
                     value=int(saod2_min_rule_points),
@@ -10526,7 +10536,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                 )
             with c_trans:
                 saod2_min_transformation_contexts = st.number_input(
-                    "Minimum independent transformation contexts",
+                    t("saod_ui.min_transformation_contexts"),
                     min_value=1,
                     max_value=20,
                     value=int(saod2_min_rule_points),
@@ -10540,14 +10550,19 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                 st.session_state.saod2_threshold_mode
             ]
         saod2_threshold_mode = st.selectbox(
-            "Режим порогов SAOD",
+            t("saod_ui.threshold_mode"),
             ["standard", "strict", "sensitive"],
             index=0,
             key="saod2_threshold_mode",
-            help="Пороговые правила влияют только на приоритизацию ручной проверки, а не доказывают ошибку в данных.",
+            format_func=lambda key: {
+                "standard": t("saod_ui.threshold_standard"),
+                "strict": t("saod_ui.threshold_strict"),
+                "sensitive": t("saod_ui.threshold_sensitive"),
+            }.get(key, str(key)),
+            help=t("saod_ui.threshold_mode_help"),
         )
         saod2_threshold_config = saod2_core.saod2_get_threshold_config(saod2_threshold_mode)
-        with st.expander("Используемые пороги SAOD", expanded=False):
+        with st.expander(t("saod_ui.used_thresholds"), expanded=False):
             st.dataframe(
                 saod2_core.saod2_threshold_config_table(saod2_threshold_config),
                 width="stretch",
@@ -11954,8 +11969,8 @@ def render_spectra_descriptor_workbench():
         search_ir = True
         search_mass = True
         selected_spectrum_types = ["IR", "Mass"]
-        st.subheader("Подходящие спектры для ваших веществ")
-        st.caption("Проверяются IR и Mass спектры из автоматически подключенной базы Augur.")
+        st.subheader(t("spectra.suitable_spectra_title"))
+        st.caption(t("spectra.auto_bank_check_caption"))
 
     # Быстрая проверка spectra_bank без тысяч повторных чтений spectra_index.csv
 
@@ -12342,10 +12357,10 @@ def render_spectra_descriptor_workbench():
     matched_spectra_df = pd.DataFrame(matched_spectra_rows)
 
     if not is_admin():
-        st.subheader("Найденные спектры")
+        st.subheader(t("spectra.matched_spectra_title"))
 
         if matched_spectra_df.empty:
-            st.info("Для загруженных веществ совпавшие спектры в подключенной базе Augur не найдены.")
+            st.info(t("spectra.no_matched_spectra"))
         else:
             st.dataframe(
                 matched_spectra_df,
@@ -12356,7 +12371,7 @@ def render_spectra_descriptor_workbench():
             matched_csv = matched_spectra_df.to_csv(index=False).encode("utf-8-sig")
 
             st.download_button(
-                "Скачать найденные спектры CSV",
+                t("spectra.download_matched_csv"),
                 matched_csv,
                 "matched_augur_spectra.csv",
                 "text/csv",
@@ -12422,7 +12437,7 @@ def render_spectra_descriptor_workbench():
         use_local_bank = True
         use_nist = False
         use_mona_mass = False
-        st.caption("Используется только автоматически подключенная спектральная база Augur.")
+        st.caption(t("spectra.auto_bank_only_caption"))
 
     selected_sources = []
 
@@ -15414,12 +15429,9 @@ if descriptor_source_mode == "file":
                 "Uploaded descriptors may not match the current standardized SMILES."
             )
         )
-        st.caption(
-            "Recommended action: recalculate descriptors from the standardized SMILES. "
-            "Continue only if these columns are not molecular descriptors or were recalculated externally."
-        )
+        st.caption(t("descriptor_source.structure_mismatch_recommendation"))
         allow_mismatched_uploaded_descriptors = st.checkbox(
-            "I confirm these uploaded descriptors correspond to the current standardized structures",
+            t("descriptor_source.confirm_structure_match"),
             value=False,
             key="allow_mismatched_uploaded_descriptors",
         )
@@ -15444,9 +15456,7 @@ if descriptor_source_mode == "file":
     if st.button(t('descriptor_source.use_button'), type="primary"):
         try:
             if descriptor_structure_mismatch and not allow_mismatched_uploaded_descriptors:
-                st.error(
-                    "Uploaded descriptors are blocked because molecular structures changed during standardization."
-                )
+                st.error(t("descriptor_source.structure_mismatch_blocked"))
                 st.stop()
 
             leakage_df = qspr_detect_data_leakage_columns(
@@ -15509,11 +15519,8 @@ if descriptor_source_mode == "file":
             st.error(t('descriptor_source.use_error', error=e))
 
 else:
-    st.subheader("Сборка дескрипторной матрицы")
-    st.caption(
-        "Чекбоксы выбирают, какие типы дескрипторов войдут в итоговую матрицу. "
-        "Вкладки ниже отвечают за настройку каждого источника."
-    )
+    st.subheader(t("descriptor_settings.matrix_builder_title"))
+    st.caption(t("descriptor_settings.matrix_builder_caption"))
 
     spectral_ready_for_source = (
         st.session_state.get("spectral_descriptors_transferred_ready", False)
@@ -15567,18 +15574,15 @@ else:
         use_quantum_descriptors_source = False
         use_spectral_descriptors_source = False
 
-    with st.expander("Descriptor row quality filter", expanded=False):
+    with st.expander(t("descriptor_settings.quality_filter_title"), expanded=False):
         max_descriptor_missing_fraction = st.slider(
-            "Maximum missing descriptor fraction before imputation",
+            t("descriptor_settings.quality_filter_max_missing"),
             min_value=0.0,
             max_value=0.9,
             value=0.30,
             step=0.05,
             key="max_descriptor_missing_fraction",
-            help=(
-                "Rows with no calculated descriptors, or with a larger missing fraction, "
-                "are excluded before median imputation."
-            ),
+            help=t("descriptor_settings.quality_filter_help"),
         )
 
     (
@@ -15586,9 +15590,9 @@ else:
         descriptor_tab_quantum,
         descriptor_tab_spectral,
     ) = st.tabs([
-        "Молекулярные",
-        "Квантово-химические",
-        "Спектральные",
+        t("descriptor_settings.tab_molecular"),
+        t("descriptor_settings.tab_quantum"),
+        t("descriptor_settings.tab_spectral"),
     ])
 
     descriptor_matrix_container = st.container()
@@ -15714,14 +15718,19 @@ else:
                     )
 
                     xtb_conformer_mode = st.selectbox(
-                        "xTB conformer mode",
+                        t("descriptor_settings.xtb_conformer_mode"),
                         ["fast", "standard", "ensemble"],
                         index=1,
+                        format_func=lambda value: {
+                            "fast": t("descriptor_settings.xtb_conformer_fast"),
+                            "standard": t("descriptor_settings.xtb_conformer_standard"),
+                            "ensemble": t("descriptor_settings.xtb_conformer_ensemble"),
+                        }.get(value, value),
                         key="xtb_conformer_mode",
                     )
 
                     xtb_conformer_count = st.number_input(
-                        "xTB conformer count",
+                        t("descriptor_settings.xtb_conformer_count"),
                         min_value=1,
                         max_value=50,
                         value=20,
@@ -15730,7 +15739,7 @@ else:
                     )
 
                     xtb_max_embed_attempts = st.number_input(
-                        "xTB max embed attempts",
+                        t("descriptor_settings.xtb_max_embed_attempts"),
                         min_value=1,
                         max_value=100,
                         value=20,
@@ -15746,23 +15755,23 @@ else:
                         key="xtb_limit"
                     )
                     xtb_sampling_strategy = st.selectbox(
-                        "xTB molecule limit strategy",
+                        t("descriptor_settings.xtb_sampling_strategy"),
                         ["first", "random", "property_range"],
                         index=0,
                         format_func=lambda value: {
-                            "first": "First rows",
-                            "random": "Reproducible random sample",
-                            "property_range": "Uniform across target range",
+                            "first": t("descriptor_settings.xtb_sampling_first"),
+                            "random": t("descriptor_settings.xtb_sampling_random"),
+                            "property_range": t("descriptor_settings.xtb_sampling_property_range"),
                         }.get(value, value),
                         key="xtb_sampling_strategy",
                     )
                     xtb_merge_policy = st.selectbox(
-                        "xTB merge policy",
+                        t("descriptor_settings.xtb_merge_policy"),
                         ["inner", "left"],
                         index=0,
                         format_func=lambda value: {
-                            "inner": "INNER: keep only rows with xTB",
-                            "left": "LEFT: keep molecular rows and impute missing xTB",
+                            "inner": t("descriptor_settings.xtb_merge_inner"),
+                            "left": t("descriptor_settings.xtb_merge_left"),
                         }.get(value, value),
                         key="xtb_merge_policy",
                     )
@@ -15906,7 +15915,7 @@ if (
 
             online_heavy_descriptor_mode = qspr_is_online_mode() and mode != "rdkit_fast"
             if online_heavy_descriptor_mode:
-                qspr_online_lock_notice("Mordred, PaDEL and maximum-accuracy descriptor modes")
+                qspr_online_lock_notice(t("descriptor_settings.online_heavy_descriptor_modes"))
 
             (
                 allowed_rdkit_names,
@@ -15918,7 +15927,7 @@ if (
             )
 
         else:
-            st.info("Молекулярные дескрипторы выключены чекбоксом сверху.")
+            st.info(t("descriptor_settings.molecular_disabled"))
 
     with descriptor_tab_spectral:
         if use_spectral_descriptors_source:
@@ -15926,22 +15935,29 @@ if (
 
             spectral_df_for_status = st.session_state.get("spectral_descriptors_df")
             if isinstance(spectral_df_for_status, pd.DataFrame) and not spectral_df_for_status.empty:
-                st.success(f"Спектральные дескрипторы готовы: {spectral_df_for_status.shape[0]} веществ, {spectral_df_for_status.shape[1]} колонок.")
+                st.success(t(
+                    "descriptor_settings.spectral_ready",
+                    rows=spectral_df_for_status.shape[0],
+                    cols=spectral_df_for_status.shape[1],
+                ))
             else:
-                st.warning("Спектральный источник включён, но таблица спектральных дескрипторов ещё не рассчитана.")
+                st.warning(t("descriptor_settings.spectral_enabled_not_calculated"))
         else:
-            st.info("Спектральные дескрипторы выключены чекбоксом сверху.")
+            st.info(t("descriptor_settings.spectral_disabled"))
 
     with descriptor_matrix_container:
-        st.subheader("Итоговая матрица X/y")
+        st.subheader(t("descriptor_settings.final_matrix_title"))
         selected_summary = []
         if use_molecular_descriptors_source:
-            selected_summary.append("молекулярные")
+            selected_summary.append(t("descriptor_settings.selected_molecular"))
         if use_xtb_descriptors_source or use_morfeus_descriptors_source or use_dscribe_descriptors_source:
-            selected_summary.append("квантово-химические")
+            selected_summary.append(t("descriptor_settings.selected_quantum"))
         if use_spectral_descriptors_source:
-            selected_summary.append("спектральные")
-        st.caption("Выбрано для сборки: " + (", ".join(selected_summary) if selected_summary else "ничего не выбрано"))
+            selected_summary.append(t("descriptor_settings.selected_spectral"))
+        st.caption(t(
+            "descriptor_settings.selected_for_matrix",
+            sources=", ".join(selected_summary) if selected_summary else t("descriptor_settings.selected_none"),
+        ))
         if (
             use_molecular_descriptors_source
             or use_xtb_descriptors_source
@@ -17368,10 +17384,10 @@ if isinstance(descriptor_quality_view, pd.DataFrame) and not descriptor_quality_
     excluded_descriptor_rows = int(
         (~descriptor_rows_included).sum()
     )
-    with st.expander("Descriptor calculation quality by row", expanded=excluded_descriptor_rows > 0):
+    with st.expander(t("descriptor_settings.row_quality_title"), expanded=excluded_descriptor_rows > 0):
         if excluded_descriptor_rows:
             st.warning(
-                f"{excluded_descriptor_rows} rows were excluded before imputation because descriptor calculation was incomplete."
+                t("descriptor_settings.row_quality_excluded", rows=excluded_descriptor_rows)
             )
         st.dataframe(
             _streamlit_safe_table_data(descriptor_quality_view),
@@ -17379,7 +17395,7 @@ if isinstance(descriptor_quality_view, pd.DataFrame) and not descriptor_quality_
             hide_index=True,
         )
         st.download_button(
-            "Download descriptor quality CSV",
+            t("descriptor_settings.row_quality_download"),
             qspr_core.qspr_csv_download_bytes(descriptor_quality_view),
             "descriptor_quality.csv",
             "text/csv",
@@ -17410,7 +17426,7 @@ try:
         if has_leakage_blockers:
             st.error(t('leakage_control.error_text'))
         else:
-            st.info("Only strong predictors were detected; no explicit or possible target-derived leakage was found.")
+            st.info(t("leakage_control.strong_predictors_only"))
 
         if has_leakage_blockers:
             allow_leakage_training = st.checkbox(
@@ -17749,11 +17765,8 @@ if mahal_table_for_view is not None and not mahal_table_for_view.empty:
     )
 
 mark_target_extremes_choice = st.checkbox(
-    "Mark extreme target values",
-    help=(
-        "IQR and z-score rules only mark extreme property values. "
-        "Do not remove them automatically without structural and experimental review."
-    )
+    t("target_extremes.mark_checkbox"),
+    help=t("target_extremes.mark_help"),
 )
 
 X_all_current = X_all
@@ -17781,15 +17794,15 @@ if mark_target_extremes_choice:
     outliers_any = np.array(sorted(outlier_iqr_set | outlier_z_set), dtype=int)
     outliers_both = np.array(sorted(outlier_iqr_set & outlier_z_set), dtype=int)
     outlier_policy = st.radio(
-        "Extreme-value action",
+        t("target_extremes.action_label"),
         ["mark_only", "remove_any", "remove_both", "manual_select"],
         index=0,
         horizontal=True,
         format_func=lambda value: {
-            "mark_only": "Only mark",
-            "remove_any": "Remove if any criterion matches",
-            "remove_both": "Remove only if both criteria match",
-            "manual_select": "Select manually",
+            "mark_only": t("target_extremes.action_mark_only"),
+            "remove_any": t("target_extremes.action_remove_any"),
+            "remove_both": t("target_extremes.action_remove_both"),
+            "manual_select": t("target_extremes.action_manual_select"),
         }.get(value, value),
         key="target_extreme_value_policy",
     )
@@ -17813,15 +17826,14 @@ if mark_target_extremes_choice:
             })
         marked_outliers_df = pd.DataFrame(marked_rows)
         st.warning(
-            "Extreme target values were marked only. Removing them can narrow "
-            "the modeled property range and artificially improve metrics."
+            t("target_extremes.removal_warning")
         )
         st.dataframe(marked_outliers_df, width="stretch", hide_index=True)
         if outlier_policy == "remove_both":
             removal_candidates = outliers_both
         elif outlier_policy == "manual_select":
             selected_labels = st.multiselect(
-                "Rows to remove",
+                t("target_extremes.rows_to_remove"),
                 marked_outliers_df["local_position"].astype(int).tolist(),
                 default=[],
                 key="manual_target_extreme_rows_to_remove",
@@ -17832,18 +17844,21 @@ if mark_target_extremes_choice:
         else:
             removal_candidates = np.array([], dtype=int)
         st.caption(
-            f"Marked: {len(outliers_any)} by any criterion; "
-            f"{len(outliers_both)} by both criteria; "
-            f"selected for removal: {len(removal_candidates)}."
+            t(
+                "target_extremes.marked_summary",
+                any_count=len(outliers_any),
+                both_count=len(outliers_both),
+                selected_count=len(removal_candidates),
+            )
         )
         confirm_extreme_removal = st.checkbox(
-            "I reviewed structures/experimental context and want to remove marked rows",
+            t("target_extremes.confirm_removal"),
             value=False,
             disabled=len(removal_candidates) == 0,
             key="confirm_remove_marked_target_extremes",
         )
         if confirm_extreme_removal and st.button(
-            "Apply removal and rebuild descriptor bundle",
+            t("target_extremes.apply_removal"),
             key="apply_remove_marked_target_extremes",
         ):
             keep = np.ones(len(y_all_current), dtype=bool)

@@ -357,10 +357,7 @@ def _render_final_chemical_space(result):
         st.info(t('chemical_diversity.text_02d3396d06'))
         return
     st.markdown(t('chemical_diversity.text_c608c45b2a'))
-    st.caption(
-        "До моделирования: это структурное покрытие датасета и chemical diversity. "
-        "Это не область применимости уже обученной модели и не доверие к отдельному прогнозу."
-    )
+    st.caption(t('chemical_diversity.premodeling_scope_caption'))
     st.caption(t('chemical_diversity.text_3c33ebf200'))
     st.caption(t('chemical_diversity.text_d8e6a5ec9b'))
     if final_space.get('sampled'):
@@ -375,10 +372,10 @@ def _render_final_chemical_space(result):
     metric_cols[2].metric(t('chemical_diversity.text_9804d4a5c0'), summary.get('invalid_structures', '—'))
     metric_cols[3].metric(t('chemical_diversity.text_49dec84b23'), final_space.get('n_components', '—'))
     metric_cols = st.columns(4)
-    metric_cols[0].metric('Плотная область', summary.get('csa_dense_area', 0))
-    metric_cols[1].metric('Умеренная область', summary.get('csa_moderate_area', 0))
-    metric_cols[2].metric('Разреженная область', summary.get('csa_sparse_area', 0))
-    metric_cols[3].metric('Изолированная структура', summary.get('csa_singleton_outlier', 0))
+    metric_cols[0].metric(t('chemical_diversity.dense_area'), summary.get('csa_dense_area', 0))
+    metric_cols[1].metric(t('chemical_diversity.moderate_area'), summary.get('csa_moderate_area', 0))
+    metric_cols[2].metric(t('chemical_diversity.sparse_area'), summary.get('csa_sparse_area', 0))
+    metric_cols[3].metric(t('chemical_diversity.isolated_structure'), summary.get('csa_singleton_outlier', 0))
     controls = st.columns([1.2, 1.0, 1.0, 1.0])
     with controls[0]:
         color_options = ['csa_class']
@@ -387,22 +384,22 @@ def _render_final_chemical_space(result):
         color_by = st.selectbox(t('chemical_diversity.text_d11b85826f'), color_options, key='chemical_space_final_color_by')
     with controls[1]:
         size_by = st.selectbox(t('chemical_diversity.text_686b1c751c'), ['close_analog_count', 'local_density'], key='chemical_space_final_size_by')
-        st.caption('Point size reflects local structural representation only; it is not property value, compound quality, or chemical importance.')
+        st.caption(t('chemical_diversity.point_size_note'))
     with controls[2]:
         show_labels = st.checkbox(t('chemical_diversity.text_498d3ea747'), value=True, key='chemical_space_final_show_outlier_labels')
     with controls[3]:
-        palette_name = st.selectbox('Palette', list(CSA_CLASS_PALETTES.keys()), key='chemical_space_final_palette')
-        continuous_scale = st.selectbox('Numeric scale', CONTINUOUS_COLOR_SCALES, key='chemical_space_final_continuous_scale')
+        palette_name = st.selectbox(t('chemical_diversity.palette_label'), list(CSA_CLASS_PALETTES.keys()), key='chemical_space_final_palette')
+        continuous_scale = st.selectbox(t('chemical_diversity.numeric_scale_label'), CONTINUOUS_COLOR_SCALES, key='chemical_space_final_continuous_scale')
     fig = _make_final_chemical_space_figure(map_df=map_df, edges_df=edges_df, color_by=color_by, size_by=size_by, show_outlier_labels=show_labels, palette_name=palette_name, continuous_scale=continuous_scale)
     if fig is not None:
         st.plotly_chart(fig, use_container_width=True)
-        st.caption("Координаты проекции не имеют самостоятельного химического смысла; они только приближённо сохраняют расстояния fingerprint-пространства.")
+        st.caption(t('chemical_diversity.projection_coordinates_note'))
         compact_html = fig.to_html(include_plotlyjs='cdn', full_html=True).encode('utf-8')
         standalone_html = fig.to_html(include_plotlyjs=True, full_html=True).encode('utf-8')
         csv = map_df.to_csv(index=False).encode('utf-8-sig')
         dl_cols = st.columns(4)
-        dl_cols[0].download_button('Compact HTML (CDN Plotly)', data=compact_html, file_name='final_chemical_space_map_compact.html', mime='text/html', key='download_final_chemical_space_html_compact')
-        dl_cols[1].download_button('Standalone HTML (offline)', data=standalone_html, file_name='final_chemical_space_map_standalone.html', mime='text/html', key='download_final_chemical_space_html_standalone')
+        dl_cols[0].download_button(t('chemical_diversity.compact_html_download'), data=compact_html, file_name='final_chemical_space_map_compact.html', mime='text/html', key='download_final_chemical_space_html_compact')
+        dl_cols[1].download_button(t('chemical_diversity.standalone_html_download'), data=standalone_html, file_name='final_chemical_space_map_standalone.html', mime='text/html', key='download_final_chemical_space_html_standalone')
         try:
             png = fig.to_image(format='png', scale=2)
         except Exception:
@@ -625,21 +622,21 @@ def _render_structural_communities_block(result):
         size_by = st.selectbox(t('chemical_diversity.text_686b1c751c'), [t('chemical_diversity.text_5ab8758886'), t('chemical_diversity.text_caa3d4dd04'), t('chemical_diversity.text_71d09e557e'), t('chemical_diversity.text_400481e52f')], key='chemical_space_communities_size_by')
     (p1, p2) = st.columns(2)
     with p1:
-        community_palette_name = st.selectbox('Community palette', list(CSA_CLASS_PALETTES.keys()), key='chemical_space_communities_palette')
+        community_palette_name = st.selectbox(t('chemical_diversity.community_palette_label'), list(CSA_CLASS_PALETTES.keys()), key='chemical_space_communities_palette')
     with p2:
-        community_continuous_scale = st.selectbox('Community numeric scale', CONTINUOUS_COLOR_SCALES, index=CONTINUOUS_COLOR_SCALES.index('Turbo'), key='chemical_space_communities_continuous_scale')
+        community_continuous_scale = st.selectbox(t('chemical_diversity.community_numeric_scale_label'), CONTINUOUS_COLOR_SCALES, index=CONTINUOUS_COLOR_SCALES.index('Turbo'), key='chemical_space_communities_continuous_scale')
     (f1, f2) = st.columns([2, 1])
     display_filter = f1.radio(
-        'Displayed groups',
+        t('chemical_diversity.displayed_groups_filter'),
         ['all', 'singletons', 'small', 'large'],
         index=1 if method == 'singletons_only' else 0,
         horizontal=True,
         key='chemical_space_communities_display_filter',
         format_func=lambda value: {
-            'all': 'All',
-            'singletons': 'Only singleton',
-            'small': 'Only small',
-            'large': 'Only large',
+            'all': t('chemical_diversity.display_all_groups'),
+            'singletons': t('chemical_diversity.display_singletons_only'),
+            'small': t('chemical_diversity.display_small_only'),
+            'large': t('chemical_diversity.display_large_only'),
         }.get(value, value),
     )
     show_singleton_labels = f2.checkbox(t('chemical_diversity.text_f4b8644b2f'), value=True, key='chemical_space_communities_singleton_labels')
@@ -677,28 +674,28 @@ def _render_structural_communities_block(result):
         }
     else:
         display_summary = {'n_nodes': 0, 'n_groups': 0, 'n_singletons': 0, 'largest_group_size': 0}
-    st.markdown('Full analysis metrics')
+    st.markdown(t('chemical_diversity.full_analysis_metrics'))
     metrics = st.columns(4)
     metrics[0].metric(t('chemical_diversity.text_7c16ae8c7a'), summary.get('n_groups', '—'))
-    metrics[1].metric('Singleton', summary.get('n_singletons', '—'))
+    metrics[1].metric(t('chemical_diversity.singleton_metric'), summary.get('n_singletons', '—'))
     metrics[2].metric(t('chemical_diversity.text_51f205c8a3'), summary.get('n_small_groups', '—'))
     metrics[3].metric(t('chemical_diversity.text_517b5bb8b0'), summary.get('largest_group_size', '—'))
     metrics = st.columns(4)
     metrics[0].metric(t('chemical_diversity.text_3145630c55'), f"{float(summary.get('largest_group_fraction', 0.0)) * 100:.1f}%")
-    metrics[1].metric('Noise', summary.get('noise_points', '—'))
+    metrics[1].metric(t('chemical_diversity.noise_metric'), summary.get('noise_points', '—'))
     metrics[2].metric(t('chemical_diversity.text_ed299969be'), _safe_float_text(summary.get('mean_degree')))
     metrics[3].metric(t('chemical_diversity.text_5a246e5093'), summary.get('no_close_neighbors', '—'))
-    st.markdown('Current display metrics')
+    st.markdown(t('chemical_diversity.current_display_metrics'))
     display_metrics = st.columns(4)
-    display_metrics[0].metric('Displayed points', display_summary.get('n_nodes', 0))
-    display_metrics[1].metric('Displayed groups', display_summary.get('n_groups', 0))
-    display_metrics[2].metric('Displayed singleton', display_summary.get('n_singletons', 0))
-    display_metrics[3].metric('Largest displayed group', display_summary.get('largest_group_size', 0))
+    display_metrics[0].metric(t('chemical_diversity.displayed_points'), display_summary.get('n_nodes', 0))
+    display_metrics[1].metric(t('chemical_diversity.displayed_groups'), display_summary.get('n_groups', 0))
+    display_metrics[2].metric(t('chemical_diversity.displayed_singletons'), display_summary.get('n_singletons', 0))
+    display_metrics[3].metric(t('chemical_diversity.largest_displayed_group'), display_summary.get('largest_group_size', 0))
     st.info(str(summary.get('interpretation', '')))
     fig = _make_structural_communities_figure(filtered_nodes, filtered_edges, color_by=color_by, size_by=size_by, show_singleton_labels=show_singleton_labels, show_all_labels=show_all_labels, palette_name=community_palette_name, continuous_scale=community_continuous_scale)
     if fig is not None:
         st.plotly_chart(fig, use_container_width=True)
-        st.caption("Координаты проекции не имеют самостоятельного химического смысла; они только помогают видеть similarity-граф.")
+        st.caption(t('chemical_diversity.communities_projection_note'))
     else:
         st.info(t('chemical_diversity.text_b6beebf9a2'))
     with st.expander(t('chemical_diversity.text_fc11d33558'), expanded=False):
@@ -1046,12 +1043,18 @@ def _render_similarity_heatmap(heatmap_payload):
     if heatmap_payload.get('sampled'):
         st.warning(t('chemical_diversity.text_1c13d34b85'))
     order_mode = st.selectbox(
-        'Heatmap molecule order',
+        t('chemical_diversity.heatmap_order_label'),
         ['By cluster', 'Original order', 'Hierarchical clustering', 'By exact pattern'],
+        format_func=lambda value: {
+            'By cluster': t('chemical_diversity.heatmap_order_cluster'),
+            'Original order': t('chemical_diversity.heatmap_order_original'),
+            'Hierarchical clustering': t('chemical_diversity.heatmap_order_hierarchical'),
+            'By exact pattern': t('chemical_diversity.heatmap_order_exact_pattern'),
+        }.get(value, value),
         key='chemical_diversity_heatmap_order',
     )
     heatmap_scale = st.selectbox(
-        'Heatmap color scale',
+        t('chemical_diversity.heatmap_color_scale'),
         CONTINUOUS_COLOR_SCALES,
         index=CONTINUOUS_COLOR_SCALES.index('Viridis'),
         key='chemical_diversity_heatmap_scale',
@@ -1107,10 +1110,10 @@ def _render_similarity_heatmap(heatmap_payload):
     _show_compact_figure(fig, width=620)
     with st.expander(t('chemical_diversity.text_07e0e29473'), expanded=False):
         st.dataframe(molecules_df, width='stretch', hide_index=True)
-    with st.expander('Selected interactive heatmap submatrix', expanded=False):
+    with st.expander(t('chemical_diversity.heatmap_submatrix_expander'), expanded=False):
         max_idx = max(1, len(matrix_df))
-        start = st.number_input('Start matrix index', 1, max_idx, 1, key='chemical_diversity_heatmap_start')
-        size = st.number_input('Submatrix size', 5, min(80, max_idx), min(30, max_idx), key='chemical_diversity_heatmap_size')
+        start = st.number_input(t('chemical_diversity.heatmap_start_index'), 1, max_idx, 1, key='chemical_diversity_heatmap_start')
+        size = st.number_input(t('chemical_diversity.heatmap_submatrix_size'), 5, min(80, max_idx), min(30, max_idx), key='chemical_diversity_heatmap_size')
         start0 = int(start) - 1
         stop0 = min(start0 + int(size), max_idx)
         sub = matrix_df.iloc[start0:stop0, start0:stop0]
@@ -1308,8 +1311,7 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
         return
     if not PLOTLY_AVAILABLE:
         st.warning(
-            "Chemical diversity diagnostics require Plotly. "
-            "Install plotly or use requirements-online.txt/requirements-local.txt."
+            t('chemical_diversity.plotly_required')
         )
         return
     if not expanded:
@@ -1328,21 +1330,18 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
                 label_col = candidate
                 break
     st.markdown(t('chemical_diversity.text_c45333a0db'))
-    st.caption(
-        "До моделирования: этот блок описывает структурное покрытие и разнообразие исходного датасета. "
-        "Applicability domain модели и доверие к конкретному прогнозу рассчитываются отдельно после обучения и после прогноза."
-    )
+    st.caption(t('chemical_diversity.section_scope_caption'))
     st.caption(t('chemical_diversity.text_e9cf048210'))
     st.caption(t('chemical_diversity.text_244d21577b'))
-    with st.expander('Словарь терминов', expanded=False):
+    with st.expander(t('chemical_diversity.terms_glossary_title'), expanded=False):
         st.dataframe(
             pd.DataFrame([
-                {'Термин': 'Структурная серия', 'Значение': 'химически интерпретируемый ряд близких структур'},
-                {'Термин': 'Кластер', 'Значение': 'группа по математическому алгоритму similarity'},
-                {'Термин': 'Компонента', 'Значение': 'связная часть similarity-графа'},
-                {'Термин': 'Паттерн', 'Значение': 'точный тип структурного замещения'},
-                {'Термин': 'Каркас', 'Значение': 'общий scaffold или общий структурный фрагмент'},
-                {'Термин': 'Изолированная структура', 'Значение': 'объект без близких аналогов при выбранном threshold'},
+                {t('chemical_diversity.term_col'): t('chemical_diversity.term_structural_series'), t('chemical_diversity.meaning_col'): t('chemical_diversity.meaning_structural_series')},
+                {t('chemical_diversity.term_col'): t('chemical_diversity.term_cluster'), t('chemical_diversity.meaning_col'): t('chemical_diversity.meaning_cluster')},
+                {t('chemical_diversity.term_col'): t('chemical_diversity.term_component'), t('chemical_diversity.meaning_col'): t('chemical_diversity.meaning_component')},
+                {t('chemical_diversity.term_col'): t('chemical_diversity.term_pattern'), t('chemical_diversity.meaning_col'): t('chemical_diversity.meaning_pattern')},
+                {t('chemical_diversity.term_col'): t('chemical_diversity.term_scaffold'), t('chemical_diversity.meaning_col'): t('chemical_diversity.meaning_scaffold')},
+                {t('chemical_diversity.term_col'): t('chemical_diversity.term_isolated'), t('chemical_diversity.meaning_col'): t('chemical_diversity.meaning_isolated')},
             ]),
             width='stretch',
             hide_index=True,
@@ -1359,7 +1358,7 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
     )
     if not threshold_order_valid:
         st.warning(
-            "Check similarity thresholds: expected cluster threshold <= analogue threshold <= duplicate threshold."
+            t('chemical_diversity.threshold_order_warning')
         )
     (col_d, col_e, col_f, col_g) = st.columns(4)
     with col_d:
@@ -1389,21 +1388,25 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
     (col_h, col_i) = st.columns(2)
     with col_h:
         structure_source_label = st.selectbox(
-            'Источник структуры для fingerprints',
-            ['стандартизованный parent', 'исходный SMILES'],
+            t('chemical_diversity.fingerprint_structure_source'),
+            ['standardized_parent', 'original_smiles'],
             index=0,
+            format_func=lambda value: {
+                'standardized_parent': t('chemical_diversity.structure_standardized_parent'),
+                'original_smiles': t('chemical_diversity.structure_original_smiles'),
+            }.get(value, value),
             key='chemical_diversity_structure_source',
         )
-    fingerprint_structure_source = 'standardized_parent' if structure_source_label == 'стандартизованный parent' else 'original_smiles'
+    fingerprint_structure_source = structure_source_label
     with col_i:
         projection_seed = st.number_input(
-            'Random seed проекции',
+            t('chemical_diversity.projection_seed_label'),
             value=42,
             step=1,
             key='chemical_diversity_projection_seed',
-            help='Used for sampling and for stochastic 2D projection methods.',
+            help=t('chemical_diversity.projection_seed_help'),
         )
-    st.caption(f'Chemical space random seed: {int(projection_seed)}')
+    st.caption(t('chemical_diversity.random_seed_caption', seed=int(projection_seed)))
     valid_smiles_estimate = int(data[smiles_col].astype(str).str.strip().ne("").sum())
     estimated_matrix_mb = (valid_smiles_estimate ** 2 * 8) / (1024 ** 2)
     if valid_smiles_estimate >= 5000:
@@ -1483,7 +1486,7 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
         else:
             result = cached
         if not isinstance(result, dict):
-            st.error("Chemical diversity result has an invalid type and was discarded.")
+            st.error(t('chemical_diversity.invalid_result_type'))
             st.session_state.chemical_diversity_result = None
             st.session_state.chemical_diversity_signature = None
             return
@@ -1491,7 +1494,7 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
         result.setdefault("errors", [])
         result.setdefault("warnings", [])
         if result.get("status") == "failed":
-            st.error("Chemical diversity analysis failed.")
+            st.error(t('chemical_diversity.analysis_failed'))
             errors = result.get("errors", [])
             if errors:
                 st.dataframe(pd.DataFrame(errors), width="stretch", hide_index=True)
@@ -1533,13 +1536,13 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
         final_space = result.get('final_chemical_space', {})
         projection_quality = final_space.get('projection_quality', {}) if isinstance(final_space, dict) else {}
         if isinstance(projection_quality, dict) and projection_quality:
-            with st.expander('Качество 2D-проекции', expanded=False):
-                st.caption('UMAP/t-SNE/MDS координаты диагностические; проверяйте, насколько они сохраняют исходные расстояния.')
+            with st.expander(t('chemical_diversity.projection_quality_title'), expanded=False):
+                st.caption(t('chemical_diversity.projection_quality_caption'))
                 st.dataframe(pd.DataFrame([projection_quality]), width='stretch', hide_index=True)
         sensitivity_df = result.get('cluster_threshold_sensitivity', pd.DataFrame())
         if isinstance(sensitivity_df, pd.DataFrame) and not sensitivity_df.empty:
-            with st.expander('Чувствительность кластеров к Tanimoto threshold', expanded=False):
-                st.caption('Порог Tanimoto зависит от fingerprint-конфигурации и химического класса; это не универсальная граница.')
+            with st.expander(t('chemical_diversity.cluster_sensitivity_title'), expanded=False):
+                st.caption(t('chemical_diversity.cluster_sensitivity_caption'))
                 st.dataframe(sensitivity_df, width='stretch', hide_index=True)
                 st.line_chart(
                     sensitivity_df.set_index('tanimoto_threshold')[
