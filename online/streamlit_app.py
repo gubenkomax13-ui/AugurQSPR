@@ -27,7 +27,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
-st.set_page_config(page_title="Augur QSPR online", layout="wide")
+def configure_page() -> None:
+    st.set_page_config(page_title="Augur QSPR online", layout="wide")
 
 
 LANGUAGES = {
@@ -407,4 +408,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    configure_page()
     main()
