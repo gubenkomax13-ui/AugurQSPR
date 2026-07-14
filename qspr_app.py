@@ -27,11 +27,14 @@ import io
 import importlib
 import hashlib
 import warnings
+import faulthandler
 from datetime import datetime
 from copy import deepcopy
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from html import escape
 import time
+
+faulthandler.enable(all_threads=True)
 
 import streamlit as st
 import streamlit.components.v1 as components

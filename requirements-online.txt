@@ -8,7 +8,7 @@ seaborn==0.13.2
 joblib==1.4.2
 openpyxl==3.1.5
 xlsxwriter==3.2.0
-rdkit==2026.3.3
+rdkit-pypi==2022.9.5
 requests==2.32.3
 Pillow==10.4.0
 plotly==5.22.0
