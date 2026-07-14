@@ -10,7 +10,6 @@ import streamlit as st
 
 from modules.i18n import t
 from modules.module_explain_ui import render_module_explanation
-from modules.runtime_mode import qspr_is_online_mode
 
 
 ONLINE_LOCK_MESSAGE = (
@@ -20,13 +19,35 @@ ONLINE_LOCK_MESSAGE = (
 
 
 def qspr_save_is_online_mode():
-    return qspr_is_online_mode()
+    for source in (os.environ.get("AUGUR_MODE"), os.environ.get("AUGUR_RUNTIME_MODE")):
+        value = str(source or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return True
+        if value in {"local", "full", "desktop"}:
+            return False
+
+    try:
+        value = str(st.secrets.get("AUGUR_MODE", "") or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return True
+        if value in {"local", "full", "desktop"}:
+            return False
+    except Exception:
+        pass
+
+    try:
+        context = getattr(st, "context", None)
+        headers = getattr(context, "headers", {}) if context is not None else {}
+        host = str(headers.get("host") or headers.get("Host") or "").lower()
+        url = str(getattr(context, "url", "") or "").lower()
+    except Exception:
+        host = ""
+        url = ""
+
+    return any(marker in host or marker in url for marker in ("streamlit.app", "share.streamlit.io"))
 
 try:
-    from modules.prognostic_model_core import (
-        qspr_prog_build_descriptor_groups,
-        qspr_prog_descriptor_schema,
-    )
+    from modules.prognostic_model_core import qspr_prog_build_descriptor_groups
 except Exception:
     def qspr_prog_build_descriptor_groups(desc_names):
         spectral_prefixes = (
@@ -47,15 +68,6 @@ except Exception:
         groups["spectral_all"] = groups["spectral_ir"] + groups["spectral_mass"] + groups["spectral"]
         groups["combined"] = [str(name) for name in list(desc_names or [])]
         return groups
-
-    def qspr_prog_descriptor_schema(desc_names, descriptor_source="", descriptor_mode="", desc_lists=None):
-        return {
-            "schema_version": "1.0",
-            "descriptor_names": list(desc_names or []),
-            "descriptor_count": len(list(desc_names or [])),
-            "descriptor_source": str(descriptor_source or ""),
-            "descriptor_mode": str(descriptor_mode or ""),
-        }
 
 
 def render_verified_model_save(
@@ -91,30 +103,20 @@ def render_verified_model_save(
     ):
         return
 
-    package_desc_names = list(model_data.get("selected_desc_names", descriptor_names))
-    descriptor_source = st.session_state.get("custom_descriptor_source", "")
-    descriptor_mode = st.session_state.get(
-        "molecular_descriptor_calculation_mode",
-        st.session_state.get("descriptor_calculation_mode", "mordred"),
-    )
-    desc_lists = st.session_state.get("desc_lists")
-
     model_package = {
         "model": model_data["model"],
         "scaler": model_data.get("scaler"),
         "target_col": target_col,
         "smiles_col": smiles_col,
-        "desc_names": package_desc_names,
-        "all_desc_names": list(descriptor_names),
-        "descriptor_source": descriptor_source,
-        "descriptor_groups": qspr_prog_build_descriptor_groups(
-            package_desc_names
+        "desc_names": list(
+            model_data.get("selected_desc_names", descriptor_names)
         ),
-        "descriptor_schema": qspr_prog_descriptor_schema(
-            package_desc_names,
-            descriptor_source=descriptor_source,
-            descriptor_mode=descriptor_mode,
-            desc_lists=desc_lists,
+        "all_desc_names": list(descriptor_names),
+        "descriptor_source": st.session_state.get(
+            "custom_descriptor_source", ""
+        ),
+        "descriptor_groups": qspr_prog_build_descriptor_groups(
+            model_data.get("selected_desc_names", descriptor_names)
         ),
         "model_name": model_name,
         "metrics": model_data.get("metrics", {}),
@@ -122,8 +124,11 @@ def render_verified_model_save(
         "X_train": np.asarray(X_train, dtype=float),
         "y_train": np.asarray(y_train, dtype=float),
         "train_smiles": list(train_smiles),
-        "descriptor_mode": descriptor_mode,
-        "desc_lists": desc_lists,
+        "descriptor_mode": st.session_state.get(
+            "molecular_descriptor_calculation_mode",
+            st.session_state.get("descriptor_calculation_mode", "mordred"),
+        ),
+        "desc_lists": st.session_state.get("desc_lists"),
         "validation_completed": True,
     }
 

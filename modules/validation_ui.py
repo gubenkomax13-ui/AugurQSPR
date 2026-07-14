@@ -8,148 +8,18 @@ import streamlit as st
 from scipy.stats import norm
 
 from modules.advanced_validation_ui import render_advanced_validation_section
-from modules.analysis_state import analysis_result_hash, attach_result_cache_metadata, cached_result_is_current
 from modules.i18n import t
 from modules.module_explain_ui import render_module_explanation
-from modules.qspr_core import qspr_csv_download_bytes
-
-
-def _fmt_validation_metric(value, digits=3):
-    try:
-        value = float(value)
-    except Exception:
-        return "N/A"
-    if not np.isfinite(value):
-        return "N/A"
-    return f"{value:.{digits}f}"
-
-
-def _fmt_mape_metric(metrics):
-    if not metrics.get("MAPE_applicable", True):
-        return "N/A"
-    return _fmt_validation_metric(metrics.get("MAPE_percent"), 2)
-
-
-def _render_metric_diagnostics(metrics, label):
-    if not isinstance(metrics, dict):
-        return
-    r2_reliability = metrics.get("R2_reliability", "")
-    if r2_reliability == "not_interpretable_n_lt_5":
-        st.warning(f"{label}: R2 is not interpretable because n < 5.")
-    elif r2_reliability == "high_uncertainty_n_lt_10":
-        st.warning(f"{label}: R2 has high uncertainty because n < 10.")
-    if not metrics.get("MAPE_applicable", True):
-        warning = metrics.get("MAPE_warning") or "MAPE is not applicable for this target scale."
-        st.warning(f"{label}: {warning}")
-
-
-def _render_advanced_metric_table(metrics, label):
-    if not isinstance(metrics, dict):
-        return
-    rows = [
-        ("N", metrics.get("N")),
-        ("NRMSE_range", metrics.get("NRMSE_range")),
-        ("RMSE/SD", metrics.get("NRMSE_sd")),
-        ("MAE/IQR", metrics.get("MAE_IQR")),
-        ("CCC", metrics.get("CCC")),
-        ("Pearson r", metrics.get("Pearson_r")),
-        ("Spearman rho", metrics.get("Spearman_rho")),
-        ("R2 reliability", metrics.get("R2_reliability")),
-        ("MAPE applicable", metrics.get("MAPE_applicable")),
-        ("MAPE warning", metrics.get("MAPE_warning")),
-    ]
-    with st.expander(f"Advanced statistics: {label}", expanded=False):
-        st.dataframe(
-            pd.DataFrame(rows, columns=["Metric", "Value"]),
-            width="stretch",
-            hide_index=True,
-        )
-
-
-def _validation_selector_config(desc_names_current):
-    if not st.session_state.get("auto_feature_selection", False):
-        return None
-    desc_names_current = list(desc_names_current or [])
-    return {
-        "desc_names": desc_names_current,
-        "method": st.session_state.get("auto_feature_selection_method", "fast"),
-        "max_features": min(
-            int(st.session_state.get("auto_max_features", 50) or 50),
-            max(1, len(desc_names_current)),
-        ),
-        "remove_constant": bool(st.session_state.get("auto_remove_constant_descriptors", True)),
-        "remove_correlated": bool(st.session_state.get("auto_remove_correlated_descriptors", True)),
-        "corr_threshold": float(st.session_state.get("auto_corr_threshold", 0.95) or 0.95),
-        "lasso_alpha": float(st.session_state.get("auto_lasso_selection_alpha", 0.01) or 0.01),
-        "rf_n_estimators": int(st.session_state.get("auto_rf_selection_estimators", 300) or 300),
-        "rfe_step": float(st.session_state.get("auto_rfe_step", 0.2) or 0.2),
-        "random_state": int(st.session_state.get("random_seed", 42)),
-    }
 
 
 def render_validation_section(context):
     """Рендерит полный этап валидации в переданном контексте проекта."""
     globals().update(context)
-    desc_names_for_validation = (
-        context.get("desc_names_current")
-        or context.get("desc_names")
-        or st.session_state.get("desc_names", [])
-        or []
-    )
-    selector_config_current = _validation_selector_config(desc_names_for_validation)
-
-    def _validation_cache_hash(model_name, settings):
-        return analysis_result_hash(
-            st.session_state,
-            model_name,
-            params=get_model_params_from_session(),
-            validation_settings=settings,
-            X=X_all_current,
-            y=y_all_current,
-            desc_names=desc_names_for_validation,
-            valid_indices=valid_indices_current,
-        )
-
-    def _current_cached_validation_result(store_name, model_name, settings):
-        result = st.session_state.get(store_name, {}).get(model_name)
-        if not isinstance(result, dict):
-            return None
-        expected_hash = _validation_cache_hash(model_name, settings)
-        if not cached_result_is_current(result, expected_hash):
-            return None
-        return result
     # ------------------------------------------------------------------
     # Validation
     
     st.header(t('validation.header'))
-    if selector_config_current:
-        st.caption(
-            t("validation.fold_refit_caption")
-        )
     render_module_explanation("validation")
-    with st.expander(t("validation.heuristic_indicators_title"), expanded=False):
-        st.caption(
-            t("validation.heuristic_indicators_caption")
-        )
-        col_hq_1, col_hq_2 = st.columns(2)
-        with col_hq_1:
-            st.number_input(
-                t("validation.bootstrap_instability_ratio_label"),
-                min_value=1.0,
-                max_value=10.0,
-                value=float(st.session_state.get("bootstrap_rmse_p95_ratio_threshold", 2.0)),
-                step=0.1,
-                key="bootstrap_rmse_p95_ratio_threshold",
-            )
-        with col_hq_2:
-            st.number_input(
-                t("validation.yrandom_gap_label"),
-                min_value=0.0,
-                max_value=1.0,
-                value=float(st.session_state.get("y_randomization_q2_gap_threshold", 0.10)),
-                step=0.01,
-                key="y_randomization_q2_gap_threshold",
-            )
     
     tab_holdout, tab_kfold, tab_loo, tab_ext = st.tabs([
         t('validation.holdout_tab'),
@@ -180,14 +50,8 @@ def render_validation_section(context):
                 step=1,
                 key="holdout_rs"
             )
-            stratify_y_quantiles = st.checkbox(
-                t("validation.stratify_holdout_label"),
-                value=bool(st.session_state.get("holdout_stratify_y_quantiles", False)),
-                key="holdout_stratify_y_quantiles",
-            )
             manual_indices = None
         else:
-            stratify_y_quantiles = False
             manual_str = st.text_input(
                 t('validation.holdout_manual_indices'),
                 key="holdout_manual"
@@ -216,32 +80,9 @@ def render_validation_section(context):
                     manual_indices=manual_indices,
                     params=get_model_params_from_session(),
                     scale=True,
-                    selector_config=selector_config_current,
-                    stratify_y_quantiles=bool(stratify_y_quantiles),
                 )
     
-                holdout_settings = {
-                    "kind": "holdout",
-                    "test_size": test_size,
-                    "random_state": int(random_state) if use_random else 42,
-                    "use_random": use_random,
-                    "stratify_y_quantiles": bool(stratify_y_quantiles),
-                    "manual_indices": manual_indices,
-                }
-                holdout_hash = analysis_result_hash(
-                    st.session_state,
-                    st.session_state.last_model_algorithm,
-                    params=get_model_params_from_session(),
-                    validation_settings=holdout_settings,
-                    X=X_all_current,
-                    y=y_all_current,
-                    desc_names=desc_names_for_validation,
-                    valid_indices=valid_indices_current,
-                )
-                res_hold["validation_settings"] = holdout_settings
-                st.session_state.holdout_results_dict[
-                    st.session_state.last_model_algorithm
-                ] = attach_result_cache_metadata(res_hold, holdout_hash)
+                st.session_state.holdout_results_dict[st.session_state.last_model_algorithm] = res_hold
                 st.session_state.pop(
                     f"descriptor_importance_result_{st.session_state.last_model_algorithm}",
                     None
@@ -261,8 +102,6 @@ def render_validation_section(context):
                     details={
                         "split": "random" if use_random else "manual",
                         "test_size": test_size,
-                        "stratify_y_quantiles": bool(stratify_y_quantiles),
-                        "stratification_note": res_hold.get("stratification_note"),
                     },
                 )
                 st.rerun()
@@ -279,29 +118,6 @@ def render_validation_section(context):
                 )
     
         res = st.session_state.holdout_results_dict.get(st.session_state.last_model_algorithm)
-        if isinstance(res, dict):
-            expected_hash = analysis_result_hash(
-                st.session_state,
-                st.session_state.last_model_algorithm,
-                params=get_model_params_from_session(),
-                validation_settings={
-                    "kind": "holdout",
-                    "test_size": test_size,
-                    "random_state": int(random_state) if use_random else 42,
-                    "use_random": use_random,
-                    "stratify_y_quantiles": bool(stratify_y_quantiles),
-                    "manual_indices": manual_indices,
-                },
-                X=X_all_current,
-                y=y_all_current,
-                desc_names=desc_names_for_validation,
-                valid_indices=valid_indices_current,
-            )
-            if not cached_result_is_current(res, expected_hash):
-                st.warning(
-                    t("validation.stale_holdout_warning")
-                )
-                res = None
     
         if res is not None:
             y_train = np.asarray(res["y_train"], dtype=float)
@@ -328,16 +144,13 @@ def render_validation_section(context):
             col_train_m1, col_train_m2, col_train_m3 = st.columns(3)
     
             with col_train_m1:
-                st.metric(t('validation.metric_r2_train'), _fmt_validation_metric(res['metrics_train'].get('R2')))
+                st.metric(t('validation.metric_r2_train'), f"{res['metrics_train']['R2']:.3f}")
     
             with col_train_m2:
-                st.metric(t('validation.metric_rmse_train'), _fmt_validation_metric(res['metrics_train'].get('RMSE')))
+                st.metric(t('validation.metric_rmse_train'), f"{res['metrics_train']['RMSE']:.3f}")
     
             with col_train_m3:
-                st.metric(t('validation.metric_mae_train'), _fmt_validation_metric(res['metrics_train'].get('MAE')))
-
-            _render_metric_diagnostics(res.get("metrics_train", {}), "Train")
-            _render_advanced_metric_table(res.get("metrics_train", {}), "Train")
+                st.metric(t('validation.metric_mae_train'), f"{res['metrics_train']['MAE']:.3f}")
     
             # ------------------------------------------------------------
             # Тренировочная выборка: графики
@@ -503,16 +316,13 @@ def render_validation_section(context):
             col_m1, col_m2, col_m3 = st.columns(3)
     
             with col_m1:
-                st.metric(t('validation.metric_r2_test'), _fmt_validation_metric(res['metrics_test'].get('R2')))
+                st.metric(t('validation.metric_r2_test'), f"{res['metrics_test']['R2']:.3f}")
     
             with col_m2:
-                st.metric(t('validation.metric_rmse_test'), _fmt_validation_metric(res['metrics_test'].get('RMSE')))
+                st.metric(t('validation.metric_rmse_test'), f"{res['metrics_test']['RMSE']:.3f}")
     
             with col_m3:
-                st.metric(t('validation.metric_mae_test'), _fmt_validation_metric(res['metrics_test'].get('MAE')))
-
-            _render_metric_diagnostics(res.get("metrics_test", {}), "Test")
-            _render_advanced_metric_table(res.get("metrics_test", {}), "Test")
+                st.metric(t('validation.metric_mae_test'), f"{res['metrics_test']['MAE']:.3f}")
     
             # ------------------------------------------------------------
             # Сводный график
@@ -612,29 +422,9 @@ def render_validation_section(context):
                     scale=True,
                     shuffle=True,
                     random_state=42,
-                    selector_config=selector_config_current,
                 )
     
-                kfold_settings = {
-                    "kind": "kfold",
-                    "k": k,
-                    "shuffle": True,
-                    "random_state": 42,
-                }
-                kfold_hash = analysis_result_hash(
-                    st.session_state,
-                    st.session_state.last_model_algorithm,
-                    params=get_model_params_from_session(),
-                    validation_settings=kfold_settings,
-                    X=X_all_current,
-                    y=y_all_current,
-                    desc_names=desc_names_for_validation,
-                    valid_indices=valid_indices_current,
-                )
-                res_kfold["validation_settings"] = kfold_settings
-                st.session_state.kfold_results_dict[
-                    st.session_state.last_model_algorithm
-                ] = attach_result_cache_metadata(res_kfold, kfold_hash)
+                st.session_state.kfold_results_dict[st.session_state.last_model_algorithm] = res_kfold
                 st.session_state.pop(
                     f"error_analysis_result_{st.session_state.last_model_algorithm}",
                     None
@@ -661,27 +451,6 @@ def render_validation_section(context):
                 )
     
         res = st.session_state.kfold_results_dict.get(st.session_state.last_model_algorithm)
-        if isinstance(res, dict):
-            expected_hash = analysis_result_hash(
-                st.session_state,
-                st.session_state.last_model_algorithm,
-                params=get_model_params_from_session(),
-                validation_settings={
-                    "kind": "kfold",
-                    "k": k,
-                    "shuffle": True,
-                    "random_state": 42,
-                },
-                X=X_all_current,
-                y=y_all_current,
-                desc_names=desc_names_for_validation,
-                valid_indices=valid_indices_current,
-            )
-            if not cached_result_is_current(res, expected_hash):
-                st.warning(
-                    t("validation.stale_kfold_warning")
-                )
-                res = None
     
         if res is not None:
             st.subheader(t('validation.kfold_results_title', k=res['k']))
@@ -699,19 +468,16 @@ def render_validation_section(context):
             col_k_m1, col_k_m2, col_k_m3, col_k_m4 = st.columns(4)
     
             with col_k_m1:
-                st.metric(t('validation.kfold_metric_r2q2'), _fmt_validation_metric(res['metrics'].get('R2')))
+                st.metric(t('validation.kfold_metric_r2q2'), f"{res['metrics']['R2']:.3f}")
     
             with col_k_m2:
-                st.metric(t('validation.metric_rmse'), _fmt_validation_metric(res['metrics'].get('RMSE')))
+                st.metric(t('validation.metric_rmse'), f"{res['metrics']['RMSE']:.3f}")
     
             with col_k_m3:
-                st.metric(t('validation.metric_mae'), _fmt_validation_metric(res['metrics'].get('MAE')))
+                st.metric(t('validation.metric_mae'), f"{res['metrics']['MAE']:.3f}")
     
             with col_k_m4:
-                st.metric(t('validation.metric_mape'), _fmt_mape_metric(res['metrics']))
-
-            _render_metric_diagnostics(res.get("metrics", {}), "K-Fold")
-            _render_advanced_metric_table(res.get("metrics", {}), "K-Fold")
+                st.metric(t('validation.metric_mape'), f"{res['metrics']['MAPE_percent']:.2f}")
     
             st.markdown(t('validation.kfold_plots_title'))
     
@@ -842,24 +608,9 @@ def render_validation_section(context):
                     smiles=smiles_current,
                     params=get_model_params_from_session(),
                     scale=True,
-                    selector_config=selector_config_current,
                 )
     
-                loo_settings = {"kind": "loo"}
-                loo_hash = analysis_result_hash(
-                    st.session_state,
-                    st.session_state.last_model_algorithm,
-                    params=get_model_params_from_session(),
-                    validation_settings=loo_settings,
-                    X=X_all_current,
-                    y=y_all_current,
-                    desc_names=desc_names_for_validation,
-                    valid_indices=valid_indices_current,
-                )
-                res_loo["validation_settings"] = loo_settings
-                st.session_state.loo_results_dict[
-                    st.session_state.last_model_algorithm
-                ] = attach_result_cache_metadata(res_loo, loo_hash)
+                st.session_state.loo_results_dict[st.session_state.last_model_algorithm] = res_loo
                 st.session_state.pop(
                     f"error_analysis_result_{st.session_state.last_model_algorithm}",
                     None
@@ -885,22 +636,6 @@ def render_validation_section(context):
                 )
     
         res = st.session_state.loo_results_dict.get(st.session_state.last_model_algorithm)
-        if isinstance(res, dict):
-            expected_hash = analysis_result_hash(
-                st.session_state,
-                st.session_state.last_model_algorithm,
-                params=get_model_params_from_session(),
-                validation_settings={"kind": "loo"},
-                X=X_all_current,
-                y=y_all_current,
-                desc_names=desc_names_for_validation,
-                valid_indices=valid_indices_current,
-            )
-            if not cached_result_is_current(res, expected_hash):
-                st.warning(
-                    t("validation.stale_loo_warning")
-                )
-                res = None
     
         if res is not None:
             st.subheader(t('validation.loo_results_title'))
@@ -918,19 +653,16 @@ def render_validation_section(context):
             col_loo_m1, col_loo_m2, col_loo_m3, col_loo_m4 = st.columns(4)
     
             with col_loo_m1:
-                st.metric(t('validation.loo_metric_r2q2'), _fmt_validation_metric(res['metrics'].get('R2')))
+                st.metric(t('validation.loo_metric_r2q2'), f"{res['metrics']['R2']:.3f}")
     
             with col_loo_m2:
-                st.metric(t('validation.metric_rmse'), _fmt_validation_metric(res['metrics'].get('RMSE')))
+                st.metric(t('validation.metric_rmse'), f"{res['metrics']['RMSE']:.3f}")
     
             with col_loo_m3:
-                st.metric(t('validation.metric_mae'), _fmt_validation_metric(res['metrics'].get('MAE')))
+                st.metric(t('validation.metric_mae'), f"{res['metrics']['MAE']:.3f}")
     
             with col_loo_m4:
-                st.metric(t('validation.metric_mape'), _fmt_mape_metric(res['metrics']))
-
-            _render_metric_diagnostics(res.get("metrics", {}), "LOO")
-            _render_advanced_metric_table(res.get("metrics", {}), "LOO")
+                st.metric(t('validation.metric_mape'), f"{res['metrics']['MAPE_percent']:.2f}")
     
             st.markdown(t('validation.loo_plots_title'))
     
@@ -1056,7 +788,7 @@ def render_validation_section(context):
         with col3:
             ext_metric = st.selectbox(
                 t('validation.external.metric_label'),
-                ["euclidean", "mahalanobis", "cosine"],
+                ["euclidean"],
                 index=0,
                 key="ext_metric",
                 help=t('validation.external.metric_help')
@@ -1084,13 +816,6 @@ def render_validation_section(context):
                 smiles_current = data[smiles_col_current].iloc[valid_idx_current].values.tolist()
     
                 with st.spinner(t('validation.external.spinner')):
-                    ext_settings = {
-                        "kind": "distance_holdout",
-                        "fraction": ext_fraction / 100.0,
-                        "n_repeats": int(ext_repeats),
-                        "distance_metric": ext_metric,
-                        "random_state": int(st.session_state.get("random_seed", 42)),
-                    }
                     ext_result = qspr_external_validation_simulator(
                         X=X_current,
                         y=y_current,
@@ -1102,41 +827,22 @@ def render_validation_section(context):
                         distance_metric=ext_metric,
                         params=get_model_params_from_session(),
                         scale=True,
-                        random_state=int(st.session_state.get("random_seed", 42)),
-                        selector_config=selector_config_current,
-                    )
-    
-                ext_result["model_name"] = st.session_state.last_model_algorithm
-                ext_result["validation_result_key"] = st.session_state.last_model_algorithm
-                ext_result["validation_settings"] = ext_settings
-                ext_hash = analysis_result_hash(
-                    st.session_state,
-                    st.session_state.last_model_algorithm,
-                    params=get_model_params_from_session(),
-                    validation_settings=ext_settings,
-                    X=X_current,
-                    y=y_current,
-                    desc_names=desc_names_for_validation,
-                    valid_indices=valid_idx_current,
+                        random_state=42
                 )
-                ext_result = attach_result_cache_metadata(ext_result, ext_hash)
+    
                 st.session_state.ext_validation_result = ext_result
-                st.session_state.setdefault("ext_validation_results_dict", {})
-                st.session_state.ext_validation_results_dict[
-                    st.session_state.last_model_algorithm
-                ] = ext_result
                 ext_summary = ext_result.get("summary", {})
                 ext_quality = interpret_validation_quality(
                     r2=ext_summary.get("test_R2_mean"),
                     rmse=ext_summary.get("test_RMSE_mean"),
                     y_std=float(np.nanstd(y_current, ddof=1)) if len(y_current) > 1 else None,
                     metric_std=ext_summary.get("test_R2_std"),
-                    method="Distance-based hold-out stress test",
+                    method="External validation",
                 )
                 add_event_log(
                     "VALIDATION",
                     (
-                        f"Distance-based hold-out stress test {st.session_state.last_model_algorithm}: "
+                        f"External validation {st.session_state.last_model_algorithm}: "
                         f"{ext_summary.get('n_repeats')} повторов, test={float(ext_summary.get('fraction', 0)):.0%}, "
                         f"R²={_fmt_mean_std(ext_summary.get('test_R2_mean'), ext_summary.get('test_R2_std'))}, "
                         f"RMSE={_fmt_mean_std(ext_summary.get('test_RMSE_mean'), ext_summary.get('test_RMSE_std'))}; "
@@ -1146,11 +852,8 @@ def render_validation_section(context):
                     details={
                         "model": st.session_state.last_model_algorithm,
                         "mae": _fmt_mean_std(ext_summary.get("test_MAE_mean"), ext_summary.get("test_MAE_std")),
-                        "validation_mode": ext_summary.get("validation_mode"),
-                        "distance_metric": ext_summary.get("distance_metric"),
-                        "methodology_note": ext_summary.get("methodology_note"),
                     },
-                    event="distance_holdout_stress_test_completed",
+                    event="external_validation_completed",
                 )
                 st.success(t('validation.external.success'))
                 st.rerun()
@@ -1167,40 +870,9 @@ def render_validation_section(context):
                 )
     
         ext_res = st.session_state.get("ext_validation_result")
-        if isinstance(ext_res, dict):
-            ext_settings_current = ext_res.get("validation_settings")
-            if isinstance(ext_settings_current, dict):
-                expected_ext_hash = analysis_result_hash(
-                    st.session_state,
-                    st.session_state.last_model_algorithm,
-                    params=get_model_params_from_session(),
-                    validation_settings=ext_settings_current,
-                    X=X_all_current,
-                    y=y_all_current,
-                    desc_names=desc_names_for_validation,
-                    valid_indices=valid_indices_current,
-                )
-                if not cached_result_is_current(ext_res, expected_ext_hash):
-                    st.warning(
-                        t("validation.stale_distance_holdout_warning")
-                    )
-                    ext_res = None
-            else:
-                ext_res = None
         if ext_res is not None:
             st.subheader(t('validation.external.results_subheader'))
             summary = ext_res['summary']
-            st.info(
-                summary.get(
-                    "methodology_note",
-                    "This is a distance-based hold-out stress test, not strict external validation.",
-                )
-            )
-            st.caption(
-                f"Mode: {summary.get('validation_label', 'Distance-based hold-out stress test')}; "
-                f"distance metric: {summary.get('distance_metric', 'euclidean')}; "
-                f"test selection geometry: {summary.get('test_selection_geometry', '')}."
-            )
             col_s1, col_s2, col_s3, col_s4 = st.columns(4)
             with col_s1:
                 st.metric(
@@ -1218,39 +890,6 @@ def render_validation_section(context):
                 st.metric(t('validation.external.metric_repeats'), ext_res['n_repeats'])
     
             # График устойчивости
-            col_split_1, col_split_2, col_split_3 = st.columns(3)
-            with col_split_1:
-                st.metric(
-                    t("validation.unique_test_splits"),
-                    int(summary.get("unique_test_splits", 0) or 0)
-                )
-            with col_split_2:
-                mean_jaccard = summary.get("mean_test_split_jaccard", np.nan)
-                st.metric(
-                    t("validation.mean_test_set_jaccard"),
-                    f"{mean_jaccard:.3f}" if np.isfinite(mean_jaccard) else "n/a"
-                )
-            with col_split_3:
-                max_jaccard = summary.get("max_test_split_jaccard", np.nan)
-                st.metric(
-                    t("validation.max_test_set_jaccard"),
-                    f"{max_jaccard:.3f}" if np.isfinite(max_jaccard) else "n/a"
-                )
-
-            with st.expander(t("validation.test_selection_frequency"), expanded=False):
-                st.dataframe(
-                    ext_res.get("test_selection_frequency", pd.DataFrame()),
-                    width="stretch",
-                    hide_index=True
-                )
-
-            with st.expander(t("validation.pairwise_test_jaccard"), expanded=False):
-                st.dataframe(
-                    ext_res.get("test_split_jaccard", pd.DataFrame()),
-                    width="stretch",
-                    hide_index=True
-                )
-
             metrics_df = ext_res['metrics_df']
             fig, ax = plt.subplots(figsize=(8,4))
             ax.plot(metrics_df['repeat'], metrics_df['test_R2'], marker='o', linestyle='-', label=t('validation.external.plot_label'))
@@ -1268,7 +907,7 @@ def render_validation_section(context):
             with st.expander(t('validation.external.expander_predictions')):
                 st.dataframe(ext_res['combined_test_table'], width="stretch", hide_index=True)
     
-            csv_ext = qspr_csv_download_bytes(ext_res['combined_test_table'])
+            csv_ext = ext_res['combined_test_table'].to_csv(index=False).encode('utf-8')
             st.download_button(
                 t('validation.external.download_button'),
                 csv_ext,
@@ -1364,8 +1003,7 @@ def render_validation_section(context):
                             test_size=float(repeated_holdout_test_percent) / 100.0,
                             random_state=int(repeated_holdout_seed),
                             scale=True,
-                            progress_callback=_rh_progress,
-                            selector_config=selector_config_current
+                            progress_callback=_rh_progress
                         )
     
                     if not repeated_holdout_save_details:
@@ -1522,7 +1160,7 @@ def render_validation_section(context):
                             hide_index=True
                         )
     
-                    csv_rh = qspr_csv_download_bytes(repeats_table_rh)
+                    csv_rh = repeats_table_rh.to_csv(index=False).encode("utf-8")
     
                     st.download_button(
                         t('repeated_holdout.download_repeats_csv'),
@@ -1547,7 +1185,7 @@ def render_validation_section(context):
     
                         st.download_button(
                             t('repeated_holdout.download_test_predictions_csv'),
-                            qspr_csv_download_bytes(combined_test_table_rh),
+                            combined_test_table_rh.to_csv(index=False).encode("utf-8"),
                             f"repeated_holdout_test_predictions_{current_model_for_repeated_holdout}.csv",
                             "text/csv",
                             key=f"download_repeated_holdout_test_predictions_{current_model_for_repeated_holdout}"
@@ -1628,14 +1266,6 @@ def render_validation_section(context):
                             text=t('bootstrap.ui_progress_text', done=done, total=total)
                         )
     
-                    bootstrap_settings = {
-                        "kind": "bootstrap",
-                        "n_iterations": int(bootstrap_n_iterations),
-                        "sample_fraction": float(bootstrap_sample_percent) / 100.0,
-                        "random_state": int(bootstrap_seed),
-                        "save_oob_predictions": bool(bootstrap_save_oob_predictions),
-                    }
-
                     with st.spinner(t('bootstrap.ui_spinner')):
                         bootstrap_result = qspr_bootstrap_validation(
                             X=X_all_current,
@@ -1649,26 +1279,18 @@ def render_validation_section(context):
                             sample_fraction=float(bootstrap_sample_percent) / 100.0,
                             random_state=int(bootstrap_seed),
                             scale=True,
-                            progress_callback=_bs_progress,
-                            selector_config=selector_config_current
+                            progress_callback=_bs_progress
                         )
     
                     if not bootstrap_save_oob_predictions:
                         bootstrap_result["oob_predictions_table"] = pd.DataFrame()
-                    bootstrap_result["validation_settings"] = bootstrap_settings
     
                     if "bootstrap_results_dict" not in st.session_state:
                         st.session_state.bootstrap_results_dict = {}
     
                     st.session_state.bootstrap_results_dict[
                         current_model_for_bootstrap
-                    ] = attach_result_cache_metadata(
-                        bootstrap_result,
-                        _validation_cache_hash(
-                            current_model_for_bootstrap,
-                            bootstrap_settings,
-                        ),
-                    )
+                    ] = bootstrap_result
     
                     log_bootstrap_result(
                         current_model_for_bootstrap,
@@ -1689,18 +1311,10 @@ def render_validation_section(context):
                         event="bootstrap_failed",
                     )
     
-            bootstrap_settings_current = {
-                "kind": "bootstrap",
-                "n_iterations": int(bootstrap_n_iterations),
-                "sample_fraction": float(bootstrap_sample_percent) / 100.0,
-                "random_state": int(bootstrap_seed),
-                "save_oob_predictions": bool(bootstrap_save_oob_predictions),
-            }
-            bootstrap_res = _current_cached_validation_result(
+            bootstrap_res = st.session_state.get(
                 "bootstrap_results_dict",
-                current_model_for_bootstrap,
-                bootstrap_settings_current,
-            )
+                {}
+            ).get(current_model_for_bootstrap)
     
             if isinstance(bootstrap_res, dict):
                 bootstrap_summary = bootstrap_res.get("summary", {})
@@ -1787,30 +1401,10 @@ def render_validation_section(context):
     
                     st.download_button(
                         t('bootstrap.ui_download_iterations'),
-                        qspr_csv_download_bytes(bootstrap_iterations_table),
+                        bootstrap_iterations_table.to_csv(index=False).encode("utf-8"),
                         f"bootstrap_iterations_{current_model_for_bootstrap}.csv",
                         "text/csv",
                         key=f"download_bootstrap_iterations_{current_model_for_bootstrap}"
-                    )
-    
-                bootstrap_failed_iterations = bootstrap_res.get(
-                    "failed_iterations_table",
-                    pd.DataFrame()
-                )
-                if isinstance(bootstrap_failed_iterations, pd.DataFrame) and not bootstrap_failed_iterations.empty:
-                    with st.expander(t("validation.failed_bootstrap_iterations"), expanded=False):
-                        st.dataframe(
-                            bootstrap_failed_iterations,
-                            width="stretch",
-                            hide_index=True
-                        )
-    
-                    st.download_button(
-                        t("validation.download_failed_bootstrap_iterations"),
-                        qspr_csv_download_bytes(bootstrap_failed_iterations),
-                        f"bootstrap_failed_iterations_{current_model_for_bootstrap}.csv",
-                        "text/csv",
-                        key=f"download_bootstrap_failed_iterations_{current_model_for_bootstrap}"
                     )
     
                 bootstrap_oob_predictions = bootstrap_res.get(
@@ -1828,7 +1422,7 @@ def render_validation_section(context):
     
                         st.download_button(
                             t('bootstrap.ui_download_oob'),
-                            qspr_csv_download_bytes(bootstrap_oob_predictions),
+                            bootstrap_oob_predictions.to_csv(index=False).encode("utf-8"),
                             f"bootstrap_oob_predictions_{current_model_for_bootstrap}.csv",
                             "text/csv",
                             key=f"download_bootstrap_oob_predictions_{current_model_for_bootstrap}"
@@ -1852,23 +1446,11 @@ def render_validation_section(context):
             col_yr_1, col_yr_2, col_yr_3, col_yr_4 = st.columns(4)
     
             with col_yr_1:
-                y_rand_method_options = {
-                    "kfold": t('y_rand.ui_method_kfold'),
-                    "loo": t('y_rand.ui_method_loo'),
-                }
-                old_y_rand_method = st.session_state.get("y_randomization_method")
-                if old_y_rand_method in set(y_rand_method_options.values()):
-                    st.session_state.y_randomization_method = (
-                        "loo"
-                        if old_y_rand_method == t('y_rand.ui_method_loo')
-                        else "kfold"
-                    )
                 y_rand_method = st.selectbox(
                     t('y_rand.ui_method_label'),
-                    list(y_rand_method_options.keys()),
+                    [t('y_rand.ui_method_kfold'), t('y_rand.ui_method_loo')],
                     index=0,
-                    key="y_randomization_method",
-                    format_func=lambda key: y_rand_method_options.get(key, str(key)),
+                    key="y_randomization_method"
                 )
     
             with col_yr_2:
@@ -1899,7 +1481,7 @@ def render_validation_section(context):
                     key="y_randomization_seed"
                 )
     
-            if y_rand_method == "loo":
+            if y_rand_method == t('y_rand.ui_method_loo'):
                 message = t('y_rand.ui_loo_warning')
                 st.warning(message)
                 warning_key = f"y_rand_loo_warning_logged_{current_model_for_y_rand}_{len(y_all_current)}"
@@ -1942,14 +1524,6 @@ def render_validation_section(context):
                             text=t('y_rand.ui_progress_text', done=done, total=total)
                         )
     
-                    y_rand_settings = {
-                        "kind": "y_randomization",
-                        "method": str(y_rand_method),
-                        "n_permutations": int(y_rand_n_perm),
-                        "k": int(y_rand_k),
-                        "random_state": int(y_rand_seed),
-                    }
-
                     with st.spinner(t('y_rand.ui_spinner')):
                         y_rand_result = qspr_y_randomization_test(
                             X=X_all_current,
@@ -1963,23 +1537,15 @@ def render_validation_section(context):
                             k=int(y_rand_k),
                             random_state=int(y_rand_seed),
                             scale=True,
-                            progress_callback=_yr_progress,
-                            selector_config=selector_config_current
+                            progress_callback=_yr_progress
                         )
-                    y_rand_result["validation_settings"] = y_rand_settings
     
                     if "y_randomization_results_dict" not in st.session_state:
                         st.session_state.y_randomization_results_dict = {}
     
                     st.session_state.y_randomization_results_dict[
                         current_model_for_y_rand
-                    ] = attach_result_cache_metadata(
-                        y_rand_result,
-                        _validation_cache_hash(
-                            current_model_for_y_rand,
-                            y_rand_settings,
-                        ),
-                    )
+                    ] = y_rand_result
     
                     log_y_randomization_result(
                         current_model_for_y_rand,
@@ -2001,18 +1567,10 @@ def render_validation_section(context):
                         event="y_randomization_failed",
                     )
     
-            y_rand_settings_current = {
-                "kind": "y_randomization",
-                "method": str(y_rand_method),
-                "n_permutations": int(y_rand_n_perm),
-                "k": int(y_rand_k),
-                "random_state": int(y_rand_seed),
-            }
-            y_rand_res = _current_cached_validation_result(
+            y_rand_res = st.session_state.get(
                 "y_randomization_results_dict",
-                current_model_for_y_rand,
-                y_rand_settings_current,
-            )
+                {}
+            ).get(current_model_for_y_rand)
     
             if y_rand_res is not None:
                 y_rand_summary = y_rand_res.get("summary", {})
@@ -2103,7 +1661,7 @@ def render_validation_section(context):
                             hide_index=True
                         )
     
-                    csv_yr = qspr_csv_download_bytes(y_rand_perm_table)
+                    csv_yr = y_rand_perm_table.to_csv(index=False).encode("utf-8")
     
                     st.download_button(
                         t('y_rand.ui_download_csv'),

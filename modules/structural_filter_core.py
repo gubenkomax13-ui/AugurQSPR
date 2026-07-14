@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Structural filter core for Augur QSPR.
+Structural filter core for QSPR Forge.
 
 Функции структурной фильтрации датасета:
 - фильтрация по элементам;
@@ -14,17 +14,6 @@ Structural filter core for Augur QSPR.
 
 import pandas as pd
 from rdkit import Chem
-from rdkit.Chem import Descriptors
-from rdkit.Chem import rdMolDescriptors
-
-try:
-    from .i18n import t
-except Exception:
-    try:
-        from i18n import t  # type: ignore
-    except Exception:
-        def t(key, **kwargs):  # type: ignore
-            return key.format(**kwargs) if kwargs else key
 
 
 FUNCTIONAL_GROUP_SMARTS = {
@@ -48,78 +37,6 @@ FUNCTIONAL_GROUP_SMARTS = {
     "Сульфонил SO2": "S(=O)(=O)",
     "Фосфорсодержащий фрагмент": "P",
 }
-
-FUNCTIONAL_GROUP_SMARTS.update({
-    "Alcohol OH (aliphatic)": "[OX2H][CX4;!$(C=[O,N,S])]",
-    "Phenolic OH": "[OX2H][c]",
-    "Carboxylic acid OH": "[OX2H][CX3](=O)",
-    "Primary amine": "[NX3H2;!$(NC=O)]",
-    "Secondary amine": "[NX3H1;!$(NC=O)]",
-    "Tertiary amine": "[NX3H0;!$(NC=O)]",
-    "Aromatic amine": "[NX3;!$(NC=O)][c]",
-    "Aliphatic amine": "[NX3;!$(NC=O)][CX4]",
-})
-
-FUNCTIONAL_GROUP_NOTES = {
-    "Alcohol OH (aliphatic)": "Specific aliphatic alcohol OH; phenols and carboxylic acids are separate groups.",
-    "Phenolic OH": "Specific aromatic phenolic OH.",
-    "Carboxylic acid OH": "Specific OH attached to carboxylic acid carbonyl.",
-    "Primary amine": "Specific amine subclass; broad amine matches are not mutually exclusive.",
-    "Secondary amine": "Specific amine subclass; broad amine matches are not mutually exclusive.",
-    "Tertiary amine": "Specific amine subclass; broad amine matches are not mutually exclusive.",
-    "Aromatic amine": "Amine nitrogen attached to an aromatic atom.",
-    "Aliphatic amine": "Amine nitrogen attached to an aliphatic sp3 carbon.",
-}
-
-
-def structural_filter_normalize_combine_mode(combine_mode):
-    text = str(combine_mode or "").strip().lower()
-    if text in {"any", "or"} or "хотя" in text or "at least" in text:
-        return "any"
-    return "all"
-
-
-def structural_filter_normalize_match_mode(value):
-    text = str(value or "").strip().lower()
-    if text in {"all", "and"} or "все" in text or "all selected" in text or "all smarts" in text:
-        return "all"
-    return "any"
-
-
-def structural_filter_normalize_aromatic_mode(value):
-    text = str(value or "").strip().lower()
-    if text in {"aromatic", "only_aromatic"} or "только аромат" in text:
-        return "only_aromatic"
-    if text in {"non_aromatic", "only_non_aromatic"} or "неаромат" in text:
-        return "only_non_aromatic"
-    return "any"
-
-
-def structural_filter_report(work, filtered, condition_names, combine_mode):
-    return {
-        "total_rows": len(work),
-        "valid_structures": int(work["valid_mol"].sum()),
-        "rows_after_filter": len(filtered),
-        "conditions_applied": len(condition_names),
-        "condition_list": ", ".join(condition_names),
-        "smiles_validity_required": True,
-        "combine_mode": structural_filter_normalize_combine_mode(combine_mode),
-    }
-
-
-def structural_filter_group_metadata_table():
-    rows = []
-    for name, smarts in FUNCTIONAL_GROUP_SMARTS.items():
-        rows.append({
-            "group": name,
-            "smarts": smarts,
-            "note": FUNCTIONAL_GROUP_NOTES.get(
-                name,
-                "Functional-group SMARTS are substructure matches and are not mutually exclusive.",
-            ),
-        })
-    return pd.DataFrame(rows)
-
 
 def qspr_guess_descriptor_source(desc_name):
     """
@@ -149,7 +66,6 @@ def qspr_make_descriptor_meaning_table(desc_names, status_label=""):
     Использует descriptor_meanings.json через qspr_load_descriptor_meanings().
     """
     desc_names = list(desc_names or [])
-    from modules.qspr_core import qspr_load_descriptor_meanings
 
     meanings = qspr_load_descriptor_meanings()
 
@@ -179,8 +95,6 @@ def qspr_show_descriptor_meaning_table(
     """
     Показывает таблицу расшифровки дескрипторов и кнопку скачивания CSV.
     """
-    import streamlit as st
-
     desc_names = list(desc_names or [])
 
     if not desc_names:
@@ -193,7 +107,8 @@ def qspr_show_descriptor_meaning_table(
 
     with st.expander(title, expanded=expanded):
         st.caption(
-            t("structural_filter.descriptor_meanings_caption")
+            "Расшифровка берётся из файла `descriptor_meanings.json`. "
+            "Если написано «Нет расшифровки», значит этот дескриптор нужно добавить в JSON."
         )
 
         st.dataframe(
@@ -203,7 +118,7 @@ def qspr_show_descriptor_meaning_table(
         )
 
         st.download_button(
-            t("structural_filter.download_descriptor_meanings_csv"),
+            "📥 Скачать расшифровку дескрипторов CSV",
             meaning_df.to_csv(index=False).encode("utf-8-sig"),
             f"{key_prefix}.csv",
             "text/csv",
@@ -234,30 +149,38 @@ def structural_filter_mol_from_smiles(smiles):
 
 
 def structural_filter_formula_from_mol(mol):
-    """Return RDKit molecular formula, including implicit hydrogens."""
+    """
+    Простая формула по атомам RDKit.
+    """
     if mol is None:
         return ""
 
-    try:
-        return rdMolDescriptors.CalcMolFormula(mol)
-    except Exception:
-        return ""
+    counts = {}
 
+    for atom in mol.GetAtoms():
+        symbol = atom.GetSymbol()
+        counts[symbol] = counts.get(symbol, 0) + 1
 
-def structural_filter_validate_custom_smarts(custom_smarts_text):
-    rows = []
-    for line_no, raw in enumerate(str(custom_smarts_text).splitlines(), start=1):
-        smarts = raw.strip()
-        if not smarts:
-            continue
-        patt = Chem.MolFromSmarts(smarts)
-        rows.append({
-            "line": line_no,
-            "SMARTS": smarts,
-            "status": "ok" if patt is not None else "syntax_error",
-            "message": "" if patt is not None else "RDKit could not parse this SMARTS.",
-        })
-    return pd.DataFrame(rows)
+    parts = []
+
+    for symbol in ["C", "H", "N", "O", "S", "P", "F", "Cl", "Br", "I"]:
+        if symbol in counts:
+            n = counts.pop(symbol)
+
+            if n == 1:
+                parts.append(symbol)
+            else:
+                parts.append(f"{symbol}{n}")
+
+    for symbol in sorted(counts.keys()):
+        n = counts[symbol]
+
+        if n == 1:
+            parts.append(symbol)
+        else:
+            parts.append(f"{symbol}{n}")
+
+    return "".join(parts)
 
 
 def structural_filter_analyze_mol(mol):
@@ -273,25 +196,10 @@ def structural_filter_analyze_mol(mol):
             "heavy_atom_count_rdkit": 0,
             "ring_count_rdkit": 0,
             "aromatic_atom_count_rdkit": 0,
-            "aromatic_ring_count_rdkit": 0,
-            "aliphatic_ring_count_rdkit": 0,
-            "heteroaromatic_ring_count_rdkit": 0,
-            "fused_ring_system_count_rdkit": 0,
-            "formal_charge_rdkit": 0,
-            "positive_atom_count_rdkit": 0,
-            "negative_atom_count_rdkit": 0,
-            "charge_class_rdkit": "invalid",
-            "mol_weight_rdkit": 0.0,
-            "rotatable_bond_count_rdkit": 0,
-            "tpsa_rdkit": 0.0,
-            "hbd_rdkit": 0,
-            "hba_rdkit": 0,
-            "fraction_csp3_rdkit": 0.0,
             "only_CH_rdkit": False,
         }
 
     atom_symbols = [atom.GetSymbol() for atom in mol.GetAtoms()]
-    atom_numbers = [atom.GetAtomicNum() for atom in mol.GetAtoms()]
 
     carbon_count = atom_symbols.count("C")
 
@@ -302,49 +210,13 @@ def structural_filter_analyze_mol(mol):
 
     heavy_atom_count = mol.GetNumHeavyAtoms()
     ring_count = mol.GetRingInfo().NumRings()
-    aromatic_ring_count = rdMolDescriptors.CalcNumAromaticRings(mol)
-    aliphatic_ring_count = int(rdMolDescriptors.CalcNumAliphaticRings(mol))
-    ring_atom_sets = [set(ring) for ring in mol.GetRingInfo().AtomRings()]
-    heteroaromatic_ring_count = int(sum(
-        all(mol.GetAtomWithIdx(idx).GetIsAromatic() for idx in ring)
-        and any(mol.GetAtomWithIdx(idx).GetAtomicNum() not in [6, 1] for idx in ring)
-        for ring in ring_atom_sets
-    ))
-    fused_ring_system_count = 0
-    remaining_rings = list(ring_atom_sets)
-    while remaining_rings:
-        seed = remaining_rings.pop()
-        stack = [seed]
-        fused_system = set(seed)
-        while stack:
-            current = stack.pop()
-            touching = [
-                ring for ring in remaining_rings
-                if len(current.intersection(ring)) >= 2
-            ]
-            for ring in touching:
-                remaining_rings.remove(ring)
-                fused_system.update(ring)
-                stack.append(ring)
-        fused_ring_system_count += 1
 
     aromatic_atom_count = sum(
         1 for atom in mol.GetAtoms()
         if atom.GetIsAromatic()
     )
-    formal_charge = int(sum(atom.GetFormalCharge() for atom in mol.GetAtoms()))
-    positive_atoms = int(sum(atom.GetFormalCharge() > 0 for atom in mol.GetAtoms()))
-    negative_atoms = int(sum(atom.GetFormalCharge() < 0 for atom in mol.GetAtoms()))
-    if positive_atoms > 0 and negative_atoms > 0:
-        charge_class = "zwitterion"
-    elif formal_charge > 0:
-        charge_class = "cation"
-    elif formal_charge < 0:
-        charge_class = "anion"
-    else:
-        charge_class = "neutral"
 
-    only_ch = all(number in [1, 6] for number in atom_numbers)
+    only_ch = all(symbol in ["C", "H"] for symbol in atom_symbols)
 
     return {
         "valid_mol": True,
@@ -354,20 +226,6 @@ def structural_filter_analyze_mol(mol):
         "heavy_atom_count_rdkit": heavy_atom_count,
         "ring_count_rdkit": ring_count,
         "aromatic_atom_count_rdkit": aromatic_atom_count,
-        "aromatic_ring_count_rdkit": aromatic_ring_count,
-        "aliphatic_ring_count_rdkit": aliphatic_ring_count,
-        "heteroaromatic_ring_count_rdkit": heteroaromatic_ring_count,
-        "fused_ring_system_count_rdkit": fused_ring_system_count,
-        "formal_charge_rdkit": formal_charge,
-        "positive_atom_count_rdkit": positive_atoms,
-        "negative_atom_count_rdkit": negative_atoms,
-        "charge_class_rdkit": charge_class,
-        "mol_weight_rdkit": float(Descriptors.MolWt(mol)),
-        "rotatable_bond_count_rdkit": int(rdMolDescriptors.CalcNumRotatableBonds(mol)),
-        "tpsa_rdkit": float(rdMolDescriptors.CalcTPSA(mol)),
-        "hbd_rdkit": int(rdMolDescriptors.CalcNumHBD(mol)),
-        "hba_rdkit": int(rdMolDescriptors.CalcNumHBA(mol)),
-        "fraction_csp3_rdkit": float(rdMolDescriptors.CalcFractionCSP3(mol)),
         "only_CH_rdkit": only_ch,
     }
 
@@ -387,33 +245,6 @@ def structural_filter_apply(
     carbon_max=None,
     hetero_min=None,
     hetero_max=None,
-    group_count_name=None,
-    group_count_min=None,
-    group_count_max=None,
-    group_count_exact=None,
-    element_count_symbol=None,
-    element_count_min=None,
-    element_count_max=None,
-    element_count_exact=None,
-    charge_mode="any",
-    formal_charge_min=None,
-    formal_charge_max=None,
-    mol_weight_min=None,
-    mol_weight_max=None,
-    rotatable_min=None,
-    rotatable_max=None,
-    tpsa_min=None,
-    tpsa_max=None,
-    hbd_min=None,
-    hbd_max=None,
-    hba_min=None,
-    hba_max=None,
-    ring_min=None,
-    ring_max=None,
-    aromatic_ring_min=None,
-    aromatic_ring_max=None,
-    fraction_csp3_min=None,
-    fraction_csp3_max=None,
     text_col=None,
     text_query="",
     combine_mode="Все условия одновременно"
@@ -459,6 +290,7 @@ def structural_filter_apply(
 
     valid_condition = work["valid_mol"] == True
     conditions.append(valid_condition)
+    condition_names.append("корректная структура")
 
     if selected_elements:
         element_hits = []
@@ -470,7 +302,7 @@ def structural_filter_apply(
 
             atom_symbols = set(atom.GetSymbol() for atom in mol.GetAtoms())
 
-            if structural_filter_normalize_match_mode(element_mode) == "all":
+            if element_mode == "Все выбранные элементы":
                 element_hits.append(
                     all(el in atom_symbols for el in selected_elements)
                 )
@@ -496,9 +328,6 @@ def structural_filter_apply(
                 if patt is not None:
                     group_patterns[group_name] = patt
 
-        if selected_groups and not group_patterns:
-            raise ValueError("No selected functional-group SMARTS could be parsed.")
-
         group_hits = []
         matched_group_labels = []
 
@@ -516,7 +345,7 @@ def structural_filter_apply(
 
             matched_group_labels.append("; ".join(current_matches))
 
-            if structural_filter_normalize_match_mode(group_mode) == "all":
+            if group_mode == "Все выбранные группы":
                 group_hits.append(len(current_matches) == len(group_patterns))
             else:
                 group_hits.append(len(current_matches) > 0)
@@ -526,58 +355,6 @@ def structural_filter_apply(
 
     work["Найденные группы"] = matched_group_labels
 
-    if group_count_name and group_count_name in FUNCTIONAL_GROUP_SMARTS:
-        patt = Chem.MolFromSmarts(FUNCTIONAL_GROUP_SMARTS[group_count_name])
-        counts = []
-        for mol in mols:
-            if mol is None or patt is None:
-                counts.append(0)
-            else:
-                counts.append(len(mol.GetSubstructMatches(patt, uniquify=True)))
-        count_col = "functional_group_count_filter"
-        work[count_col] = counts
-        group_count_condition = pd.Series(True, index=work.index)
-        if group_count_exact is not None:
-            group_count_condition = group_count_condition & (
-                work[count_col] == int(group_count_exact)
-            )
-        if group_count_min is not None:
-            group_count_condition = group_count_condition & (
-                work[count_col] >= int(group_count_min)
-            )
-        if group_count_max is not None:
-            group_count_condition = group_count_condition & (
-                work[count_col] <= int(group_count_max)
-            )
-        conditions.append(group_count_condition)
-        condition_names.append("functional group count")
-
-    if element_count_symbol:
-        element_count_symbol = str(element_count_symbol).strip()
-        counts = []
-        for mol in mols:
-            if mol is None:
-                counts.append(0)
-            else:
-                counts.append(sum(atom.GetSymbol() == element_count_symbol for atom in mol.GetAtoms()))
-        count_col = f"element_count_{element_count_symbol}"
-        work[count_col] = counts
-        element_count_condition = pd.Series(True, index=work.index)
-        if element_count_exact is not None:
-            element_count_condition = element_count_condition & (
-                work[count_col] == int(element_count_exact)
-            )
-        if element_count_min is not None:
-            element_count_condition = element_count_condition & (
-                work[count_col] >= int(element_count_min)
-            )
-        if element_count_max is not None:
-            element_count_condition = element_count_condition & (
-                work[count_col] <= int(element_count_max)
-            )
-        conditions.append(element_count_condition)
-        condition_names.append(f"element count {element_count_symbol}")
-
     custom_smarts_list = [
         line.strip()
         for line in str(custom_smarts_text).splitlines()
@@ -585,20 +362,6 @@ def structural_filter_apply(
     ]
 
     if custom_smarts_list:
-        smarts_status = structural_filter_validate_custom_smarts(custom_smarts_text)
-        if (
-            isinstance(smarts_status, pd.DataFrame)
-            and not smarts_status.empty
-            and smarts_status["status"].astype(str).ne("ok").any()
-        ):
-            bad = smarts_status[smarts_status["status"].astype(str) != "ok"]
-            raise ValueError(
-                "Invalid custom SMARTS: "
-                + "; ".join(
-                    f"line {row['line']}: {row['SMARTS']}"
-                    for _, row in bad.iterrows()
-                )
-            )
         custom_patterns = []
         invalid_smarts = []
 
@@ -632,7 +395,7 @@ def structural_filter_apply(
 
             custom_hit_labels.append("; ".join(matched_smarts))
 
-            if structural_filter_normalize_match_mode(custom_smarts_mode) == "all":
+            if custom_smarts_mode == "Все SMARTS":
                 custom_hits.append(len(matched_smarts) == len(custom_patterns))
             else:
                 custom_hits.append(len(matched_smarts) > 0)
@@ -643,12 +406,11 @@ def structural_filter_apply(
     else:
         work["Найденные SMARTS"] = ""
 
-    aromatic_mode = structural_filter_normalize_aromatic_mode(require_aromatic)
-    if aromatic_mode == "only_aromatic":
+    if require_aromatic == "Только ароматические":
         conditions.append(work["aromatic_atom_count_rdkit"] > 0)
         condition_names.append("ароматичность")
 
-    elif aromatic_mode == "only_non_aromatic":
+    elif require_aromatic == "Только неароматические":
         conditions.append(work["aromatic_atom_count_rdkit"] == 0)
         condition_names.append("неароматичность")
 
@@ -672,37 +434,6 @@ def structural_filter_apply(
         conditions.append(work["heteroatom_count_rdkit"] <= int(hetero_max))
         condition_names.append("максимум гетероатомов")
 
-    charge_mode = str(charge_mode or "any").strip().lower()
-    if charge_mode in {"neutral", "cation", "anion", "zwitterion"}:
-        conditions.append(work["charge_class_rdkit"] == charge_mode)
-        condition_names.append("charge class")
-
-    if formal_charge_min is not None:
-        conditions.append(work["formal_charge_rdkit"] >= int(formal_charge_min))
-        condition_names.append("formal charge min")
-
-    if formal_charge_max is not None:
-        conditions.append(work["formal_charge_rdkit"] <= int(formal_charge_max))
-        condition_names.append("formal charge max")
-
-    range_specs = [
-        ("mol_weight_rdkit", mol_weight_min, mol_weight_max, float, "molecular weight"),
-        ("rotatable_bond_count_rdkit", rotatable_min, rotatable_max, int, "rotatable bonds"),
-        ("tpsa_rdkit", tpsa_min, tpsa_max, float, "TPSA"),
-        ("hbd_rdkit", hbd_min, hbd_max, int, "HBD"),
-        ("hba_rdkit", hba_min, hba_max, int, "HBA"),
-        ("ring_count_rdkit", ring_min, ring_max, int, "rings"),
-        ("aromatic_ring_count_rdkit", aromatic_ring_min, aromatic_ring_max, int, "aromatic rings"),
-        ("fraction_csp3_rdkit", fraction_csp3_min, fraction_csp3_max, float, "fraction Csp3"),
-    ]
-    for column, min_value, max_value, caster, label in range_specs:
-        if min_value is not None:
-            conditions.append(work[column] >= caster(min_value))
-            condition_names.append(f"{label} min")
-        if max_value is not None:
-            conditions.append(work[column] <= caster(max_value))
-            condition_names.append(f"{label} max")
-
     if text_col is not None and text_col in work.columns and str(text_query).strip():
         q = str(text_query).strip().lower()
 
@@ -715,38 +446,29 @@ def structural_filter_apply(
         conditions.append(text_condition)
         condition_names.append("текстовый поиск")
 
-    user_conditions = conditions[1:]
-
-    if user_conditions and structural_filter_normalize_combine_mode(combine_mode) == "any":
-        final_mask = user_conditions[0].copy()
-
-        for cond in user_conditions[1:]:
-            final_mask = final_mask | cond
-
-        final_mask = valid_condition & final_mask
-        filtered = work.loc[final_mask].copy()
-        report = structural_filter_report(work, filtered, condition_names, combine_mode)
-        return filtered, report
-
-    if not user_conditions:
+    if not conditions:
         final_mask = pd.Series(True, index=work.index)
     else:
-        if structural_filter_normalize_combine_mode(combine_mode) == "any":
-            final_mask = user_conditions[0].copy()
+        if combine_mode == "Хотя бы одно условие":
+            final_mask = conditions[0].copy()
 
-            for cond in user_conditions[1:]:
+            for cond in conditions[1:]:
                 final_mask = final_mask | cond
 
         else:
-            final_mask = user_conditions[0].copy()
+            final_mask = conditions[0].copy()
 
-            for cond in user_conditions[1:]:
+            for cond in conditions[1:]:
                 final_mask = final_mask & cond
-
-    final_mask = valid_condition & final_mask
 
     filtered = work.loc[final_mask].copy()
 
-    report = structural_filter_report(work, filtered, condition_names, combine_mode)
+    report = {
+        "Всего строк": len(work),
+        "Корректных структур": int(work["valid_mol"].sum()),
+        "После фильтра": len(filtered),
+        "Условий применено": len(condition_names),
+        "Список условий": ", ".join(condition_names),
+    }
 
     return filtered, report

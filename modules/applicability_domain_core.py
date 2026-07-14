@@ -180,7 +180,6 @@ def qspr_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
         X_query
     ])
 
-    rank = int(np.linalg.matrix_rank(X_train_aug))
     xtx_inv = np.linalg.pinv(X_train_aug.T @ X_train_aug)
 
     leverage = np.sum(
@@ -188,7 +187,7 @@ def qspr_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
         axis=1
     )
 
-    p_eff = rank
+    p_eff = p + 1
     threshold = 3.0 * p_eff / n
 
     # Формально h не может быть больше 1 для обучающей OLS-H,
@@ -206,51 +205,7 @@ def qspr_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
         "n": int(n),
         "status": status
     }
-
-def qspr_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
-    """Applicability Domain via leverage with rank-aware threshold."""
-    X_train = np.asarray(X_train, dtype=float)
-    if X_query is None:
-        X_query = X_train
-    else:
-        X_query = np.asarray(X_query, dtype=float)
-    if X_train.ndim != 2:
-        raise ValueError("X_train must be a 2D matrix.")
-    if X_query.ndim != 2:
-        raise ValueError("X_query must be a 2D matrix.")
-    n, p = X_train.shape
-    if n < 2:
-        raise ValueError("At least 2 training compounds are required for leverage AD.")
-    if X_query.shape[1] != p:
-        raise ValueError(
-            f"X_query descriptor count ({X_query.shape[1]}) differs from X_train ({p})."
-        )
-    X_train_aug = np.column_stack([np.ones(n), X_train])
-    X_query_aug = np.column_stack([np.ones(X_query.shape[0]), X_query])
-    rank = int(np.linalg.matrix_rank(X_train_aug))
-    xtx_inv = np.linalg.pinv(X_train_aug.T @ X_train_aug)
-    leverage = np.sum((X_query_aug @ xtx_inv) * X_query_aug, axis=1)
-    p_eff = rank
-    threshold = 3.0 * p_eff / n
-    warnings = []
-    if threshold >= 1.0:
-        warnings.append("LEVERAGE_THRESHOLD_GE_1_NOT_INFORMATIVE")
-    if rank < p + 1:
-        warnings.append("DESCRIPTOR_MATRIX_RANK_DEFICIENT")
-    status = ["IN_AD" if h <= threshold else "OUT_OF_AD" for h in leverage]
-    return {
-        "leverage": leverage,
-        "threshold": float(threshold),
-        "p": int(p),
-        "rank": int(rank),
-        "p_eff": int(p_eff),
-        "n": int(n),
-        "status": status,
-        "warnings": warnings,
-        "informative": bool(threshold < 1.0 and rank >= p + 1),
-    }
-
-
+    
 def qspr_make_ad_table(
     X_train,
     smiles,
@@ -277,7 +232,7 @@ def qspr_make_ad_table(
     })
 
     if original_indices is not None:
-        table.insert(1, "source_index", list(original_indices))
+        table.insert(1, "Номер в исходной таблице", [int(i) + 1 for i in original_indices])
 
     if smiles is not None:
         insert_pos = 2 if original_indices is not None else 1
@@ -287,11 +242,9 @@ def qspr_make_ad_table(
         table["Значение свойства"] = y
 
     table["Надёжность по AD"] = table["AD-статус"].map({
-        "IN_AD": "inside applicability domain",
-        "OUT_OF_AD": "outside applicability domain"
+        "в AD": "структурно в области модели",
+        "вне AD": "экстраполяция: прогноз менее надёжен"
     })
-    table["AD informative"] = bool(ad.get("informative", True))
-    table["AD warnings"] = "; ".join(ad.get("warnings", []))
 
     return table, ad
 

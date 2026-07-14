@@ -27,8 +27,6 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem import Descriptors
 
-from modules.qspr_core import qspr_rename_duplicate_columns
-
 
 # ---------------------------------------------------------------------
 # Availability
@@ -600,7 +598,7 @@ def calculate_morfeus_descriptors_for_dataframe(
         raise ValueError(f"Колонка SMILES не найдена: {smiles_col}")
 
     work = df.copy()
-    work = qspr_rename_duplicate_columns(work)
+    work = work.loc[:, ~work.columns.duplicated()].copy()
 
     if max_molecules is not None:
         work = work.head(int(max_molecules)).copy()
@@ -639,7 +637,7 @@ def calculate_morfeus_descriptors_for_dataframe(
     out = pd.DataFrame(rows)
 
     # Чистим дубли колонок на всякий случай.
-    out = qspr_rename_duplicate_columns(out)
+    out = out.loc[:, ~out.columns.duplicated()].copy()
 
     return out
 

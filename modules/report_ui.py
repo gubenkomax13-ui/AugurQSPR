@@ -1,5 +1,5 @@
 ﻿# -*- coding: utf-8 -*-
-"""Интерфейс формирования отчётов Augur QSPR."""
+"""Интерфейс формирования отчётов QSPR Forge."""
 
 import base64
 import io
@@ -15,42 +15,25 @@ import pandas as pd
 import streamlit as st
 
 from modules.i18n import t
-from modules.analysis_state import current_analysis_parameters_table
 from modules.module_explain_ui import render_module_explanation
 from modules.statistics_summary_ui import (
     build_final_statistics_summary,
     final_statistics_to_flat_dataframe,
 )
-from modules.runtime_mode import qspr_is_online_mode
 
 try:
     from rdkit import Chem as _ReportChem
+    from rdkit.Chem import Draw
+    rdkit_draw_available = True
 except Exception:
     _ReportChem = None
-Draw = None
-rdkit_draw_available = False
-
-
-def _get_report_rdkit_draw():
-    global Draw, rdkit_draw_available
-    if Draw is not None:
-        return Draw
-    if qspr_is_online_mode():
-        return None
-    try:
-        from rdkit.Chem import Draw as _Draw
-    except Exception:
-        rdkit_draw_available = False
-        return None
-    Draw = _Draw
-    rdkit_draw_available = True
-    return Draw
+    Draw = None
+    rdkit_draw_available = False
 
 
 def _add_molecule_grid_section(section_title, smiles_list, add_html_section, quality_comment_parts=None):
     """Adds a molecule grid to the report when RDKit drawing is available."""
-    draw = _get_report_rdkit_draw()
-    if draw is None or _ReportChem is None:
+    if Draw is None or _ReportChem is None:
         warning = (
             "Молекулярные изображения пропущены: RDKit Draw недоступен. "
             "Отчёт сформирован без структур."
@@ -76,7 +59,7 @@ def _add_molecule_grid_section(section_title, smiles_list, add_html_section, qua
         if not mols:
             return False
 
-        img = draw.MolsToGridImage(mols, molsPerRow=4, subImgSize=(200, 150))
+        img = Draw.MolsToGridImage(mols, molsPerRow=4, subImgSize=(200, 150))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode()
@@ -104,61 +87,20 @@ def render_report_section(context):
         context.get("model_name")
         or st.session_state.get("last_model_algorithm", "")
     )
-    validation_current_checker = context.get("qspr_validation_result_is_current") or globals().get(
-        "qspr_validation_result_is_current"
-    )
-
-    def current_validation_result(store_name, kind):
-        result = st.session_state.get(store_name, {}).get(model_name)
-        if not isinstance(result, dict):
-            return None
-        if callable(validation_current_checker):
-            return result if validation_current_checker(model_name, result, kind) else None
-        return None
-
-    holdout_current = current_validation_result("holdout_results_dict", "holdout")
-    kfold_current = current_validation_result("kfold_results_dict", "kfold")
-    loo_current = current_validation_result("loo_results_dict", "loo")
-    bootstrap_current = current_validation_result("bootstrap_results_dict", "bootstrap")
-    yrandom_current = current_validation_result("y_randomization_results_dict", "y_randomization")
-    ext_current = st.session_state.get("ext_validation_results_dict", {}).get(model_name)
-    if ext_current is None:
-        ext_global = st.session_state.get("ext_validation_result")
-        if isinstance(ext_global, dict) and ext_global.get("model_name") == model_name:
-            ext_current = ext_global
-    if callable(validation_current_checker):
-        ext_current = (
-            ext_current
-            if validation_current_checker(model_name, ext_current, "distance_holdout")
-            else None
-        )
-    else:
-        ext_current = None
     
     st.header(t('report.header'))
     render_module_explanation("report")
     
     st.markdown(t('report.description'))
-    analysis_parameters_df = pd.DataFrame(current_analysis_parameters_table(st.session_state))
-    if not analysis_parameters_df.empty:
-        with st.expander(t("report.analysis_parameters_title"), expanded=False):
-            st.dataframe(analysis_parameters_df, width="stretch", hide_index=True)
-            st.download_button(
-                t("report.download_analysis_parameters_csv"),
-                analysis_parameters_df.to_csv(index=False).encode("utf-8-sig"),
-                "analysis_parameters.csv",
-                "text/csv",
-                key="report_analysis_parameters_download",
-            )
     
     current_model_ready_for_report = (
         "trained_models" in st.session_state
         and model_name in st.session_state.trained_models
     )
     
-    holdout_ready_for_report = holdout_current is not None
-    kfold_ready_for_report = kfold_current is not None
-    loo_ready_for_report = loo_current is not None
+    holdout_ready_for_report = model_name in st.session_state.get("holdout_results_dict", {})
+    kfold_ready_for_report = model_name in st.session_state.get("kfold_results_dict", {})
+    loo_ready_for_report = model_name in st.session_state.get("loo_results_dict", {})
     
     saod_ready_for_report = (
         st.session_state.get("saod2_result") is not None
@@ -255,44 +197,44 @@ def render_report_section(context):
     
             if holdout_ready_for_report:
                 report_include_holdout = st.checkbox(
-                    t("report.include_holdout"),
+                    "Hold-out",
                     value=True,
                     key="report_include_holdout"
                 )
             else:
                 report_include_holdout = False
-                unavailable_report_sections.append(t("report.include_holdout"))
+                unavailable_report_sections.append("Hold-out")
     
         with report_col_2:
             if kfold_ready_for_report:
                 report_include_kfold = st.checkbox(
-                    t("report.include_kfold"),
+                    "K-Fold",
                     value=True,
                     key="report_include_kfold"
                 )
             else:
                 report_include_kfold = False
-                unavailable_report_sections.append(t("report.include_kfold"))
+                unavailable_report_sections.append("K-Fold")
     
             if loo_ready_for_report:
                 report_include_loo = st.checkbox(
-                    t("report.include_loo"),
+                    "Leave-One-Out",
                     value=True,
                     key="report_include_loo"
                 )
             else:
                 report_include_loo = False
-                unavailable_report_sections.append(t("report.include_loo"))
+                unavailable_report_sections.append("Leave-One-Out")
     
             if current_model_ready_for_report:
                 report_include_ad = st.checkbox(
-                    t("report.include_applicability_domain"),
+                    "Applicability Domain",
                     value=True,
                     key="report_include_ad"
                 )
             else:
                 report_include_ad = False
-                unavailable_report_sections.append(t("report.include_applicability_domain"))
+                unavailable_report_sections.append("Applicability Domain")
     
             if current_model_ready_for_report:
                 report_include_error_outliers = st.checkbox(
@@ -317,7 +259,7 @@ def render_report_section(context):
         with report_col_3:
             if saod_ready_for_report:
                 report_include_saod = st.checkbox(
-                    t("report.include_saod"),
+                    "*SAOD*",
                     value=True,
                     key="report_include_saod"
                 )
@@ -510,12 +452,6 @@ def render_report_section(context):
                     t('report.section_passport'),
                     _df_to_html_table(passport_df, max_rows=100)
                 )
-                if not analysis_parameters_df.empty:
-                    report_tables["Analysis parameters"] = analysis_parameters_df
-                    _add_html_section(
-                        "Параметры текущего анализа",
-                        _df_to_html_table(analysis_parameters_df, max_rows=200),
-                    )
                 
                 # --------------------------------------------------------
                 # 1.1 SAOD suspicious compounds (if available)
@@ -854,11 +790,7 @@ def render_report_section(context):
                             )
     
                             # Таблица веществ вне AD (если есть)
-                            ad_status = ad_table[t('ad_table.col_status')]
-                            outside_ad_df = ad_table[
-                                (ad_status == "OUT_OF_AD")
-                                | (ad_status == t('ad_leverage.out_ad'))
-                            ].copy()
+                            outside_ad_df = ad_table[ad_table[t('ad_table.col_status')] == t('ad_leverage.out_ad')].copy()
                             if not outside_ad_df.empty:
                                 report_tables[t('report.outside_ad_table')] = outside_ad_df
                                 _add_html_section(t('report.outside_ad_section'), _df_to_html_table(outside_ad_df))
@@ -950,7 +882,7 @@ def render_report_section(context):
                     return None
     
                 if report_include_holdout and holdout_ready_for_report:
-                    holdout_report = holdout_current
+                    holdout_report = st.session_state.holdout_results_dict.get(model_name)
     
                     hold_train_metrics = _get_metrics_from_validation_result(
                         holdout_report,
@@ -997,7 +929,7 @@ def render_report_section(context):
                         report_tables["Holdout test table"] = holdout_test_table
     
                 if report_include_kfold and kfold_ready_for_report:
-                    kfold_report = kfold_current
+                    kfold_report = st.session_state.kfold_results_dict.get(model_name)
                     k_metrics = _get_metrics_from_validation_result(
                         kfold_report,
                         primary_key="metrics"
@@ -1021,7 +953,7 @@ def render_report_section(context):
                         report_tables["KFold table"] = kfold_table
     
                 if report_include_loo and loo_ready_for_report:
-                    loo_report = loo_current
+                    loo_report = st.session_state.loo_results_dict.get(model_name)
                     loo_metrics = _get_metrics_from_validation_result(
                         loo_report,
                         primary_key="metrics"
@@ -1182,7 +1114,7 @@ def render_report_section(context):
                 if report_include_charts:
                     # Hold-out train/test scatter
                     if holdout_ready_for_report:
-                        hold_res = holdout_current
+                        hold_res = st.session_state.holdout_results_dict.get(model_name)
                         if hold_res:
                             y_train = hold_res.get("y_train")
                             y_pred_train = hold_res.get("y_pred_train")
@@ -1204,7 +1136,7 @@ def render_report_section(context):
                                 validation_plots_html += f'<div style="display:inline-block; width:45%"><img src="data:image/png;base64,{te_b64}"></div>'
                     # K-Fold scatter
                     if kfold_ready_for_report:
-                        kfold_res = kfold_current
+                        kfold_res = st.session_state.kfold_results_dict.get(model_name)
                         if kfold_res:
                             y_cv = kfold_res.get("y")
                             y_pred_cv = kfold_res.get("y_pred_cv")
@@ -1217,7 +1149,7 @@ def render_report_section(context):
                                 validation_plots_html += f'<div style="display:inline-block; width:45%"><img src="data:image/png;base64,{cv_b64}"></div>'
                     # LOO scatter and residuals
                     if loo_ready_for_report:
-                        loo_res = loo_current
+                        loo_res = st.session_state.loo_results_dict.get(model_name)
                         if loo_res:
                             y_loo = loo_res.get("y")
                             y_pred_loo = loo_res.get("y_pred_loo")
@@ -1685,37 +1617,37 @@ def render_report_section(context):
     
         # Валидация
         validation_info = {}
-        if holdout_current is not None:
-            ho = holdout_current
+        if model_name in st.session_state.get("holdout_results_dict", {}):
+            ho = st.session_state.holdout_results_dict[model_name]
             validation_info["holdout"] = {
                 "test_size": 0.2,  # можно взять из st.session_state, если храните
                 "r2": ho.get("metrics_test", {}).get("R2", 0),
                 "rmse": ho.get("metrics_test", {}).get("RMSE", 0),
                 "mae": ho.get("metrics_test", {}).get("MAE", 0)
             }
-        if kfold_current is not None:
-            kf = kfold_current
+        if model_name in st.session_state.get("kfold_results_dict", {}):
+            kf = st.session_state.kfold_results_dict[model_name]
             validation_info["kfold"] = {
                 "k": kf.get("k", 5),
                 "r2": kf.get("metrics", {}).get("R2", 0),
                 "rmse": kf.get("metrics", {}).get("RMSE", 0),
                 "mae": kf.get("metrics", {}).get("MAE", 0)
             }
-        if loo_current is not None:
-            lo = loo_current
+        if model_name in st.session_state.get("loo_results_dict", {}):
+            lo = st.session_state.loo_results_dict[model_name]
             validation_info["loo"] = {
                 "q2": lo.get("metrics", {}).get("R2", 0),
                 "rmse": lo.get("metrics", {}).get("RMSE", 0)
             }
-        if bootstrap_current is not None:
-            bs = bootstrap_current
+        if "bootstrap_results_dict" in st.session_state and model_name in st.session_state.bootstrap_results_dict:
+            bs = st.session_state.bootstrap_results_dict[model_name]
             validation_info["bootstrap"] = {
                 "n_iter": bs.get("summary", {}).get("n_iterations_successful", 0),
                 "r2_mean": bs.get("summary", {}).get("r2_oob_mean", 0),
                 "r2_std": bs.get("summary", {}).get("r2_oob_std", 0)
             }
-        ext = ext_current
-        if isinstance(ext, dict) and ext:
+        if "ext_validation_result" in st.session_state and st.session_state.ext_validation_result:
+            ext = st.session_state.ext_validation_result
             validation_info["external"] = {
                 "fraction": ext.get("fraction", 0.2),
                 "r2_mean": ext.get("summary", {}).get("test_R2_mean", 0),
@@ -1909,8 +1841,8 @@ def render_report_section(context):
             "rmse_cv": 0.0,
             "mae_cv": 0.0
         }
-        if kfold_current is not None:
-            kf = kfold_current
+        if model_name in st.session_state.get("kfold_results_dict", {}):
+            kf = st.session_state.kfold_results_dict[model_name]
             model_info.update({
                 "q2_cv": kf.get("metrics", {}).get("R2", 0),
                 "rmse_cv": kf.get("metrics", {}).get("RMSE", 0),
@@ -1926,15 +1858,15 @@ def render_report_section(context):
                 "rmse": train_m.get("RMSE", 0),
                 "mae": train_m.get("MAE", 0)
             }
-        if kfold_current is not None:
-            cv_m = kfold_current.get("metrics", {})
+        if model_name in st.session_state.get("kfold_results_dict", {}):
+            cv_m = st.session_state.kfold_results_dict[model_name].get("metrics", {})
             metrics["cv"] = {
                 "r2": cv_m.get("R2", 0),
                 "rmse": cv_m.get("RMSE", 0),
                 "mae": cv_m.get("MAE", 0)
             }
-        if holdout_current is not None:
-            test_m = holdout_current.get("metrics_test", {})
+        if model_name in st.session_state.get("holdout_results_dict", {}):
+            test_m = st.session_state.holdout_results_dict[model_name].get("metrics_test", {})
             metrics["test"] = {
                 "r2": test_m.get("R2", 0),
                 "rmse": test_m.get("RMSE", 0),
@@ -1943,8 +1875,8 @@ def render_report_section(context):
     
         # Y-рандомизация (если есть)
         yrand = None
-        if yrandom_current is not None:
-            yr = yrandom_current
+        if "y_randomization_results_dict" in st.session_state and model_name in st.session_state.y_randomization_results_dict:
+            yr = st.session_state.y_randomization_results_dict[model_name]
             yrand = {
                 "r2_rand_mean": yr.get("summary", {}).get("mean_q2_permuted", 0),
                 "q2_rand_mean": yr.get("summary", {}).get("mean_q2_permuted", 0),

@@ -72,54 +72,6 @@ def _diagnostics_spearman(x, y):
     return float(pair["x"].corr(pair["y"], method="spearman")), np.nan
 
 
-def _validation_result_has_finite_metrics(result):
-    if not isinstance(result, dict) or not result:
-        return False
-    if str(result.get("cv_status", "")).lower() == "failed":
-        return False
-    summary = result.get("summary", {})
-    candidates = [
-        result.get("metrics_test"),
-        result.get("metrics"),
-        result.get("cv_metrics"),
-        summary if isinstance(summary, dict) else {},
-        result,
-    ]
-    for metrics in candidates:
-        if not isinstance(metrics, dict):
-            continue
-        for key in ("R2", "Q2", "test_R2_mean", "test_r2_mean", "RMSE", "test_RMSE_mean", "test_rmse_mean"):
-            try:
-                value = float(metrics.get(key))
-            except (TypeError, ValueError):
-                continue
-            if np.isfinite(value):
-                return True
-    return False
-
-
-def _model_has_completed_validation(model_name, current_checker=None):
-    for store_name, kind in (
-        ("holdout_results_dict", "holdout"),
-        ("kfold_results_dict", "kfold"),
-        ("loo_results_dict", "loo"),
-    ):
-        result = st.session_state.get(store_name, {}).get(model_name)
-        if callable(current_checker) and not current_checker(model_name, result, kind):
-            continue
-        if _validation_result_has_finite_metrics(result):
-            return True
-    ext_results = st.session_state.get("ext_validation_results_dict", {})
-    ext_result = ext_results.get(model_name)
-    if ext_result is None:
-        ext_global = st.session_state.get("ext_validation_result")
-        if isinstance(ext_global, dict) and ext_global.get("model_name") == model_name:
-            ext_result = ext_global
-    if callable(current_checker) and not current_checker(model_name, ext_result, "distance_holdout"):
-        return False
-    return _validation_result_has_finite_metrics(ext_result)
-
-
 def _diagnostics_descriptor_matrix(context):
     desc_names = list(context.get("desc_names_current") or [])
     if not desc_names:
@@ -494,16 +446,12 @@ def _diagnostics_render_residual_vs_descriptor(context):
 def render_model_diagnostics_section(context):
     """Рендерит диагностику уже обученной модели после валидации."""
     globals().update(context)
-    validation_current_checker = context.get("qspr_validation_result_is_current")
     st.header(t("diagnostics.header"))
     render_module_explanation("diagnostics")
     # ------------------------------------------------------------
     # Applicability Domain
     
     st.subheader(t('applicability_domain.header'))
-    st.caption(
-        t("applicability_domain.post_model_caption")
-    )
     
     with st.expander(
         t('applicability_domain.expander_help_title'),
@@ -527,13 +475,7 @@ def render_model_diagnostics_section(context):
         )
         
         st.session_state.ad_info = ad_info
-        ad_status = ad_table[t('ad_table.col_status')]
-        n_out_ad = int(
-            (
-                (ad_status == "OUT_OF_AD")
-                | (ad_status == t('ad_leverage.out_ad'))
-            ).sum()
-        )
+        n_out_ad = int((ad_table[t('ad_table.col_status')] == t('ad_leverage.out_ad')).sum())
     
         # --------------------------------------------------
         # Williams Plot данные
@@ -585,13 +527,6 @@ def render_model_diagnostics_section(context):
                 t('applicability_domain.metric_critical_points'),
                 summary["critical"]
             )
-
-        if not bool(ad_info.get("informative", True)):
-            st.warning(
-                t("applicability_domain.noninformative_threshold_warning")
-            )
-        if ad_info.get("warnings"):
-            st.caption("AD warnings: " + "; ".join(map(str, ad_info.get("warnings", []))))
     
         # --------------------------------------------------
         # Leverage plot
@@ -793,10 +728,8 @@ def render_model_diagnostics_section(context):
         )
     
         if n_out_ad > 0:
-            ad_status = ad_table[t('ad_table.col_status')]
             ad_outside = ad_table[
-                (ad_status == "OUT_OF_AD")
-                | (ad_status == t('ad_leverage.out_ad'))
+                ad_table[t('ad_table.col_status')] == t('ad_leverage.out_ad')
             ].copy()
     
             show_molecule_grid_from_table(
@@ -841,10 +774,12 @@ def render_model_diagnostics_section(context):
             model=model,
             feature_names=native_feature_names,
         )
-        importance_validation_completed = _model_has_completed_validation(
-            model_name,
-            validation_current_checker,
-        )
+        importance_validation_completed = any([
+            model_name in st.session_state.get("holdout_results_dict", {}),
+            model_name in st.session_state.get("kfold_results_dict", {}),
+            model_name in st.session_state.get("loo_results_dict", {}),
+            bool(st.session_state.get("ext_validation_result")),
+        ])
     
         importance_tabs = st.tabs([
             t('feature_importance.tab_native'),

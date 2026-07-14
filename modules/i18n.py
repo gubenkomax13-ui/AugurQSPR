@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Модуль интернационализации (i18n) для Augur QSPR.
+Модуль интернационализации (i18n) для GenQSPR.
 Поддерживает русский (ru), английский (en), казахский (kk).
 """
 
@@ -17,30 +17,6 @@ CURRENT_LANG = 'ru'
 _cache = {}
 _cache_mtime = {}
 
-BUILTIN_FALLBACKS = {
-    "ru": {
-        "molecule_viewer.online_manual_render_info": (
-            "В онлайн-режиме структуры не строятся автоматически сразу после загрузки файла, "
-            "чтобы избежать падения процесса на проблемных SMILES или нативной отрисовке RDKit."
-        ),
-        "molecule_viewer.online_render_button": "Показать первые 20 структур",
-    },
-    "en": {
-        "molecule_viewer.online_manual_render_info": (
-            "In online mode, structures are not rendered automatically immediately after upload "
-            "to avoid process crashes on problematic SMILES or native RDKit drawing."
-        ),
-        "molecule_viewer.online_render_button": "Show first 20 structures",
-    },
-    "kk": {
-        "molecule_viewer.online_manual_render_info": (
-            "Онлайн режимінде файл жүктелгеннен кейін құрылымдар автоматты түрде салынбайды: "
-            "бұл қате SMILES немесе RDKit-тің нативті сызуындағы үзілістерден қорғайды."
-        ),
-        "molecule_viewer.online_render_button": "Алғашқы 20 құрылымды көрсету",
-    },
-}
-
 
 def _lookup(data: Dict[str, Any], key: str):
     value = data
@@ -55,10 +31,6 @@ def _humanize_key(key: str) -> str:
     """Безопасная подпись вместо показа технического !key!."""
     leaf = key.rsplit('.', 1)[-1]
     return leaf.replace('_', ' ').strip().capitalize() or key
-
-
-def _is_corrupted_translation(value: Any) -> bool:
-    return isinstance(value, str) and "???" in value
 
 def load_language(lang: str) -> Dict[str, Any]:
     """Загружает JSON-файл с переводами для языка с обработкой ошибок."""
@@ -92,20 +64,8 @@ def gettext(key: str, **kwargs) -> str:
     """Возвращает перевод по ключу с подстановкой параметров."""
     data = load_language(CURRENT_LANG)
     value = _lookup(data, key)
-    if _is_corrupted_translation(value):
-        value = None
-        if CURRENT_LANG != 'en':
-            value = _lookup(load_language('en'), key)
     if value is None and CURRENT_LANG != 'ru':
         value = _lookup(load_language('ru'), key)
-        if _is_corrupted_translation(value):
-            value = _lookup(load_language('en'), key)
-    if _is_corrupted_translation(value):
-        value = _lookup(load_language('en'), key)
-    if value is None:
-        value = BUILTIN_FALLBACKS.get(CURRENT_LANG, {}).get(key)
-        if value is None:
-            value = BUILTIN_FALLBACKS.get('ru', {}).get(key)
     if value is None:
         return _humanize_key(key)
     if isinstance(value, str):

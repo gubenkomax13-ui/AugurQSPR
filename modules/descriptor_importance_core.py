@@ -78,12 +78,7 @@ def descriptor_coefficient_importance(model, feature_names):
         "descriptor": names,
         "coefficient": values,
         "absolute_importance": np.abs(values),
-        "method": "standardized_coefficient",
-        "coefficient_scale": "model_feature_scale",
-        "coefficient_note": (
-            "If preprocessing includes scaling, these coefficients apply to "
-            "scaled descriptors, not raw descriptor units."
-        ),
+        "method": "coefficient",
     })
     return result.sort_values(
         "absolute_importance", ascending=False

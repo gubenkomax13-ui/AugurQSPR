@@ -7,42 +7,6 @@ import streamlit as st
 
 from modules.i18n import t
 from modules.module_explain_ui import render_module_explanation
-from modules.qspr_core import qspr_csv_download_bytes
-
-
-def _consensus_metric_value(comparison_df, model_name, candidates):
-    if comparison_df is None or comparison_df.empty:
-        return np.nan
-    model_col = t('comparison.model')
-    if model_col not in comparison_df.columns:
-        return np.nan
-    row = comparison_df[comparison_df[model_col].astype(str) == str(model_name)]
-    if row.empty:
-        return np.nan
-    for col in candidates:
-        if col in row.columns:
-            try:
-                return float(row.iloc[0][col])
-            except Exception:
-                continue
-    return np.nan
-
-
-def _consensus_weights_from_metrics(comparison_df, model_names, mode):
-    if mode not in {"weighted_cv_rmse", "weighted_holdout_rmse"}:
-        return None
-    columns = (
-        ["K-Fold RMSE", "CV RMSE", "RMSE"]
-        if mode == "weighted_cv_rmse"
-        else ["Hold-out RMSE", "Test RMSE", "RMSE"]
-    )
-    weights = {}
-    for name in model_names:
-        rmse = _consensus_metric_value(comparison_df, name, columns)
-        weights[name] = 1.0 / max(float(rmse) ** 2, 1e-12) if np.isfinite(rmse) and rmse > 0 else 0.0
-    if sum(weights.values()) <= 0:
-        return None
-    return weights
 
 
 def render_consensus_section(context):
@@ -93,26 +57,6 @@ def render_consensus_section(context):
             step=0.05,
             key="consensus_min_r2"
         )
-        consensus_method = st.selectbox(
-            t("consensus.aggregation_label"),
-            [
-                "equal_mean",
-                "weighted_cv_rmse",
-                "weighted_holdout_rmse",
-                "median",
-                "trimmed_mean",
-            ],
-            index=0,
-            format_func=lambda value: {
-                "equal_mean": t("consensus.aggregation_equal_mean"),
-                "weighted_cv_rmse": t("consensus.aggregation_weighted_cv_rmse"),
-                "weighted_holdout_rmse": t("consensus.aggregation_weighted_holdout_rmse"),
-                "median": t("consensus.aggregation_median"),
-                "trimmed_mean": t("consensus.aggregation_trimmed_mean"),
-            }.get(value, value),
-            key="consensus_aggregation_method",
-        )
-        st.caption(t("consensus.spread_caption"))
     
         if st.button(t('consensus.calc_button'), key="calc_consensus"):
             try:
@@ -172,19 +116,10 @@ def render_consensus_section(context):
     
                 # --- Вычисляем консенсус ---
                 with st.spinner(t('consensus.spinner')):
-                    consensus_weights = _consensus_weights_from_metrics(
-                        comparison_df,
-                        list(models_scalers.keys()),
-                        consensus_method,
-                    )
-                    if consensus_method.startswith("weighted") and not consensus_weights:
-                        st.warning(t("consensus.weighted_fallback_warning"))
                     consensus_df = qspr_consensus_predictions(
                         models_scalers,
                         X_cons,
-                        model_names=list(models_scalers.keys()),
-                        method=consensus_method,
-                        weights=consensus_weights,
+                        model_names=list(models_scalers.keys())
                     )
                     # Добавляем SMILES и экспериментальные значения
                     consensus_df.insert(0, "SMILES", smiles_cons)
@@ -192,7 +127,6 @@ def render_consensus_section(context):
     
                 # --- Отображаем таблицу ---
                 st.subheader(t('consensus.subheader_predictions'))
-                st.info(t("consensus.intermodel_disagreement_info"))
                 # Округление числовых колонок до 1 знака после запятой
                 numeric_cols = consensus_df.select_dtypes(include=[np.number]).columns
                 consensus_display = consensus_df.copy()
@@ -232,7 +166,7 @@ def render_consensus_section(context):
                     st.pyplot(fig2)
     
                 # --- Кнопка скачать ---
-                csv_cons = qspr_csv_download_bytes(consensus_df)
+                csv_cons = consensus_df.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     t('consensus.download_csv'),
                     csv_cons,

@@ -2,7 +2,7 @@
 """
 prognostic_model_core.py
 
-Минимальный отдельный модуль для прогностической модели Augur QSPR:
+Минимальный отдельный модуль для прогностической модели QSPR Forge:
 - выбор вручную проверенных веществ;
 - обучение финальной прогностической модели;
 - сохранение полного пакета модели;
@@ -16,8 +16,6 @@ prognostic_model_core.py
 """
 
 from datetime import datetime
-import hashlib
-from importlib import metadata as importlib_metadata
 
 import joblib
 import numpy as np
@@ -32,26 +30,16 @@ from rdkit import Chem
 try:
     from .i18n import t
     from .module_explain_ui import render_module_explanation
-    from .runtime_mode import qspr_runtime_mode as _shared_qspr_runtime_mode
-    from .system_error_log import log_exception as augur_log_exception
 except Exception:
     try:
         from i18n import t  # type: ignore
         from module_explain_ui import render_module_explanation  # type: ignore
-        from runtime_mode import qspr_runtime_mode as _shared_qspr_runtime_mode  # type: ignore
-        from system_error_log import log_exception as augur_log_exception  # type: ignore
     except Exception:
         def t(key, **kwargs):
             return key
 
         def render_module_explanation(module_key, expanded=False):
             return None
-
-        def _shared_qspr_runtime_mode():
-            return "local"
-
-        def augur_log_exception(module, function, exc, params=None, run_context=None):
-            return ""
 
 try:
     from streamlit_ketcher import st_ketcher
@@ -67,7 +55,32 @@ ONLINE_LOCK_MESSAGE = (
 
 
 def qspr_prog_runtime_mode():
-    return _shared_qspr_runtime_mode()
+    for source in (os.environ.get("AUGUR_MODE"), os.environ.get("AUGUR_RUNTIME_MODE")):
+        value = str(source or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return "online"
+        if value in {"local", "full", "desktop"}:
+            return "local"
+
+    try:
+        value = str(st.secrets.get("AUGUR_MODE", "") or "").strip().lower()
+        if value in {"online", "demo", "cloud", "public"}:
+            return "online"
+        if value in {"local", "full", "desktop"}:
+            return "local"
+    except Exception:
+        pass
+
+    try:
+        context = getattr(st, "context", None)
+        headers = getattr(context, "headers", {}) if context is not None else {}
+        host = str(headers.get("host") or headers.get("Host") or "").lower()
+        url = str(getattr(context, "url", "") or "").lower()
+    except Exception:
+        host = ""
+        url = ""
+
+    return "online" if any(marker in host or marker in url for marker in ("streamlit.app", "share.streamlit.io")) else "local"
 
 
 def qspr_prog_is_online_mode():
@@ -93,30 +106,19 @@ def safe_list(value):
     except TypeError:
         return []
 
-
-def _row_positions_for_iloc(indices, row_count, label="row positions"):
-    values = pd.to_numeric(pd.Series(list(indices)), errors="coerce")
-    if values.isna().any() or not values.between(0, int(row_count) - 1).all():
-        raise ValueError(f"Invalid {label} for the current table.")
-    return values.astype(int).to_numpy()
-
 try:
     from .qspr_core import (
         qspr_train_analysis_model,
         qspr_save_results_auto,
-        qspr_rename_duplicate_columns,
         qspr_calculate_molecular_descriptors,
         qspr_calc_xtb_descriptors_dataframe,
-        qspr_normalize_descriptor_mode,
     )
 except Exception:  # fallback для прямого запуска файла вне пакета modules
     from qspr_core import (  # type: ignore
         qspr_train_analysis_model,
         qspr_save_results_auto,
-        qspr_rename_duplicate_columns,
         qspr_calculate_molecular_descriptors,
         qspr_calc_xtb_descriptors_dataframe,
-        qspr_normalize_descriptor_mode,
     )
 
 try:
@@ -260,62 +262,6 @@ def qspr_prog_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
     }
 
 
-def qspr_prog_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
-    """Leverage AD with rank-aware threshold and stable status codes."""
-    X_train = np.asarray(X_train, dtype=float)
-
-    if X_train.ndim != 2:
-        raise ValueError("X_train must be a 2D matrix.")
-
-    if X_train.shape[0] < 2:
-        raise ValueError("At least 2 training compounds are required for AD.")
-
-    if X_query is None:
-        X_query = X_train
-    else:
-        X_query = np.asarray(X_query, dtype=float)
-
-    if X_query.ndim == 1:
-        X_query = X_query.reshape(1, -1)
-
-    if X_query.ndim != 2:
-        raise ValueError("X_query must be a 2D matrix.")
-
-    if X_query.shape[1] != X_train.shape[1]:
-        raise ValueError(
-            f"X_query dimension ({X_query.shape[1]}) does not match "
-            f"X_train dimension ({X_train.shape[1]})."
-        )
-
-    n, p = X_train.shape
-    X_aug = np.column_stack([np.ones(n), X_train])
-    Xq_aug = np.column_stack([np.ones(X_query.shape[0]), X_query])
-
-    xtx_inv = np.linalg.pinv(X_aug.T @ X_aug)
-    leverage = np.einsum("ij,jk,ik->i", Xq_aug, xtx_inv, Xq_aug)
-
-    rank = int(np.linalg.matrix_rank(X_aug))
-    threshold = 3.0 * float(rank) / float(n)
-    warnings = []
-    if rank < p + 1:
-        warnings.append("DESCRIPTOR_MATRIX_RANK_DEFICIENT")
-    if threshold >= 1.0:
-        warnings.append("LEVERAGE_THRESHOLD_GE_1_NOT_INFORMATIVE")
-
-    return {
-        "leverage": leverage,
-        "threshold": float(threshold),
-        "status": np.where(leverage <= threshold, "IN_AD", "OUT_OF_AD"),
-        "n": int(n),
-        "p": int(p),
-        "rank": rank,
-        "p_eff": rank,
-        "warnings": warnings,
-        "informative": threshold < 1.0,
-        "desc_names": safe_list(desc_names),
-    }
-
-
 def qspr_prog_descriptor_group_key(name):
     """Classifies a descriptor name into broad AD groups."""
     raw = str(name or "").strip()
@@ -384,129 +330,6 @@ def qspr_prog_descriptor_indices(desc_names, group_names):
         for name in safe_list(group_names)
         if str(name) in positions
     ]
-
-
-def qspr_prog_descriptor_generator_versions():
-    packages = ["rdkit", "mordred", "padelpy", "numpy", "pandas", "scikit-learn"]
-    versions = {}
-    for package in packages:
-        try:
-            versions[package] = importlib_metadata.version(package)
-        except Exception:
-            versions[package] = ""
-    return versions
-
-
-def qspr_prog_descriptor_schema(desc_names, descriptor_source="", descriptor_mode="", desc_lists=None):
-    names = [str(name) for name in safe_list(desc_names)]
-    payload = "\n".join(names).encode("utf-8", errors="replace")
-    descriptor_source = st.session_state.get("custom_descriptor_source", "")
-    descriptor_mode = st.session_state.get(
-        "molecular_descriptor_calculation_mode",
-        st.session_state.get("descriptor_calculation_mode", ""),
-    )
-    return {
-        "schema_version": "1.0",
-        "descriptor_names": names,
-        "descriptor_count": len(names),
-        "descriptor_order_sha256": hashlib.sha256(payload).hexdigest(),
-        "descriptor_source": str(descriptor_source or ""),
-        "descriptor_mode": str(descriptor_mode or ""),
-        "descriptor_generator_versions": qspr_prog_descriptor_generator_versions(),
-        "desc_lists_keys": sorted(list(desc_lists.keys())) if isinstance(desc_lists, dict) else [],
-    }
-
-
-def qspr_prog_validate_descriptor_schema(
-    X_df,
-    required_desc,
-    *,
-    expected_schema=None,
-    descriptor_source="",
-    descriptor_mode="",
-):
-    required = [str(name) for name in safe_list(required_desc)]
-    if not required:
-        raise ValueError("В модели нет сохранённого списка дескрипторов; прогноз остановлен.")
-    if not isinstance(X_df, pd.DataFrame):
-        raise ValueError("Матрица дескрипторов должна быть pandas.DataFrame перед прогнозом.")
-
-    columns = [str(col) for col in X_df.columns]
-    if columns != required:
-        missing = [name for name in required if name not in columns]
-        extra = [name for name in columns if name not in required]
-        first_mismatch = next(
-            (
-                idx
-                for idx, (got, need) in enumerate(zip(columns, required))
-                if got != need
-            ),
-            None,
-        )
-        detail = []
-        if len(columns) != len(required):
-            detail.append(f"число: получено {len(columns)}, ожидалось {len(required)}")
-        if missing:
-            detail.append("нет: " + ", ".join(missing[:20]))
-        if extra:
-            detail.append("лишние: " + ", ".join(extra[:20]))
-        if first_mismatch is not None:
-            detail.append(
-                f"порядок: позиция {first_mismatch + 1}, получено `{columns[first_mismatch]}`, ожидалось `{required[first_mismatch]}`"
-            )
-        raise ValueError("Схема дескрипторов не соответствует модели; прогноз остановлен. " + "; ".join(detail))
-
-    numeric = X_df.apply(pd.to_numeric, errors="coerce")
-    invalid_cols = [
-        col for col in numeric.columns
-        if numeric[col].isna().any() or np.isinf(numeric[col].to_numpy(dtype=float)).any()
-    ]
-    if invalid_cols:
-        raise ValueError(
-            "Дескрипторы должны быть числовыми и конечными; прогноз остановлен. "
-            "Проблемные колонки: " + ", ".join(invalid_cols[:20])
-        )
-
-    actual_schema = qspr_prog_descriptor_schema(
-        required,
-        descriptor_source=descriptor_source,
-        descriptor_mode=descriptor_mode,
-    )
-    if isinstance(expected_schema, dict) and expected_schema:
-        expected_names = [str(name) for name in expected_schema.get("descriptor_names", [])]
-        expected_count = int(expected_schema.get("descriptor_count", len(expected_names)) or 0)
-        expected_hash = str(expected_schema.get("descriptor_order_sha256", ""))
-        if expected_names and expected_names != required:
-            raise ValueError("Список дескрипторов не совпадает со схемой сохранённой модели; прогноз остановлен.")
-        if expected_count and expected_count != len(required):
-            raise ValueError("Число дескрипторов не совпадает со схемой сохранённой модели; прогноз остановлен.")
-        if expected_hash and expected_hash != actual_schema["descriptor_order_sha256"]:
-            raise ValueError("Порядок дескрипторов не совпадает со схемой сохранённой модели; прогноз остановлен.")
-        expected_source = str(expected_schema.get("descriptor_source", "") or "")
-        expected_mode = str(expected_schema.get("descriptor_mode", "") or "")
-        if expected_source and descriptor_source and expected_source != str(descriptor_source):
-            raise ValueError(
-                f"Источник дескрипторов не совпадает: модель `{expected_source}`, прогноз `{descriptor_source}`."
-            )
-        if expected_mode and descriptor_mode and expected_mode != str(descriptor_mode):
-            raise ValueError(
-                f"Режим генератора дескрипторов не совпадает: модель `{expected_mode}`, прогноз `{descriptor_mode}`."
-            )
-        expected_versions = expected_schema.get("descriptor_generator_versions", {})
-        actual_versions = actual_schema.get("descriptor_generator_versions", {})
-        if isinstance(expected_versions, dict):
-            mismatched_versions = []
-            for package, expected_version in expected_versions.items():
-                expected_version = str(expected_version or "")
-                actual_version = str(actual_versions.get(package, "") or "")
-                if expected_version and actual_version and expected_version != actual_version:
-                    mismatched_versions.append(f"{package}: модель {expected_version}, сейчас {actual_version}")
-            if mismatched_versions:
-                raise ValueError(
-                    "Версия генератора дескрипторов не совпадает; прогноз остановлен. "
-                    + "; ".join(mismatched_versions[:10])
-                )
-    return numeric.astype(float), actual_schema
 
 
 def qspr_prog_safe_numeric_matrix(value):
@@ -763,15 +586,10 @@ def qspr_prog_make_training_table(data, smiles_col, valid_indices, y_true, y_pre
     """
     Таблица ручного выбора веществ для финальной прогностической модели.
     """
-    row_positions = _row_positions_for_iloc(
-        valid_indices,
-        len(data),
-        "training row positions",
-    )
     return pd.DataFrame({
         "№": range(1, len(y_true) + 1),
         "Индекс": list(valid_indices),
-        "SMILES": data[smiles_col].iloc[row_positions].astype(str).values,
+        "SMILES": data[smiles_col].iloc[list(valid_indices)].astype(str).values,
         "Экспериментальное значение": np.asarray(y_true, dtype=float),
         "Расчётное значение": np.asarray(y_pred, dtype=float),
         "Ошибка": np.asarray(y_true, dtype=float) - np.asarray(y_pred, dtype=float),
@@ -802,11 +620,7 @@ def qspr_prog_train_selected_model(
 
     X_all = np.asarray(X_all, dtype=float)
     y_all = np.asarray(y_all, dtype=float)
-    valid_indices = _row_positions_for_iloc(
-        valid_indices,
-        len(data),
-        "training row positions",
-    )
+    valid_indices = np.asarray(valid_indices, dtype=int)
 
     X_prog = X_all[selected_positions]
     y_prog = y_all[selected_positions]
@@ -847,14 +661,6 @@ def qspr_prog_train_selected_model(
         "train_df": train_df,
         "desc_names": list(desc_names),
         "descriptor_groups": qspr_prog_build_descriptor_groups(desc_names),
-        "descriptor_source": descriptor_source,
-        "descriptor_mode": descriptor_mode,
-        "descriptor_schema": qspr_prog_descriptor_schema(
-            desc_names,
-            descriptor_source=descriptor_source,
-            descriptor_mode=descriptor_mode,
-            desc_lists=st.session_state.get("desc_lists"),
-        ),
         "target_col": target_col,
         "smiles_col": smiles_col,
         "algorithm": algorithm,
@@ -871,7 +677,6 @@ def qspr_prog_store_model_in_session(package):
     st.session_state.prog_model_name = package["algorithm"]
     st.session_state.prog_target_col = package["target_col"]
     st.session_state.prog_smiles_col = package["smiles_col"]
-    st.session_state.prog_descriptor_mode = package.get("descriptor_mode", "")
     st.session_state.prog_X_train_raw = package["X_train_raw"]
     st.session_state.prog_X_train_scaled = package["X_train_scaled"]
     st.session_state.prog_y_train = package["y_train"]
@@ -879,15 +684,6 @@ def qspr_prog_store_model_in_session(package):
     st.session_state.prog_descriptor_groups = package.get(
         "descriptor_groups",
         qspr_prog_build_descriptor_groups(package.get("desc_names", [])),
-    )
-    st.session_state.prog_descriptor_schema = package.get(
-        "descriptor_schema",
-        qspr_prog_descriptor_schema(
-            package.get("desc_names", []),
-            descriptor_source=package.get("descriptor_source", ""),
-            descriptor_mode=package.get("descriptor_mode", ""),
-            desc_lists=package.get("desc_lists"),
-        ),
     )
     st.session_state.custom_descriptor_source = package.get(
         "descriptor_source",
@@ -915,7 +711,6 @@ def qspr_prog_load_saved_package_to_session(package):
     st.session_state.prog_target_col = package.get("target_col", "property")
     st.session_state.prog_smiles_col = package.get("smiles_col", "SMILES")
     st.session_state.prog_model_name = package.get("model_name", "loaded_model")
-    st.session_state.prog_descriptor_mode = package.get("descriptor_mode", "")
 
     st.session_state.prog_X_train_raw = package.get(
         "X_train_raw",
@@ -927,15 +722,6 @@ def qspr_prog_load_saved_package_to_session(package):
     st.session_state.prog_descriptor_groups = package.get(
         "descriptor_groups",
         qspr_prog_build_descriptor_groups(st.session_state.prog_desc_names),
-    )
-    st.session_state.prog_descriptor_schema = package.get(
-        "descriptor_schema",
-        qspr_prog_descriptor_schema(
-            st.session_state.prog_desc_names,
-            descriptor_source=package.get("descriptor_source", ""),
-            descriptor_mode=package.get("descriptor_mode", ""),
-            desc_lists=package.get("desc_lists"),
-        ),
     )
 
     descriptor_source = package.get("descriptor_source", None)
@@ -1039,29 +825,16 @@ def qspr_prog_make_save_package(target_col, smiles_col, desc_names, model_name):
     """
     Полный пакет для joblib.dump.
     """
-    package_desc_names = list(st.session_state.get("prog_desc_names", desc_names))
-    descriptor_source = st.session_state.get("custom_descriptor_source", "")
-    descriptor_mode = st.session_state.get(
-        "molecular_descriptor_calculation_mode",
-        st.session_state.get("descriptor_calculation_mode", ""),
-    )
     return {
         "model": st.session_state.prog_model,
         "scaler": st.session_state.prog_scaler,
         "target_col": st.session_state.get("prog_target_col", target_col),
         "smiles_col": st.session_state.get("prog_smiles_col", smiles_col),
-        "desc_names": package_desc_names,
+        "desc_names": list(st.session_state.get("prog_desc_names", desc_names)),
         "descriptor_groups": qspr_prog_get_descriptor_groups(
-            package_desc_names
+            st.session_state.get("prog_desc_names", desc_names)
         ),
-        "descriptor_source": descriptor_source,
-        "descriptor_mode": descriptor_mode,
-        "descriptor_schema": qspr_prog_descriptor_schema(
-            package_desc_names,
-            descriptor_source=descriptor_source,
-            descriptor_mode=descriptor_mode,
-            desc_lists=st.session_state.get("desc_lists"),
-        ),
+        "descriptor_source": st.session_state.get("custom_descriptor_source", ""),
         "model_name": st.session_state.get("prog_model_name", model_name),
         "X_train_raw": st.session_state.get("prog_X_train_raw", None),
         "X_train_scaled": st.session_state.get("prog_X_train_scaled", None),
@@ -1085,24 +858,27 @@ def qspr_prog_make_save_package(target_col, smiles_col, desc_names, model_name):
 def qspr_prog_prepare_ready_descriptor_matrix(new_df, required_desc):
     """
     Делает X для режима прогноза по готовым дескрипторам.
-    Отсутствующие, нечисловые или бесконечные дескрипторы останавливают прогноз.
+    Отсутствующие дескрипторы добавляет нулями, NaN заполняет медианой.
     """
     work = new_df.copy()
-    required_desc = [str(col) for col in safe_list(required_desc)]
-    missing = [col for col in required_desc if col not in work.columns]
-    if missing:
-        raise ValueError(
-            "В файле прогноза отсутствуют дескрипторы модели; прогноз остановлен: "
-            + ", ".join(missing[:20])
+
+    for col in required_desc:
+        if col not in work.columns:
+            work[col] = 0.0
+
+        work[col] = pd.to_numeric(
+            work[col].astype(str).str.replace(",", ".", regex=False),
+            errors="coerce",
         )
-    X_df = work[required_desc].copy()
-    X_df, _ = qspr_prog_validate_descriptor_schema(
-        X_df,
-        required_desc,
-        expected_schema=st.session_state.get("prog_descriptor_schema"),
-        descriptor_source=qspr_prog_get_model_descriptor_source(),
-        descriptor_mode=st.session_state.get("prog_descriptor_mode", ""),
-    )
+
+    X_df = work[required_desc].replace([np.inf, -np.inf], np.nan)
+
+    for col in X_df.columns:
+        median_value = X_df[col].median()
+        if pd.isna(median_value):
+            median_value = 0.0
+        X_df[col] = X_df[col].fillna(median_value)
+
     return X_df.values.astype(float)
 
 
@@ -1363,21 +1139,6 @@ def qspr_prog_predict_from_matrix(X_new, new_df, target_col, fallback_X_train_sc
     st.session_state.prediction_uncertainty_result = {}
 
     X_new = np.asarray(X_new, dtype=float)
-    if X_new.ndim != 2 or X_new.shape[1] != len(required_desc):
-        raise ValueError(
-            f"Число дескрипторов перед прогнозом не совпадает с моделью: "
-            f"матрица {X_new.shape[1] if X_new.ndim == 2 else 'не 2D'}, список модели {len(required_desc)}."
-        )
-    expected_features = getattr(model, "n_features_in_", None)
-    if expected_features is None and hasattr(model, "named_steps"):
-        for step in model.named_steps.values():
-            expected_features = getattr(step, "n_features_in_", None)
-            if expected_features is not None:
-                break
-    if expected_features is not None and int(expected_features) != X_new.shape[1]:
-        raise ValueError(
-            f"Модель ожидает {int(expected_features)} дескрипторов, но подготовлено {X_new.shape[1]}; прогноз остановлен."
-        )
 
     if scaler is not None:
         X_model = scaler.transform(X_new)
@@ -1504,12 +1265,7 @@ def qspr_prog_predict_from_smiles(
     desc_df = desc_df[required_desc]
     X_new = desc_df.values.astype(float)
 
-    row_positions = _row_positions_for_iloc(
-        valid_indices,
-        len(work_df),
-        "prediction row positions",
-    )
-    base_df = work_df.iloc[row_positions].copy()
+    base_df = work_df.iloc[valid_indices].copy()
 
     return qspr_prog_predict_from_matrix(
         X_new=X_new,
@@ -1917,34 +1673,38 @@ def qspr_show_loaded_model_descriptor_summary():
         st.write(desc_names[:500])
 
 
-def qspr_prog_prepare_descriptor_frame_for_model(
-    desc_all,
-    required_desc,
-    descriptor_source="",
-    descriptor_mode="",
-):
+def qspr_prog_prepare_descriptor_frame_for_model(desc_all, required_desc):
     """
     Приводит рассчитанные дескрипторы к точному набору признаков модели.
     """
     desc_all = desc_all.copy()
-    desc_all = qspr_rename_duplicate_columns(desc_all)
-    required_desc = [str(col) for col in safe_list(required_desc)]
-    missing_desc = [col for col in required_desc if col not in desc_all.columns]
-    if missing_desc:
-        raise ValueError(
-            "Рассчитанный набор дескрипторов не совпадает с моделью; прогноз остановлен. "
-            "Отсутствуют: " + ", ".join(missing_desc[:20])
-        )
+    desc_all = desc_all.loc[:, ~desc_all.columns.duplicated()].copy()
+
+    missing_desc = []
+
+    for col in required_desc:
+        if col not in desc_all.columns:
+            desc_all[col] = 0.0
+            missing_desc.append(col)
 
     X_df = desc_all[required_desc].copy()
-    X_df, _ = qspr_prog_validate_descriptor_schema(
-        X_df,
-        required_desc,
-        expected_schema=st.session_state.get("prog_descriptor_schema"),
-        descriptor_source=descriptor_source,
-        descriptor_mode=descriptor_mode,
-    )
-    return X_df, []
+
+    for col in X_df.columns:
+        X_df[col] = pd.to_numeric(
+            X_df[col].astype(str).str.replace(",", ".", regex=False),
+            errors="coerce",
+        )
+
+    X_df = X_df.replace([np.inf, -np.inf], np.nan)
+
+    for col in X_df.columns:
+        if X_df[col].isna().any():
+            median_value = X_df[col].median()
+            if pd.isna(median_value):
+                median_value = 0.0
+            X_df[col] = X_df[col].fillna(median_value)
+
+    return X_df, missing_desc
 
 
 def qspr_prog_calculate_descriptors_for_smiles_by_model_source(
@@ -2037,7 +1797,7 @@ def qspr_prog_calculate_descriptors_for_smiles_by_model_source(
             raise ValueError("xTB не вернул таблицу дескрипторов.")
 
         if "xtb_status" in xtb_df.columns:
-            ok_mask = xtb_df["xtb_status"].astype(str).str.lower().str.strip().isin(["complete", "ok"])
+            ok_mask = xtb_df["xtb_status"].astype(str).str.lower().str.strip() == "ok"
 
             if not ok_mask.any():
                 err = ""
@@ -2051,16 +1811,6 @@ def qspr_prog_calculate_descriptors_for_smiles_by_model_source(
             "xtb_status",
             "xtb_error",
             "xtb_message",
-            "xtb_gradient_norm",
-            "xtb_descriptor_n_expected",
-            "xtb_descriptor_n_observed",
-            "xtb_frontier_orbital_assignment_status",
-            "xtb_formal_charge_rdkit",
-            "xtb_requested_charge",
-            "xtb_uhf",
-            "xtb_multiplicity",
-            "xtb_electron_count",
-            "xtb_electronic_structure_type",
         }
 
         xtb_cols = [
@@ -2195,19 +1945,17 @@ def qspr_prog_calculate_descriptors_for_smiles_by_model_source(
     result_df = base_df.iloc[:min_len].reset_index(drop=True)
 
     desc_all = pd.concat(desc_parts, axis=1)
-    desc_all = qspr_rename_duplicate_columns(desc_all)
+    desc_all = desc_all.loc[:, ~desc_all.columns.duplicated()].copy()
 
     X_df, missing_desc = qspr_prog_prepare_descriptor_frame_for_model(
         desc_all=desc_all,
         required_desc=required_desc,
-        descriptor_source=descriptor_source,
-        descriptor_mode=descriptor_mode,
     )
 
     result_df["descriptor_source_for_prediction"] = str(descriptor_source)
     result_df["n_required_descriptors"] = len(required_desc)
     result_df["n_calculated_descriptor_columns"] = desc_all.shape[1]
-    result_df["n_missing_descriptors"] = len(missing_desc)
+    result_df["n_missing_descriptors_filled_by_zero"] = len(missing_desc)
 
     return result_df, X_df, missing_desc
 
@@ -2249,16 +1997,20 @@ def qspr_prog_calculate_molecular_descriptors_for_prediction(
     else:
         work_for_desc = work_df
 
-    descriptor_mode = qspr_normalize_descriptor_mode(descriptor_mode)
-    allowed_modes = {
+    allowed_modes = [
+        "🚀 Максимальная скорость (RDKit)",
+        "👁️‍🗨️ Расширенный (Mordred)",
+        "⚙️ Расширенный (Mordred)",
+        "⚡ Умный (Mordred + уникальные PaDEL)",
+        "🎯 Максимальная точность",
         "rdkit_fast",
         "mordred",
         "mordred_padel_unique",
-        "max_coverage",
-    }
+        "max_accuracy",
+    ]
 
     if descriptor_mode not in allowed_modes:
-        descriptor_mode = "mordred"
+        descriptor_mode = "👁️‍🗨️ Расширенный (Mordred)"
 
     bundle = qspr_calculate_molecular_descriptors(
         data=work_for_desc,
@@ -2320,7 +2072,7 @@ def qspr_prog_predict_from_smiles_by_model_source(
     )
 
     if missing_desc:
-        pred_df["Отсутствующих дескрипторов"] = len(missing_desc)
+        pred_df["Отсутствующих дескрипторов заполнено нулями"] = len(missing_desc)
 
     return pred_df, ad_done
 
@@ -2355,9 +2107,9 @@ def qspr_prog_show_extended_ad_summary(pred_df):
         )
 
     ad_cols = st.columns(3)
-    ad_cols[0].metric(t("prognostic.molecular_ad_metric"), status_summary("molecular_ad_status"))
-    ad_cols[1].metric(t("prognostic.spectral_ad_metric"), status_summary("spectral_ad_status"))
-    ad_cols[2].metric(t("prognostic.combined_ad_metric"), status_summary("combined_ad_status"))
+    ad_cols[0].metric("Molecular AD", status_summary("molecular_ad_status"))
+    ad_cols[1].metric("Spectral AD", status_summary("spectral_ad_status"))
+    ad_cols[2].metric("Combined AD", status_summary("combined_ad_status"))
 
     interpretations = [
         str(value)
@@ -2380,40 +2132,50 @@ def qspr_prog_show_ad_summary(pred_df):
     n_total = len(pred_df)
     n_out = int((pred_df["AD-статус"] == "вне AD").sum())
 
-    st.caption(
-        t("prognostic.ad_summary_caption")
-    )
-
     qspr_prog_show_extended_ad_summary(pred_df)
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric(t("prognostic.metric_new_compounds"), n_total)
+        st.metric("Новых веществ", n_total)
     with col2:
-        st.metric(t("prognostic.metric_outside_ad"), n_out)
+        st.metric("Вне AD", n_out)
     with col3:
-        st.metric(t("prognostic.metric_outside_ad_percent"), f"{n_out / n_total * 100:.1f}%" if n_total else "0.0%")
+        st.metric("Вне AD, %", f"{n_out / n_total * 100:.1f}%" if n_total else "0.0%")
     with col4:
         if "Порог h*" in pred_df.columns and len(pred_df) > 0:
-            st.metric(t("prognostic.metric_h_threshold"), f"{float(pred_df['Порог h*'].iloc[0]):.4f}")
+            st.metric("Порог h*", f"{float(pred_df['Порог h*'].iloc[0]):.4f}")
         else:
-            st.metric(t("prognostic.metric_h_threshold"), "—")
+            st.metric("Порог h*", "—")
 
     if n_out > 0:
         st.warning(
-            t("prognostic.warning_new_outside_ad")
+            "Часть новых веществ находится вне применимой области прогностической модели. "
+            "Для них прогноз следует считать экстраполяционным и менее надёжным."
         )
     else:
-        st.success(t("prognostic.success_all_inside_ad"))
+        st.success("Все новые вещества находятся внутри применимой области прогностической модели по leverage.")
 
-    with st.expander(t("prognostic.ad_explanation_title"), expanded=False):
+    with st.expander("🧭 Пояснение Applicability Domain для новых прогнозов", expanded=False):
         st.markdown(
-            t("prognostic.ad_explanation_markdown")
+            """
+            **Leverage h** показывает, насколько новое вещество далеко от обучающей
+            выборки в пространстве дескрипторов.
+
+            Классический порог:
+
+            `h* = 3(p + 1) / n`
+
+            где `p` — число дескрипторов, `n` — число веществ в обучающей выборке
+            прогностической модели.
+
+            Если `h > h*`, прогноз считается находящимся **вне применимой области модели**
+            и должен интерпретироваться осторожно.
+            """
         )
 
     if n_out > 0:
-        st.markdown(t("prognostic.outside_ad_table_title"))
+        st.markdown("### Новые вещества вне применимой области")
         st.dataframe(
             pred_df[pred_df["AD-статус"] == "вне AD"].copy(),
             width="stretch",
@@ -2436,9 +2198,11 @@ def qspr_show_prognostic_training_section(
     """
     Streamlit-блок обучения и сохранения прогностической модели.
     """
-    st.header(t("prognostic.header"))
+    st.header("🔮 Прогностическая модель")
     st.markdown(
-        t("prognostic.training_description")
+        "Все вещества выбраны по умолчанию. "
+        "Снимите галочки у веществ, которые нужно исключить "
+        "из финальной прогностической модели."
     )
 
     trained_models_available = list(
@@ -2446,7 +2210,7 @@ def qspr_show_prognostic_training_section(
     )
 
     if not trained_models_available:
-        st.info(t("prognostic.train_analytical_model_first"))
+        st.info("Сначала обучите хотя бы одну аналитическую модель.")
         return
 
     best_model_from_comparison = st.session_state.get(
@@ -2467,12 +2231,13 @@ def qspr_show_prognostic_training_section(
     default_model_index = trained_models_available.index(default_model_for_prog)
 
     model_name_for_prog = st.selectbox(
-        t("prognostic.source_model_label"),
+        "Какую модель использовать как основу прогностической модели",
         trained_models_available,
         index=default_model_index,
         key="prog_model_source_select",
         help=(
-            t("prognostic.source_model_help")
+            "Если выполнено сравнение моделей, по умолчанию выбирается модель, "
+            "занявшая 1 место в таблице сравнения."
         )
     )
 
@@ -2502,17 +2267,14 @@ def qspr_show_prognostic_training_section(
     try:
         y_pred_all = np.ravel(model.predict(X_for_predict))
     except Exception as e:
-        augur_log_exception(
-            module="prognostic_model_core",
-            function="qspr_show_prognostic_training_section",
-            exc=e,
-            params={"model_name": model_name_for_prog},
-        )
         st.error(
-            t("prognostic.training_prediction_error")
+            "Не удалось получить расчётные значения аналитической модели для "
+            "таблицы прогностического отбора. Скорее всего, модель была обучена "
+            "на другом наборе дескрипторов или после автоотбора изменилась "
+            "размерность матрицы признаков."
         )
         st.exception(e)
-        st.info(t("prognostic.retrain_current_descriptors"))
+        st.info("Переобучите аналитическую модель на текущем наборе дескрипторов.")
         return
 
     prog_table = qspr_prog_make_training_table(
@@ -2527,8 +2289,8 @@ def qspr_show_prognostic_training_section(
         prog_table,
         column_config={
             "Выбрать": st.column_config.CheckboxColumn(
-                t("prognostic.use_column_label"),
-                help=t("prognostic.use_column_help"),
+                "Использовать",
+                help="Снимите галочку, если вещество нужно исключить из прогностической модели",
                 default=True,
             ),
         },
@@ -2540,7 +2302,7 @@ def qspr_show_prognostic_training_section(
 
     selected_positions = edited.index[edited["Выбрать"] == True].tolist()
 
-    if st.button(t("prognostic.train_selected_button"), type="primary", key=f"train_prog_{model_name_for_prog}"):
+    if st.button("🧭 Обучить прогностическую модель на отобранных веществах", type="primary", key=f"train_prog_{model_name_for_prog}"):
         try:
             package = qspr_prog_train_selected_model(
                 data=data,
@@ -2558,17 +2320,17 @@ def qspr_show_prognostic_training_section(
             qspr_save_results_auto(package["train_df"], "prognostic", target_col, len(package["y_train"]))
             qspr_prog_store_model_in_session(package)
 
-            st.success(t("prognostic.training_success", count=len(package["y_train"])))
-            st.metric(t("prognostic.metric_train_r2"), f"{package['r2_train']:.3f}")
+            st.success(f"Прогностическая модель обучена на {len(package['y_train'])} веществах.")
+            st.metric("R² на обучающих данных", f"{package['r2_train']:.3f}")
 
         except Exception as e:
-            st.error(t("prognostic.training_error", error=e))
+            st.error(f"Ошибка обучения прогностической модели: {e}")
 
     if "prog_model" in st.session_state and qspr_prog_is_online_mode():
         st.info(ONLINE_LOCK_MESSAGE)
 
     if "prog_model" in st.session_state and st.button(
-        t("prognostic.save_full_package_button"),
+        "💾 Сохранить прогностическую модель полным пакетом",
         key="save_prog",
         disabled=qspr_prog_is_online_mode(),
     ):
@@ -3035,19 +2797,19 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
         medium = int((statuses == "средняя").sum())
         low = int((statuses == "низкая").sum())
         col_rel_1, col_rel_2, col_rel_3, col_rel_4 = st.columns(4)
-        col_rel_1.metric(t("prognostic.metric_objects"), len(pred_df))
-        col_rel_2.metric(t("prognostic.metric_high_reliability"), high)
-        col_rel_3.metric(t("prognostic.metric_medium_reliability"), medium)
-        col_rel_4.metric(t("prognostic.metric_low_reliability"), low)
+        col_rel_1.metric("Объектов", len(pred_df))
+        col_rel_2.metric("Высокая надёжность", high)
+        col_rel_3.metric("Средняя надёжность", medium)
+        col_rel_4.metric("Низкая надёжность", low)
 
     st.dataframe(pred_df, width="stretch", hide_index=True)
 
     diagnostics = uncertainty_payload.get("diagnostics", {})
     if diagnostics:
-        with st.expander(t("prognostic.uncertainty_diagnostics_title"), expanded=False):
+        with st.expander("📊 Диагностика неопределённости", expanded=False):
             diagnostic_df = pd.DataFrame({
-                t("prognostic.col_indicator"): list(diagnostics.keys()),
-                t("prognostic.col_value"): list(diagnostics.values()),
+                "Показатель": list(diagnostics.keys()),
+                "Значение": list(diagnostics.values()),
             })
             st.dataframe(
                 diagnostic_df,
@@ -3061,8 +2823,8 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
             if model_names:
                 model_df = pd.DataFrame([
                     {
-                        t("prognostic.col_model"): name,
-                        t("prognostic.col_consensus_weight"): weights.get(name, np.nan),
+                        "Модель": name,
+                        "Вес consensus": weights.get(name, np.nan),
                         "CV RMSE": cv_rmse.get(name, np.nan),
                     }
                     for name in model_names
@@ -3074,19 +2836,20 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
                 )
 
             st.caption(
-                t("prognostic.prediction_interval_caption")
+                "Prediction interval калибруется по out-of-fold остаткам. "
+                "Bootstrap, consensus и GPR std не заменяют prediction interval."
             )
 
     neighbours = uncertainty_payload.get("neighbours")
     if isinstance(neighbours, pd.DataFrame) and not neighbours.empty:
-        with st.expander(t("prognostic.nearest_analogues_title"), expanded=False):
+        with st.expander("🧭 Ближайшие обучающие аналоги", expanded=False):
             st.dataframe(
                 neighbours,
                 width="stretch",
                 hide_index=True,
             )
             st.download_button(
-                t("prognostic.download_nearest_analogues_csv"),
+                "📥 Скачать таблицу аналогов CSV",
                 neighbours.to_csv(index=False).encode("utf-8"),
                 "prediction_nearest_analogues.csv",
                 "text/csv",
@@ -3094,7 +2857,7 @@ def qspr_prog_show_prediction_result(pred_df, ad_done, download_key):
             )
 
     st.download_button(
-        t("prognostic.download_prediction_csv"),
+        "📥 Скачать прогноз CSV",
         pred_df.to_csv(index=False).encode("utf-8"),
         "new_compounds_predictions.csv",
         "text/csv",
@@ -3406,7 +3169,7 @@ def qspr_show_prediction_sidebar():
 
     if model_file is not None:
         st.warning(
-            t("prediction_page.trusted_model_warning")
+            "Upload only models from trusted sources. Pickle/joblib files can execute Python code when loaded."
         )
         try:
             package = joblib.load(model_file)
@@ -3482,7 +3245,7 @@ def qspr_show_prediction_model_source_controls():
 
     if model_file is not None:
         st.warning(
-            t("prediction_page.trusted_model_warning")
+            "Upload only models from trusted sources. Pickle/joblib files can execute Python code when loaded."
         )
         try:
             package = joblib.load(model_file)

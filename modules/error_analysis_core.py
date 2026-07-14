@@ -56,26 +56,6 @@ def _numeric_array(values, name):
     return array
 
 
-def _coerce_boolean_series(values, index=None):
-    series = pd.Series(values, index=index)
-
-    def coerce_one(value):
-        if isinstance(value, (bool, np.bool_)):
-            return bool(value)
-        if value is None or pd.isna(value):
-            return False
-        if isinstance(value, (int, float, np.integer, np.floating)):
-            return bool(value)
-        text = str(value).strip().lower()
-        if text in {"true", "1", "yes", "y", "да", "истина"}:
-            return True
-        if text in {"false", "0", "no", "n", "нет", "ложь", ""}:
-            return False
-        return False
-
-    return series.map(coerce_one).astype(bool)
-
-
 def _bootstrap_mae_ci(errors, n_bootstrap=500, random_state=42):
     errors = np.ravel(np.asarray(errors, dtype=float))
     errors = errors[np.isfinite(errors)]
@@ -299,10 +279,7 @@ def error_analysis_group_summary(
     rows.append(overall_row)
 
     for group_column in error_analysis_default_group_columns(annotation_table):
-        mask = _coerce_boolean_series(
-            merged[group_column],
-            index=merged.index,
-        )
+        mask = merged[group_column].fillna(False).astype(bool)
         if int(mask.sum()) < int(min_group_size):
             continue
 
@@ -483,10 +460,7 @@ def error_analysis_select_group_members(
         return annotated_error_table.copy()
     if group_id not in annotated_error_table.columns:
         return pd.DataFrame()
-    mask = _coerce_boolean_series(
-        annotated_error_table[group_id],
-        index=annotated_error_table.index,
-    )
+    mask = annotated_error_table[group_id].fillna(False).astype(bool)
     return annotated_error_table.loc[mask].copy()
 
 
@@ -1178,12 +1152,8 @@ def error_analysis_structural_series_summary(
     merged = error_table.merge(
         structural_annotations, on="row_position", how="left"
     )
-    valid_structure = _coerce_boolean_series(
-        merged["valid_structure"],
-        index=merged.index,
-    )
     valid = merged[
-        valid_structure
+        merged["valid_structure"].fillna(False)
         & np.isfinite(merged["error"])
     ].copy()
     merged["series_trend_outlier"] = False
@@ -1378,12 +1348,8 @@ def error_analysis_substitution_effects(
 ):
     """Build reference/substituted pairs and summarize substitution effects."""
     table = structural_error_table.copy()
-    valid_structure = _coerce_boolean_series(
-        table["valid_structure"],
-        index=table.index,
-    )
     table = table[
-        valid_structure
+        table["valid_structure"].fillna(False)
         & np.isfinite(table["experimental"])
         & np.isfinite(table["predicted"])
     ]

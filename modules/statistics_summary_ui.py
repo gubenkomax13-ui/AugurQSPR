@@ -2,7 +2,6 @@
 """Final QSPR statistics summary UI."""
 
 import json
-import sys
 
 import numpy as np
 import pandas as pd
@@ -302,31 +301,13 @@ def calculate_validation_statistics_from_session(model_name):
 
     validation_rows = [_metrics_row(t("final_stats.method_training"), model_data.get("metrics", {}))]
 
-    current_checker = getattr(
-        sys.modules.get("__main__"),
-        "qspr_validation_result_is_current",
-        None,
-    )
-
-    def current_result(store_name, kind):
-        result = st.session_state.get(store_name, {}).get(model_name)
-        if not isinstance(result, dict):
-            return None
-        if callable(current_checker):
-            try:
-                if not current_checker(model_name, result, kind):
-                    return None
-            except Exception:
-                return None
-        return result
-
-    holdout = current_result("holdout_results_dict", "holdout")
+    holdout = st.session_state.get("holdout_results_dict", {}).get(model_name)
     if holdout:
         validation_rows.append(_metrics_row("Hold-out", holdout.get("metrics_test", {})))
-    kfold = current_result("kfold_results_dict", "kfold")
+    kfold = st.session_state.get("kfold_results_dict", {}).get(model_name)
     if kfold:
         validation_rows.append(_metrics_row("K-Fold", kfold.get("metrics", {})))
-    loo = current_result("loo_results_dict", "loo")
+    loo = st.session_state.get("loo_results_dict", {}).get(model_name)
     if loo:
         validation_rows.append(_metrics_row("LOO", loo.get("metrics", {})))
 
@@ -336,7 +317,7 @@ def calculate_validation_statistics_from_session(model_name):
         spread = _mean_std(summary_dict.get("test_R2_mean"), summary_dict.get("test_R2_std"))
         validation_rows.append(_metrics_row(t("final_stats.method_repeated_holdout"), summary_dict, spread=spread))
 
-    bootstrap = current_result("bootstrap_results_dict", "bootstrap")
+    bootstrap = st.session_state.get("bootstrap_results_dict", {}).get(model_name)
     if isinstance(bootstrap, dict):
         summary_dict = bootstrap.get("summary", {})
         validation_rows.append(
@@ -518,7 +499,7 @@ def _render_table(df, max_rows=None, **kwargs):
 
 
 def render_final_statistics_summary(context):
-    st.header(t("final_stats.header"))
+    st.header("📊 Модуль итоговой статистики QSPR-анализа")
     render_module_explanation("final_statistics")
     summary = build_final_statistics_summary(context)
     flat = final_statistics_to_flat_dataframe(summary)

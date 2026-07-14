@@ -74,12 +74,12 @@ def render_advanced_validation_section(context):
     params = get_model_params_from_session()
     smiles_values = _advanced_validation_smiles()
 
-    with st.expander(t("advanced_validation.repeated_kfold_title"), expanded=False):
+    with st.expander("Repeated K-Fold", expanded=False):
         st.markdown(t(TOOL_EXPLANATION_KEYS["repeated_kfold"]))
         col1, col2, col3 = st.columns(3)
         with col1:
             rkf_k = st.slider(
-                t("advanced_validation.folds"),
+                "Folds",
                 min_value=2,
                 max_value=max(2, min(10, len(y_all_current))),
                 value=min(5, max(2, min(10, len(y_all_current)))),
@@ -87,7 +87,7 @@ def render_advanced_validation_section(context):
             )
         with col2:
             rkf_repeats = st.number_input(
-                t("advanced_validation.repeats"),
+                "Repeats",
                 min_value=2,
                 max_value=100,
                 value=5,
@@ -96,7 +96,7 @@ def render_advanced_validation_section(context):
             )
         with col3:
             rkf_seed = st.number_input(
-                t("advanced_validation.random_state"),
+                "random_state",
                 value=42,
                 step=1,
                 key="advanced_rkf_seed",
@@ -109,7 +109,7 @@ def render_advanced_validation_section(context):
                 def _progress(done, total):
                     progress.progress(
                         int(done / total * 100),
-                        text=t("advanced_validation.repeated_kfold_progress", done=done, total=total),
+                        text=f"Repeated K-Fold: {done}/{total}",
                     )
 
                 result = repeated_kfold_validation(
@@ -151,28 +151,24 @@ def render_advanced_validation_section(context):
                     bins=20,
                     alpha=0.75,
                 )
-                ax_rkf.set_xlabel(t("advanced_validation.r2_per_fold"))
-                ax_rkf.set_ylabel(t("advanced_validation.count"))
-                ax_rkf.set_title(t("advanced_validation.repeated_kfold_distribution"))
+                ax_rkf.set_xlabel("R2 per fold")
+                ax_rkf.set_ylabel("Count")
+                ax_rkf.set_title("Repeated K-Fold R2 distribution")
                 ax_rkf.grid(True, alpha=0.3)
                 fig_rkf.tight_layout()
                 st.pyplot(fig_rkf)
                 plt.close(fig_rkf)
 
-    with st.expander(t("advanced_validation.group_scaffold_title"), expanded=False):
+    with st.expander("Group / Scaffold split", expanded=False):
         st.markdown(t(TOOL_EXPLANATION_KEYS["group_scaffold"]))
         group_mode = st.radio(
             t("advanced_validation.group_source"),
-            ["scaffold", "dataset_column"],
+            ["Bemis-Murcko scaffold", "Dataset column"],
             horizontal=True,
             key="advanced_group_mode",
-            format_func=lambda value: {
-                "scaffold": t("advanced_validation.group_mode_scaffold"),
-                "dataset_column": t("advanced_validation.group_mode_dataset_column"),
-            }.get(value, value),
         )
         group_column = None
-        if group_mode == "dataset_column":
+        if group_mode == "Dataset column":
             candidate_columns = list(getattr(data, "columns", []))
             group_column = st.selectbox(
                 t("advanced_validation.group_column"),
@@ -183,7 +179,7 @@ def render_advanced_validation_section(context):
         col1, col2 = st.columns(2)
         with col1:
             group_test_percent = st.slider(
-                t("advanced_validation.test_groups_percent"),
+                "Test groups, %",
                 min_value=5,
                 max_value=80,
                 value=20,
@@ -192,7 +188,7 @@ def render_advanced_validation_section(context):
             )
         with col2:
             group_seed = st.number_input(
-                t("advanced_validation.random_state"),
+                "random_state",
                 value=42,
                 step=1,
                 key="advanced_group_seed",
@@ -200,7 +196,7 @@ def render_advanced_validation_section(context):
 
         if st.button(t("advanced_validation.run_group_scaffold"), type="primary", key="run_advanced_group"):
             try:
-                if group_mode == "dataset_column":
+                if group_mode == "Dataset column":
                     groups = (
                         data[group_column]
                         .iloc[valid_indices_current]
@@ -246,11 +242,8 @@ def render_advanced_validation_section(context):
         if isinstance(group_result, dict):
             _render_metric_triplet(group_result.get("metrics_test", {}), prefix="Test ")
             st.caption(
-                t(
-                    "advanced_validation.train_test_groups_caption",
-                    train=len(group_result.get("train_groups", [])),
-                    test=len(group_result.get("test_groups", [])),
-                )
+                f"Train groups: {len(group_result.get('train_groups', []))}; "
+                f"test groups: {len(group_result.get('test_groups', []))}"
             )
             st.dataframe(
                 group_result.get("test_table", pd.DataFrame()),
@@ -258,7 +251,7 @@ def render_advanced_validation_section(context):
                 hide_index=True,
             )
 
-    with st.expander(t("advanced_validation.learning_curves_title"), expanded=False):
+    with st.expander("Learning curves", expanded=False):
         st.markdown(t(TOOL_EXPLANATION_KEYS["learning_curves"]))
         lc_k = st.slider(
             t("advanced_validation.cv_folds"),
@@ -296,17 +289,17 @@ def render_advanced_validation_section(context):
                     lc_table["train_size"],
                     lc_table["train_rmse_mean"],
                     marker="o",
-                    label=t("advanced_validation.train_rmse"),
+                    label="Train RMSE",
                 )
                 ax_lc.plot(
                     lc_table["train_size"],
                     lc_table["cv_rmse_mean"],
                     marker="o",
-                    label=t("advanced_validation.cv_rmse"),
+                    label="CV RMSE",
                 )
-                ax_lc.set_xlabel(t("advanced_validation.training_set_size"))
+                ax_lc.set_xlabel("Training set size")
                 ax_lc.set_ylabel("RMSE")
-                ax_lc.set_title(t("advanced_validation.learning_curve_title", diagnosis=lc_result.get("diagnosis")))
+                ax_lc.set_title(f"Learning curve: {lc_result.get('diagnosis')}")
                 ax_lc.legend()
                 ax_lc.grid(True, alpha=0.3)
                 fig_lc.tight_layout()
@@ -314,12 +307,12 @@ def render_advanced_validation_section(context):
                 plt.close(fig_lc)
                 st.dataframe(lc_table, width="stretch", hide_index=True)
 
-    with st.expander(t("advanced_validation.interval_coverage_title"), expanded=False):
+    with st.expander("Prediction interval hold-out coverage", expanded=False):
         st.markdown(t(TOOL_EXPLANATION_KEYS["interval_coverage"]))
         col1, col2, col3 = st.columns(3)
         with col1:
             pi_confidence = st.slider(
-                t("advanced_validation.nominal_coverage"),
+                "Nominal coverage",
                 min_value=0.50,
                 max_value=0.99,
                 value=0.90,
@@ -328,7 +321,7 @@ def render_advanced_validation_section(context):
             )
         with col2:
             pi_test_percent = st.slider(
-                t("advanced_validation.holdout_test_percent"),
+                "Hold-out test, %",
                 min_value=5,
                 max_value=80,
                 value=20,
@@ -337,7 +330,7 @@ def render_advanced_validation_section(context):
             )
         with col3:
             pi_cv = st.slider(
-                t("advanced_validation.calibration_cv_folds"),
+                "Calibration CV folds",
                 min_value=2,
                 max_value=max(2, min(10, len(y_all_current))),
                 value=min(5, max(2, min(10, len(y_all_current)))),
@@ -371,9 +364,9 @@ def render_advanced_validation_section(context):
         pi_result = _advanced_validation_get("interval_coverage_results_dict", model_name)
         if isinstance(pi_result, dict):
             col_a, col_b, col_c = st.columns(3)
-            col_a.metric(t("advanced_validation.nominal_coverage"), _format_metric(pi_result.get("confidence"), 2))
-            col_b.metric(t("advanced_validation.observed_coverage"), _format_metric(pi_result.get("coverage"), 2))
-            col_c.metric(t("advanced_validation.interval_radius"), _format_metric(pi_result.get("radius")))
+            col_a.metric("Nominal coverage", _format_metric(pi_result.get("confidence"), 2))
+            col_b.metric("Observed coverage", _format_metric(pi_result.get("coverage"), 2))
+            col_c.metric("Interval radius", _format_metric(pi_result.get("radius")))
             st.dataframe(
                 pi_result.get("table", pd.DataFrame()),
                 width="stretch",
