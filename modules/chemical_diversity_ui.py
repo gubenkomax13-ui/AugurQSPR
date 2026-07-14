@@ -1322,15 +1322,21 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
         )
         return
     if not expanded:
-        with st.expander(t('chemical_diversity.text_c45333a0db'), expanded=False):
-            return render_chemical_diversity_section(
-                data=data,
-                smiles_col=smiles_col,
-                label_col=label_col,
-                target_col=target_col,
-                descriptor_df=descriptor_df,
-                expanded=True,
-            )
+        show_section = st.checkbox(
+            t('chemical_diversity.text_c45333a0db'),
+            value=False,
+            key='show_chemical_diversity_section',
+        )
+        if not show_section:
+            return
+        return render_chemical_diversity_section(
+            data=data,
+            smiles_col=smiles_col,
+            label_col=label_col,
+            target_col=target_col,
+            descriptor_df=descriptor_df,
+            expanded=True,
+        )
     if not label_col:
         for candidate in ('Name', 'name', 'compound_id', 'Compound ID', 'CAS', 'cas'):
             if candidate in data.columns and candidate != smiles_col:

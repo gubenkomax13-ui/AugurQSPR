@@ -9512,11 +9512,7 @@ with primary_data_analysis_container:
             st.metric(t('passport.suspicious_count'), passport_metric_map.get(t('passport.suspicious_count'), "—"))
 
         with st.expander(t('dataset_passport.full_passport'), expanded=True):
-            st.dataframe(
-                dataset_passport_df,
-                width="stretch",
-                hide_index=True
-            )
+            st.table(dataset_passport_df)
 
         if isinstance(suspicious_values_df, pd.DataFrame) and not suspicious_values_df.empty:
             with st.expander(t('dataset_passport.suspicious_values'), expanded=False):
