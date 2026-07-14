@@ -4072,10 +4072,7 @@ def get_admin_password_secret():
 def get_user_role():
     if not qspr_is_online_mode():
         return "admin"
-
-    if bool(st.session_state.get("admin_authenticated", False)):
-        return "admin"
-    return "user"
+    return "public"
 
 
 def is_admin():
@@ -4083,7 +4080,7 @@ def is_admin():
 
 
 def is_user():
-    return get_user_role() == "user"
+    return get_user_role() == "public"
 
 
 def log_access_control(feature):
@@ -4100,6 +4097,8 @@ def render_admin_login_controls():
     if not qspr_is_online_mode():
         st.session_state.admin_authenticated = True
         return
+    st.session_state.admin_authenticated = False
+    return
 
     with st.sidebar.expander("Администратор", expanded=False):
         if qspr_is_online_mode():
