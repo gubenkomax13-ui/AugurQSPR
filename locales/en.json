@@ -165,7 +165,7 @@
     "auto_install_disabled": "Automatic package installation from the interface is disabled: it may break the environment and does not cover external dependencies such as Java for PaDEL, Julia for PySR, or xTB system libraries.",
     "missing_required_command": "Install only the missing required packages:",
     "optional_extensions_command": "Optional extensions are installed separately when needed:",
-    "requirements_files_hint": "Use `requirements-online.txt`, `requirements-local.txt`, or `requirements-full.txt` in a separate installer/terminal.",
+    "requirements_files_hint": "Use `requirements.txt`, `requirements-local.txt`, or `requirements-full.txt` in a separate installer/terminal.",
     "restart_required": "After installing packages, restart the Streamlit/Python process so the app can load the new environment.",
     "streamlit_missing_hint": "If Streamlit itself is missing, run `py install_augur.py --profile local` from a terminal first."
   },
@@ -3144,7 +3144,7 @@
     "heatmap_submatrix_expander": "Selected interactive heatmap submatrix",
     "heatmap_start_index": "Start matrix index",
     "heatmap_submatrix_size": "Submatrix size",
-    "plotly_required": "Chemical diversity diagnostics require Plotly. Install plotly or use requirements-online.txt/requirements-local.txt.",
+    "plotly_required": "Chemical diversity diagnostics require Plotly. Install plotly or use requirements.txt/requirements-local.txt.",
     "terms_glossary_title": "Terminology glossary",
     "term_col": "Term",
     "meaning_col": "Meaning",

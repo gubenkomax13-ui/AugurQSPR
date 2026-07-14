@@ -165,7 +165,7 @@
     "auto_install_disabled": "Интерфейстен пакеттерді автоматты орнату өшірілген: ол ортаны бұзуы мүмкін және PaDEL үшін Java, PySR үшін Julia, xTB жүйелік кітапханалары сияқты сыртқы тәуелділіктерді қамтымайды.",
     "missing_required_command": "Тек жетіспейтін міндетті пакеттерді орнатыңыз:",
     "optional_extensions_command": "Қосымша кеңейтімдер қажет болғанда бөлек орнатылады:",
-    "requirements_files_hint": "`requirements-online.txt`, `requirements-local.txt` немесе `requirements-full.txt` файлдарын бөлек орнатқышта/терминалда пайдаланыңыз.",
+    "requirements_files_hint": "`requirements.txt`, `requirements-local.txt` немесе `requirements-full.txt` файлдарын бөлек орнатқышта/терминалда пайдаланыңыз.",
     "restart_required": "Пакеттерді орнатқаннан кейін жаңа ортаны жүктеу үшін Streamlit/Python процесін қайта іске қосыңыз.",
     "streamlit_missing_hint": "Егер Streamlit өзі жоқ болса, алдымен терминалда `py install_augur.py --profile local` орындаңыз."
   },
@@ -3144,7 +3144,7 @@
     "heatmap_submatrix_expander": "Таңдалған интерактивті heatmap ішкі матрицасы",
     "heatmap_start_index": "Матрицаның бастапқы индексі",
     "heatmap_submatrix_size": "Ішкі матрица өлшемі",
-    "plotly_required": "Химиялық әртүрлілік диагностикасы үшін Plotly қажет. plotly орнатыңыз немесе requirements-online.txt/requirements-local.txt пайдаланыңыз.",
+    "plotly_required": "Химиялық әртүрлілік диагностикасы үшін Plotly қажет. plotly орнатыңыз немесе requirements.txt/requirements-local.txt пайдаланыңыз.",
     "terms_glossary_title": "Терминдер сөздігі",
     "term_col": "Термин",
     "meaning_col": "Мағынасы",

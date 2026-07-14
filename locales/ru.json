@@ -165,7 +165,7 @@
     "auto_install_disabled": "Автоматическая установка пакетов из интерфейса отключена: она может сломать окружение и не покрывает внешние зависимости вроде Java для PaDEL, Julia для PySR и системных библиотек xTB.",
     "missing_required_command": "Установите только отсутствующие обязательные пакеты:",
     "optional_extensions_command": "Необязательные расширения устанавливаются отдельно при необходимости:",
-    "requirements_files_hint": "Используйте `requirements-online.txt`, `requirements-local.txt` или `requirements-full.txt` в отдельном установщике/терминале.",
+    "requirements_files_hint": "Используйте `requirements.txt`, `requirements-local.txt` или `requirements-full.txt` в отдельном установщике/терминале.",
     "restart_required": "После установки пакетов перезапустите процесс Streamlit/Python, чтобы приложение загрузило новое окружение.",
     "streamlit_missing_hint": "Если отсутствует сам Streamlit, сначала выполните `py install_augur.py --profile local` в терминале."
   },
@@ -3144,7 +3144,7 @@
     "heatmap_submatrix_expander": "Выбранная интерактивная подматрица heatmap",
     "heatmap_start_index": "Начальный индекс матрицы",
     "heatmap_submatrix_size": "Размер подматрицы",
-    "plotly_required": "Для диагностики химического разнообразия нужен Plotly. Установите plotly или используйте requirements-online.txt/requirements-local.txt.",
+    "plotly_required": "Для диагностики химического разнообразия нужен Plotly. Установите plotly или используйте requirements.txt/requirements-local.txt.",
     "terms_glossary_title": "Словарь терминов",
     "term_col": "Термин",
     "meaning_col": "Значение",

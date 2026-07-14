@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 REQUIREMENT_FILES = {
-    "online": "requirements-online.txt",
+    "base": "requirements.txt",
     "local": "requirements-local.txt",
     "full": "requirements-full.txt",
     "lock": "requirements-lock.txt",

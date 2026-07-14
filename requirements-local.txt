@@ -1,4 +1,4 @@
--r requirements-online.txt
+-r requirements.txt
 shap==0.46.0
 mordred==1.2.0
 padelpy==0.1.16

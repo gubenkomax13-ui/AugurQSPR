@@ -1,17 +1,17 @@
-# Streamlit Community Cloud online dependencies.
-# Local/full dependencies are kept in requirements-local.txt,
-# requirements-full.txt, environment-local.yml, and packages-local.txt.
+# Base dependencies for the local Augur QSPR application.
+# Optional/heavy local extensions are listed in requirements-local.txt
+# and requirements-full.txt.
 streamlit==1.36.0
 pandas==2.2.2
 numpy==1.26.4
 scipy==1.13.1
 scikit-learn==1.5.1
-matplotlib==3.8.4
+matplotlib==3.9.1
 seaborn==0.13.2
 joblib==1.4.2
 openpyxl==3.1.5
 xlsxwriter==3.2.0
-rdkit-pypi==2022.9.5
+rdkit==2024.3.5
 requests==2.32.3
 Pillow==10.4.0
 plotly==5.22.0
