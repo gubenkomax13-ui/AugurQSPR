@@ -1243,12 +1243,26 @@ from scipy.spatial.distance import mahalanobis
 from scipy.stats import chi2, norm
 
 from rdkit import Chem
-try:
-    from rdkit.Chem import Draw
+Draw = None
+rdkit_draw_available = False
+
+
+def _get_rdkit_draw():
+    global Draw, rdkit_draw_available
+    if Draw is not None:
+        return Draw
+    if qspr_is_online_mode():
+        return None
+    try:
+        from rdkit.Chem import Draw as _Draw
+    except Exception:
+        rdkit_draw_available = False
+        return None
+    Draw = _Draw
     rdkit_draw_available = True
-except Exception:
-    Draw = None
-    rdkit_draw_available = False
+    return Draw
+
+
 from rdkit.Chem.MolStandardize import rdMolStandardize
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
@@ -1547,11 +1561,12 @@ def show_molecule_viewer(data, target_col, smiles_col="SMILES"):
 
             legends.append(" | ".join(legend_parts))
 
-        if mols and Draw is None:
+        draw = _get_rdkit_draw()
+        if mols and draw is None:
             st.warning(t("molecule_grid.rdkit_draw_missing"))
         elif mols:
             try:
-                img = Draw.MolsToGridImage(
+                img = draw.MolsToGridImage(
                     mols,
                     molsPerRow=int(mols_per_row),
                     subImgSize=img_size,
@@ -1768,11 +1783,12 @@ def show_molecule_grid_from_table(
 
                 legends.append(" | ".join(legend_parts))
 
-        if mols and Draw is None:
+        draw = _get_rdkit_draw()
+        if mols and draw is None:
             st.warning(t("molecule_grid.rdkit_draw_missing"))
         elif mols:
             try:
-                img = Draw.MolsToGridImage(
+                img = draw.MolsToGridImage(
                     mols,
                     molsPerRow=int(mols_per_row),
                     subImgSize=img_size,
@@ -2356,11 +2372,12 @@ def show_saod_molecule_grid(
 
             legends.append("  ".join(legend_parts))
 
-        if mols and Draw is None:
+        draw = _get_rdkit_draw()
+        if mols and draw is None:
             st.warning(t("molecule_grid.rdkit_draw_missing"))
         elif mols:
             try:
-                img = Draw.MolsToGridImage(
+                img = draw.MolsToGridImage(
                     mols,
                     molsPerRow=int(mols_per_row),
                     subImgSize=img_size,

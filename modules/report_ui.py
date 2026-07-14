@@ -21,20 +21,36 @@ from modules.statistics_summary_ui import (
     build_final_statistics_summary,
     final_statistics_to_flat_dataframe,
 )
+from modules.runtime_mode import qspr_is_online_mode
 
 try:
     from rdkit import Chem as _ReportChem
-    from rdkit.Chem import Draw
-    rdkit_draw_available = True
 except Exception:
     _ReportChem = None
-    Draw = None
-    rdkit_draw_available = False
+Draw = None
+rdkit_draw_available = False
+
+
+def _get_report_rdkit_draw():
+    global Draw, rdkit_draw_available
+    if Draw is not None:
+        return Draw
+    if qspr_is_online_mode():
+        return None
+    try:
+        from rdkit.Chem import Draw as _Draw
+    except Exception:
+        rdkit_draw_available = False
+        return None
+    Draw = _Draw
+    rdkit_draw_available = True
+    return Draw
 
 
 def _add_molecule_grid_section(section_title, smiles_list, add_html_section, quality_comment_parts=None):
     """Adds a molecule grid to the report when RDKit drawing is available."""
-    if Draw is None or _ReportChem is None:
+    draw = _get_report_rdkit_draw()
+    if draw is None or _ReportChem is None:
         warning = (
             "Молекулярные изображения пропущены: RDKit Draw недоступен. "
             "Отчёт сформирован без структур."
@@ -60,7 +76,7 @@ def _add_molecule_grid_section(section_title, smiles_list, add_html_section, qua
         if not mols:
             return False
 
-        img = Draw.MolsToGridImage(mols, molsPerRow=4, subImgSize=(200, 150))
+        img = draw.MolsToGridImage(mols, molsPerRow=4, subImgSize=(200, 150))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode()
