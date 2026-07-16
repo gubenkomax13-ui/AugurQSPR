@@ -1562,8 +1562,7 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
                         ['n_clusters', 'n_singletons', 'largest_cluster_size']
                     ]
                 )
-        (tab_distribution, tab_space, tab_heatmap, tab_clusters, tab_network, tab_pairs) = st.tabs([t('chemical_diversity.text_b22b11bf82'), t('chemical_diversity.text_ff058db7da'), t('chemical_diversity.text_addc12944d'), t('chemical_diversity.text_90cd825cac'), t('chemical_diversity.text_986a21123c'), t('chemical_diversity.text_c2a0c6990c')])
-        with tab_distribution:
+        with st.expander(t('chemical_diversity.text_b22b11bf82'), expanded=False):
             _render_similarity_histogram(result.get('similarity_histogram', pd.DataFrame()))
             descriptor_space = result.get('descriptor_space', {})
             descriptor_table = _descriptor_summary_table(descriptor_space)
@@ -1573,13 +1572,17 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
                     coords = descriptor_space.get('pca_coordinates') if isinstance(descriptor_space, dict) else None
                     if isinstance(coords, pd.DataFrame) and {'PC1', 'PC2'}.issubset(coords.columns):
                         st.scatter_chart(coords, x='PC1', y='PC2')
-        with tab_space:
+
+        with st.expander(t('chemical_diversity.text_ff058db7da'), expanded=False):
             _render_pca_map(result.get('fingerprint_pca', pd.DataFrame()))
-        with tab_heatmap:
+
+        with st.expander(t('chemical_diversity.text_addc12944d'), expanded=False):
             _render_similarity_heatmap(result.get('similarity_heatmap', {}))
-        with tab_clusters:
+
+        with st.expander(t('chemical_diversity.text_90cd825cac'), expanded=False):
             _render_clusters(result.get('cluster_summary', pd.DataFrame()), summary)
-        with tab_network:
+
+        with st.expander(t('chemical_diversity.text_986a21123c'), expanded=False):
             fingerprint_config = result.get('fingerprint_config', {})
             _render_analogue_network(
                 result.get('fingerprint_pca', pd.DataFrame()),
@@ -1587,7 +1590,8 @@ def render_chemical_diversity_section(data, smiles_col, label_col=None, target_c
                 analogue_threshold=float(fingerprint_config.get('analogue_threshold', 0.85)),
                 max_edges=500,
             )
-        with tab_pairs:
+
+        with st.expander(t('chemical_diversity.text_c2a0c6990c'), expanded=False):
             _render_pairs_and_unique(result)
             invalid_df = result.get('invalid_structures', pd.DataFrame())
             if isinstance(invalid_df, pd.DataFrame) and (not invalid_df.empty):
