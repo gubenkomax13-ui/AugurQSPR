@@ -1768,6 +1768,7 @@
     "molecular_disabled": "Molecular descriptors are disabled by the checkbox above.",
     "spectral_ready": "Spectral descriptors are ready: {rows} compounds, {cols} columns.",
     "spectral_enabled_not_calculated": "The spectral source is enabled. The ready spectral descriptor bank may already be calculated, but the table for the current dataset has not been connected yet. Click “Use ready spectral descriptors”.",
+    "spectral_connected_empty": "Ready spectral descriptors were connected, but the table for the current dataset is empty. Bank rows found: {hits}; missing: {misses}. Check spectrum type, phase, source, grid range, and whether the current file InChIKeys match the bank.",
     "spectral_disabled": "Spectral descriptors are disabled by the checkbox above.",
     "final_matrix_title": "Final X/y matrix",
     "selected_for_matrix": "Selected for assembly: {sources}",

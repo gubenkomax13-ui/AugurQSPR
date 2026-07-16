@@ -15818,7 +15818,15 @@ if (
                     cols=spectral_df_for_status.shape[1],
                 ))
             else:
-                st.warning(t("descriptor_settings.spectral_enabled_not_calculated"))
+                spectral_report_for_status = st.session_state.get("spectral_descriptors_report")
+                if isinstance(spectral_report_for_status, dict):
+                    st.warning(t(
+                        "descriptor_settings.spectral_connected_empty",
+                        hits=int(spectral_report_for_status.get("descriptor_cache_hits", 0) or 0),
+                        misses=int(spectral_report_for_status.get("descriptor_cache_misses", 0) or 0),
+                    ))
+                else:
+                    st.warning(t("descriptor_settings.spectral_enabled_not_calculated"))
         else:
             st.info(t("descriptor_settings.spectral_disabled"))
 
