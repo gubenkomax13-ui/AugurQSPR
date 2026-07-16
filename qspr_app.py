@@ -752,6 +752,9 @@ missing_required, required_import_diagnostics = check_packages(REQUIRED_PACKAGES
 numpy_conflict = False
 numpy_version_details = ""
 
+xtb_python_available = False
+xtb_python_status = {}
+
 try:
     import numpy as _np_check
 
@@ -1117,8 +1120,8 @@ try:
     from modules import spectra_core as spectra_core_module
     from modules import structural_filter_core
 
-    xtb_python_available = qspr_core.xtb_python_available
-    xtb_python_status = qspr_core.xtb_python_status
+    xtb_python_available = bool(getattr(qspr_core, "xtb_python_available", False))
+    xtb_python_status = getattr(qspr_core, "xtb_python_status", {})
 
     SPECTRA_BANK_DIR = spectra_core_module.SPECTRA_BANK_DIR
     SPECTRA_IR_RAW_DIR = spectra_core_module.SPECTRA_IR_RAW_DIR
@@ -15920,7 +15923,7 @@ if (
                         update_overall_descriptor_progress(t('descriptor_calc.source_molecular'))
 
                     if use_xtb_descriptors_source:
-                        if not xtb_python_available:
+                        if not bool(getattr(qspr_core, "xtb_python_available", xtb_python_available)):
                             st.error(t('descriptor_calc.error_xtb_not_available'))
                             st.stop()
 
