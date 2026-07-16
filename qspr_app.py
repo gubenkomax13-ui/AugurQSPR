@@ -627,158 +627,20 @@ def qspr_is_online_streamlit_version():
 
 
 def qspr_runtime_mode():
-    """Return `online` or `local` for feature gating."""
-    return shared_qspr_runtime_mode()
+    """The local-dev branch always runs as the full local application."""
+    return "local"
 
 
 def qspr_is_online_mode():
-    return qspr_runtime_mode() == "online"
+    return False
 
 
 def qspr_online_lock_notice(feature_name=""):
-    if feature_name:
-        st.info(f"{feature_name}: {ONLINE_LOCK_MESSAGE}")
-    else:
-        st.info(ONLINE_LOCK_MESSAGE)
+    return None
 
 
 def qspr_show_online_demo_notice():
-    if not qspr_is_online_streamlit_version():
-        return
-
-    title = escape(t("online_demo_notice.title"))
-    body = escape(t("online_demo_notice.body"))
-    github_text = escape(t("online_demo_notice.github"))
-    collapse_label = escape(t("online_demo_notice.collapse_label"))
-    expand_label = escape(t("online_demo_notice.expand_label"))
-    link_label = t("online_demo_notice.link_label")
-    github_link = (
-        f'<a href="{escape(AUGUR_GITHUB_URL, quote=True)}" '
-        f'target="_blank" rel="noopener noreferrer">GitHub</a>'
-    )
-    if "GitHub" in link_label:
-        link_label = escape(link_label).replace("GitHub", github_link)
-    else:
-        link_label = f"{escape(link_label)}: {github_link}"
-
-    components.html(
-        f"""
-        <!doctype html>
-        <html lang="{escape(st.session_state.get('lang', 'ru'))}">
-        <head>
-        <meta charset="utf-8">
-        <style>
-        html, body {{
-            margin: 0;
-            padding: 0;
-            background: transparent;
-            font-family: "Source Sans Pro", sans-serif;
-        }}
-        .online-demo-notice {{
-            box-sizing: border-box;
-            margin: 0;
-            border: 1px solid #9ec5fe;
-            border-radius: 0.5rem;
-            background: #eef6ff;
-            color: #102a43;
-            line-height: 1.45;
-            overflow: hidden;
-        }}
-        .online-demo-notice summary {{
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.75rem;
-            padding: 0.8rem 1rem;
-            cursor: pointer;
-            list-style: none;
-            user-select: none;
-        }}
-        .online-demo-notice summary::-webkit-details-marker {{
-            display: none;
-        }}
-        .online-demo-notice summary::after {{
-            content: "{collapse_label}";
-            flex: 0 0 auto;
-            color: #315f8f;
-            font-size: 0.86rem;
-            font-weight: 600;
-        }}
-        .online-demo-notice:not([open]) summary::after {{
-            content: "{expand_label}";
-        }}
-        .online-demo-notice-title {{
-            font-weight: 700;
-        }}
-        .online-demo-notice-body {{
-            padding: 0 1rem 0.95rem 1rem;
-        }}
-        .online-demo-notice a {{
-            color: #0b5ed7;
-            font-weight: 600;
-            text-decoration: none;
-        }}
-        .online-demo-notice a:hover {{
-            text-decoration: underline;
-        }}
-        @media (max-width: 640px) {{
-            .online-demo-notice summary {{
-                align-items: flex-start;
-                flex-direction: column;
-            }}
-        }}
-        </style>
-        </head>
-        <body>
-        <details class="online-demo-notice" id="online-demo-notice" open>
-          <summary><span class="online-demo-notice-title">{title}</span></summary>
-          <div class="online-demo-notice-body">
-            {body}<br><br>
-            {github_text}<br><br>
-            {link_label}
-          </div>
-        </details>
-        <script>
-        const notice = document.getElementById("online-demo-notice");
-        const summary = notice.querySelector("summary");
-        let userInteracted = false;
-
-        function setFrameHeight() {{
-            const height = Math.ceil(document.documentElement.scrollHeight);
-            window.parent.postMessage({{
-                isStreamlitMessage: true,
-                type: "streamlit:setFrameHeight",
-                height: height
-            }}, "*");
-        }}
-
-        function refreshFrameHeight() {{
-            setFrameHeight();
-            window.setTimeout(setFrameHeight, 80);
-            window.setTimeout(setFrameHeight, 250);
-        }}
-
-        summary.addEventListener("click", () => {{
-            userInteracted = true;
-            refreshFrameHeight();
-        }});
-
-        notice.addEventListener("toggle", refreshFrameHeight);
-        window.addEventListener("load", refreshFrameHeight);
-        window.setTimeout(() => {{
-            if (!userInteracted && notice.open) {{
-                notice.open = false;
-                refreshFrameHeight();
-            }}
-        }}, 10000);
-        refreshFrameHeight();
-        </script>
-        </body>
-        </html>
-        """,
-        height=230,
-        scrolling=False,
-    )
+    return None
 
 
 query_lang = _query_param_lang()
@@ -5072,36 +4934,27 @@ def show_markdown_help(title, help_path, expanded=False):
 
 
 def get_user_role():
-    if not qspr_is_online_mode():
-        return "admin"
-
-    return "user"
+    return "local"
 
 
 def is_admin():
-    return get_user_role() == "admin"
+    return True
 
 
 def is_user():
-    return get_user_role() == "user"
+    return False
 
 
 def log_access_control(feature):
-    message = f"INFO | ACCESS_CONTROL | User attempted to open admin-only feature: {feature}."
-    add_log(message, stage="access_control", event="admin_only_blocked")
+    return None
 
 
 def show_admin_only_notice(feature):
-    log_access_control(feature)
-    st.info(t("mode.local_version_only"))
+    return None
 
 
 def render_admin_login_controls():
-    if not qspr_is_online_mode():
-        st.session_state.admin_authenticated = True
-        return
-
-    st.session_state.admin_authenticated = False
+    st.session_state.admin_authenticated = True
     return
 
 
