@@ -5158,6 +5158,213 @@ def _qspr_descriptor_table_row_positions(work, source_name):
     return pd.Series(np.arange(len(work), dtype=int), index=work.index)
 
 
+def qspr_descriptor_row_set(df, source_name):
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return set()
+
+    try:
+        positions = _qspr_descriptor_table_row_positions(df.copy(), source_name)
+    except Exception:
+        return set()
+
+    return {
+        int(pos)
+        for pos in positions
+        if pd.notna(pos)
+    }
+
+
+def qspr_build_descriptor_coverage_table(
+    current_df,
+    target_col,
+    smiles_col,
+    selected_sources,
+    source_row_sets,
+    final_valid_indices,
+):
+    selected_sources = dict(selected_sources or {})
+    source_row_sets = {
+        str(name): {int(pos) for pos in rows}
+        for name, rows in dict(source_row_sets or {}).items()
+    }
+    final_rows = {int(pos) for pos in list(final_valid_indices or [])}
+    rows = []
+
+    for row_position, (_, source_row) in enumerate(current_df.reset_index(drop=False).iterrows()):
+        reasons = []
+        out = {
+            "row_position": int(row_position),
+            "source_index": source_row.get("index", row_position),
+            "name": source_row.get("name", source_row.get("Name", "")),
+            "SMILES": source_row.get(smiles_col, ""),
+            "InChIKey": source_row.get("inchikey", source_row.get("InChIKey", "")),
+        }
+
+        target_value = pd.to_numeric(
+            pd.Series([source_row.get(target_col, np.nan)]),
+            errors="coerce",
+        ).iloc[0]
+        if pd.isna(target_value):
+            reasons.append(t("descriptor_coverage.reason_target_missing"))
+
+        for source_name, selected in selected_sources.items():
+            col_name = str(source_name)
+            if selected:
+                has_source = int(row_position) in source_row_sets.get(col_name, set())
+                out[col_name] = (
+                    t("descriptor_coverage.status_ok")
+                    if has_source
+                    else t("descriptor_coverage.status_missing")
+                )
+                if not has_source:
+                    reasons.append(t("descriptor_coverage.reason_source_missing", source=col_name))
+            else:
+                out[col_name] = t("descriptor_coverage.status_not_selected")
+
+        final_col = t("descriptor_coverage.final_column")
+        included = int(row_position) in final_rows
+        out[final_col] = (
+            t("descriptor_coverage.status_included")
+            if included
+            else t("descriptor_coverage.status_excluded")
+        )
+        out[t("descriptor_coverage.reason_column")] = (
+            "; ".join(reasons)
+            if reasons
+            else (
+                t("descriptor_coverage.reason_passed")
+                if included
+                else t("descriptor_coverage.reason_filtered")
+            )
+        )
+        rows.append(out)
+
+    return pd.DataFrame(rows)
+
+
+def qspr_descriptor_coverage_summary(coverage_df):
+    if coverage_df is None or not isinstance(coverage_df, pd.DataFrame) or coverage_df.empty:
+        return pd.DataFrame()
+
+    final_col = t("descriptor_coverage.final_column")
+    reason_col = t("descriptor_coverage.reason_column")
+    skipped_cols = {
+        "row_position",
+        "source_index",
+        "name",
+        "SMILES",
+        "InChIKey",
+        final_col,
+        reason_col,
+    }
+    selected_cols = [
+        col for col in coverage_df.columns
+        if col not in skipped_cols
+        and not coverage_df[col].astype(str).eq(t("descriptor_coverage.status_not_selected")).all()
+    ]
+
+    total_rows = len(coverage_df)
+    summary_rows = [
+        {
+            t("descriptor_coverage.summary_source"): t("descriptor_coverage.summary_total"),
+            t("descriptor_coverage.summary_rows"): int(total_rows),
+            t("descriptor_coverage.summary_percent"): 100.0 if total_rows else 0.0,
+        }
+    ]
+
+    for col in selected_cols:
+        ok_count = int(coverage_df[col].astype(str).eq(t("descriptor_coverage.status_ok")).sum())
+        summary_rows.append({
+            t("descriptor_coverage.summary_source"): str(col),
+            t("descriptor_coverage.summary_rows"): ok_count,
+            t("descriptor_coverage.summary_percent"): (ok_count / total_rows * 100.0) if total_rows else 0.0,
+        })
+
+    included_count = int(
+        coverage_df[final_col].astype(str).eq(t("descriptor_coverage.status_included")).sum()
+    )
+    summary_rows.append({
+        t("descriptor_coverage.summary_source"): t("descriptor_coverage.summary_intersection"),
+        t("descriptor_coverage.summary_rows"): included_count,
+        t("descriptor_coverage.summary_percent"): (included_count / total_rows * 100.0) if total_rows else 0.0,
+    })
+
+    return pd.DataFrame(summary_rows)
+
+
+def qspr_store_descriptor_coverage(current_df, target_col, smiles_col, selected_sources, source_row_sets, bundle):
+    coverage_df = qspr_build_descriptor_coverage_table(
+        current_df=current_df,
+        target_col=target_col,
+        smiles_col=smiles_col,
+        selected_sources=selected_sources,
+        source_row_sets=source_row_sets,
+        final_valid_indices=bundle.get("valid_indices", []),
+    )
+    st.session_state.descriptor_coverage_df = coverage_df
+    st.session_state.descriptor_coverage_summary_df = qspr_descriptor_coverage_summary(coverage_df)
+    return coverage_df
+
+
+def qspr_filter_bundle_to_required_descriptor_rows(bundle, selected_sources, source_row_sets):
+    required_sets = [
+        {int(pos) for pos in source_row_sets.get(source_name, set())}
+        for source_name, selected in dict(selected_sources or {}).items()
+        if selected
+    ]
+
+    if not required_sets:
+        return bundle
+
+    required_rows = set.intersection(*required_sets) if required_sets else set()
+    valid_indices = [int(pos) for pos in list(bundle.get("valid_indices", []))]
+    keep_positions = [
+        i for i, row_position in enumerate(valid_indices)
+        if row_position in required_rows
+    ]
+
+    if not keep_positions:
+        raise ValueError(t("descriptor_coverage.error_no_full_intersection"))
+
+    if len(keep_positions) == len(valid_indices):
+        return bundle
+
+    filtered = dict(bundle)
+    filtered["df_desc"] = bundle["df_desc"].iloc[keep_positions].reset_index(drop=True)
+    filtered["X_all"] = np.asarray(bundle["X_all"])[keep_positions]
+    filtered["y_all"] = np.asarray(bundle["y_all"])[keep_positions]
+    filtered["valid_indices"] = [valid_indices[i] for i in keep_positions]
+    row_positions_source = list(bundle.get("row_positions", valid_indices))
+    filtered["row_positions"] = [
+        row_positions_source[i]
+        for i in keep_positions
+    ]
+
+    if "source_indices" in bundle:
+        source_indices_source = list(bundle.get("source_indices", []))
+        filtered["source_indices"] = [
+            source_indices_source[i]
+            for i in keep_positions
+            if i < len(source_indices_source)
+        ]
+
+    if "record_ids" in bundle:
+        record_ids_source = list(bundle.get("record_ids", []))
+        filtered["record_ids"] = [
+            record_ids_source[i]
+            for i in keep_positions
+            if i < len(record_ids_source)
+        ]
+
+    filtered_report = dict(bundle.get("report", {}))
+    filtered_report["rows_before_required_descriptor_filter"] = int(len(valid_indices))
+    filtered_report["rows_after_required_descriptor_filter"] = int(len(keep_positions))
+    filtered_report["rows_removed_by_required_descriptor_filter"] = int(len(valid_indices) - len(keep_positions))
+    filtered["report"] = filtered_report
+
+    return filtered
+
+
 def qspr_make_morfeus_bundle_from_dataframe(morfeus_df, target_col):
     """
     Делает bundle из morfeus-таблицы в формате, совместимом со store_descriptor_bundle().
@@ -7159,6 +7366,8 @@ def invalidate_descriptor_state():
     st.session_state.auto_model_comparison_table = None
     st.session_state.true_model_comparison_df = None
     st.session_state.yrandom_best_model_result = None
+    st.session_state.descriptor_coverage_df = None
+    st.session_state.descriptor_coverage_summary_df = None
 
 
 DESCRIPTOR_SOURCE_CALCULATED_MOLECULAR = "CALCULATED_MOLECULAR"
@@ -8091,6 +8300,8 @@ SESSION_DEFAULTS = {
     "desc_names": None,
     "df_desc": None,
     "descriptor_bundle": None,
+    "descriptor_coverage_df": None,
+    "descriptor_coverage_summary_df": None,
     "logs": [],
     "log_events": [],
     "analysis_started_at": None,
@@ -15865,6 +16076,14 @@ if (
                     bundle = None
                     source_label = ""
                     selected_descriptor_sources = []
+                    descriptor_source_selection = {
+                        t("descriptor_coverage.source_molecular"): bool(use_molecular_descriptors_source),
+                        "xTB": bool(use_xtb_descriptors_source),
+                        "Morfeus": bool(use_morfeus_descriptors_source),
+                        "DScribe": bool(use_dscribe_descriptors_source),
+                        t("descriptor_coverage.source_spectral"): bool(use_spectral_descriptors_source),
+                    }
+                    descriptor_source_row_sets = {}
 
                     if use_molecular_descriptors_source:
                         selected_descriptor_sources.append(t('descriptor_calc.source_molecular'))
@@ -15920,6 +16139,9 @@ if (
                             )
 
                         source_label = "molecular_calculated"
+                        descriptor_source_row_sets[t("descriptor_coverage.source_molecular")] = set(
+                            int(pos) for pos in bundle.get("valid_indices", [])
+                        )
                         update_overall_descriptor_progress(t('descriptor_calc.source_molecular'))
 
                     if use_xtb_descriptors_source:
@@ -16055,6 +16277,63 @@ if (
                                 xtb_df = pd.DataFrame()
                                 xtb_report = {"descriptor_bank": bank_report}
 
+                            st.session_state.xtb_descriptors_df = xtb_df
+                            st.session_state.xtb_descriptors_report = xtb_report
+
+                            with st.expander(t('descriptor_calc.xtb_table_expander'), expanded=True):
+                                st.caption(t('descriptor_calc.xtb_table_caption'))
+
+                                st.dataframe(
+                                    xtb_df,
+                                    width="stretch",
+                                    hide_index=True
+                                )
+
+                            if use_molecular_descriptors_source:
+                                xtb_coverage_bundle = qspr_make_xtb_bundle_from_dataframe(
+                                    xtb_df=xtb_df,
+                                    target_col=target_col
+                                )
+                                descriptor_source_row_sets["xTB"] = set(
+                                    int(pos) for pos in xtb_coverage_bundle.get("valid_indices", [])
+                                )
+
+                                bundle = qspr_append_xtb_to_bundle(
+                                    base_bundle=bundle,
+                                    xtb_df=xtb_df,
+                                    target_col=target_col,
+                                    merge_policy=str(xtb_merge_policy),
+                                )
+                                join_report = bundle.get("report", {})
+                                lost_rows = int(join_report.get("rows_lost_by_xtb_join", 0) or 0)
+                                if lost_rows > 0:
+                                    st.warning(
+                                        "xTB descriptors were available only for part of the molecular descriptor table: "
+                                        f"before join {join_report.get('molecular_rows_before_xtb_join')}, "
+                                        f"xTB valid {join_report.get('xtb_valid_rows_before_join')}, "
+                                        f"after {join_report.get('xtb_join_type')} join {join_report.get('rows_after_xtb_join')}, "
+                                        f"lost {lost_rows} rows."
+                                    )
+                                source_label = "molecular_plus_xtb"
+                            else:
+                                bundle = qspr_make_xtb_bundle_from_dataframe(
+                                    xtb_df=xtb_df,
+                                    target_col=target_col
+                                )
+                                descriptor_source_row_sets["xTB"] = set(
+                                    int(pos) for pos in bundle.get("valid_indices", [])
+                                )
+                                source_label = "xtb_quantum_descriptors"
+
+                            st.download_button(
+                                t('descriptor_calc.xtb_download_button'),
+                                xtb_df.to_csv(index=False).encode("utf-8-sig"),
+                                "xtb_descriptors.csv",
+                                "text/csv",
+                                key="download_xtb_descriptors_csv_after_bank"
+                            )
+                            update_overall_descriptor_progress(t('descriptor_calc.source_xtb'))
+
                         else:
                             with st.spinner(t('descriptor_calc.spinner_xtb_calculating')):
                                 xtb_df, xtb_report = qspr_core.qspr_calc_xtb_descriptors_dataframe(
@@ -16088,6 +16367,14 @@ if (
                                 )
 
                             if use_molecular_descriptors_source:
+                                xtb_coverage_bundle = qspr_make_xtb_bundle_from_dataframe(
+                                    xtb_df=xtb_df,
+                                    target_col=target_col
+                                )
+                                descriptor_source_row_sets["xTB"] = set(
+                                    int(pos) for pos in xtb_coverage_bundle.get("valid_indices", [])
+                                )
+
                                 bundle = qspr_append_xtb_to_bundle(
                                     base_bundle=bundle,
                                     xtb_df=xtb_df,
@@ -16117,6 +16404,9 @@ if (
                                 bundle = qspr_make_xtb_bundle_from_dataframe(
                                     xtb_df=xtb_df,
                                     target_col=target_col
+                                )
+                                descriptor_source_row_sets["xTB"] = set(
+                                    int(pos) for pos in bundle.get("valid_indices", [])
                                 )
                                 source_label = "xtb_quantum_descriptors"
 
@@ -16385,11 +16675,16 @@ if (
                                     )
 
                         # Собираем или расширяем общий descriptor bundle.
+                        morfeus_coverage_bundle = qspr_make_morfeus_bundle_from_dataframe(
+                            morfeus_df=morfeus_df,
+                            target_col=target_col
+                        )
+                        descriptor_source_row_sets["Morfeus"] = set(
+                            int(pos) for pos in morfeus_coverage_bundle.get("valid_indices", [])
+                        )
+
                         if bundle is None:
-                            bundle = qspr_make_morfeus_bundle_from_dataframe(
-                                morfeus_df=morfeus_df,
-                                target_col=target_col
-                            )
+                            bundle = morfeus_coverage_bundle
                             source_label = "morfeus_3d_descriptors"
                         else:
                             bundle = qspr_append_morfeus_to_bundle(
@@ -16429,6 +16724,9 @@ if (
 
                         if use_descriptor_bank and not dscribe_use_bank_default_profile:
                             st.warning(t('descriptor_calc.dscribe_bank_profile_warning'))
+
+                        dscribe_progress_bar = None
+                        dscribe_progress_text = None
 
                         if dscribe_use_bank_default_profile:
                             cached_dscribe_df, dscribe_missing_df, bank_report = descriptor_bank_core.descriptor_bank_get_cached_and_missing(
@@ -16552,13 +16850,13 @@ if (
                                 dscribe_df = pd.DataFrame()
 
                         else:
-                            progress_bar = st.progress(0)
-                            progress_text = st.empty()
+                            dscribe_progress_bar = st.progress(0)
+                            dscribe_progress_text = st.empty()
 
                             def dscribe_progress(done, total, message):
                                 if total > 0:
-                                    progress_bar.progress(min(done / total, 1.0))
-                                progress_text.caption(message)
+                                    dscribe_progress_bar.progress(min(done / total, 1.0))
+                                dscribe_progress_text.caption(message)
 
                             with st.spinner(t('descriptor_calc.spinner_dscribe_atomistic')):
                                 dscribe_df = dscribe_descriptor_core.calculate_dscribe_descriptors_for_dataframe(
@@ -16573,8 +16871,10 @@ if (
                                     progress_callback=dscribe_progress
                                 )
 
-                        progress_bar.empty()
-                        progress_text.empty()
+                        if dscribe_progress_bar is not None:
+                            dscribe_progress_bar.empty()
+                        if dscribe_progress_text is not None:
+                            dscribe_progress_text.empty()
 
                         if "row_index" in dscribe_df.columns:
                             dscribe_row_indices = pd.to_numeric(
@@ -16663,11 +16963,16 @@ if (
                                         hide_index=True
                                     )
 
+                        dscribe_coverage_bundle = qspr_make_dscribe_bundle_from_dataframe(
+                            dscribe_df=dscribe_df,
+                            target_col=target_col
+                        )
+                        descriptor_source_row_sets["DScribe"] = set(
+                            int(pos) for pos in dscribe_coverage_bundle.get("valid_indices", [])
+                        )
+
                         if bundle is None:
-                            bundle = qspr_make_dscribe_bundle_from_dataframe(
-                                dscribe_df=dscribe_df,
-                                target_col=target_col
-                            )
+                            bundle = dscribe_coverage_bundle
                             source_label = "dscribe_atomistic_descriptors"
                         else:
                             bundle = qspr_append_dscribe_to_bundle(
@@ -16695,6 +17000,17 @@ if (
                         and not use_morfeus_descriptors_source
                         and not use_dscribe_descriptors_source
                     )
+                    spectral_source_label = t("descriptor_coverage.source_spectral")
+                    spectral_df_for_coverage = st.session_state.get("spectral_descriptors_df")
+                    if (
+                        use_spectral_descriptors_source
+                        and isinstance(spectral_df_for_coverage, pd.DataFrame)
+                        and not spectral_df_for_coverage.empty
+                    ):
+                        descriptor_source_row_sets[spectral_source_label] = qspr_descriptor_row_set(
+                            spectral_df_for_coverage,
+                            spectral_source_label,
+                        )
 
                     if bundle is None and spectral_only_source:
                         spectral_df_for_bundle = st.session_state.get("spectral_descriptors_df")
@@ -16736,12 +17052,7 @@ if (
                             or spectral_df_for_bundle.empty
                         ):
                             st.warning(t('descriptor_calc.spectral_not_found_warning'))
-
-                            if bundle is None:
-                                st.error(t("descriptor_calc.bundle_none_error"))
-                                st.stop()
-
-                            store_descriptor_bundle(bundle, source_label)
+                            st.stop()
                         else:
                             bundle = qspr_core.qspr_build_descriptor_matrix_from_sources(
                                 current_df=current_df,
@@ -16765,7 +17076,20 @@ if (
                                 bundle["report"]["descriptor_source"] = f"{source_label}_plus_spectral"
 
                             source_label = bundle["report"]["descriptor_source"]
+                            bundle = qspr_filter_bundle_to_required_descriptor_rows(
+                                bundle,
+                                descriptor_source_selection,
+                                descriptor_source_row_sets,
+                            )
                             store_descriptor_bundle(bundle, source_label)
+                            qspr_store_descriptor_coverage(
+                                current_df=current_df,
+                                target_col=target_col,
+                                smiles_col=smiles_col_current,
+                                selected_sources=descriptor_source_selection,
+                                source_row_sets=descriptor_source_row_sets,
+                                bundle=bundle,
+                            )
 
                             st.session_state.descriptor_calculation_mode = "spectral_or_combined"
                             source_code = descriptor_source_code(source_label)
@@ -16786,8 +17110,20 @@ if (
                             st.error(t("descriptor_calc.bundle_none_error"))
                             st.stop()
 
-
+                        bundle = qspr_filter_bundle_to_required_descriptor_rows(
+                            bundle,
+                            descriptor_source_selection,
+                            descriptor_source_row_sets,
+                        )
                         store_descriptor_bundle(bundle, source_label)
+                        qspr_store_descriptor_coverage(
+                            current_df=current_df,
+                            target_col=target_col,
+                            smiles_col=smiles_col_current,
+                            selected_sources=descriptor_source_selection,
+                            source_row_sets=descriptor_source_row_sets,
+                            bundle=bundle,
+                        )
                         st.session_state.update({
                             "molecular_descriptors_ready": True,
                             "molecular_df_desc": bundle["df_desc"].copy(),
@@ -17262,6 +17598,44 @@ df_desc = st.session_state.df_desc
 desc_names_current = st.session_state.desc_names
 
 descriptor_source_message()
+descriptor_coverage_view = st.session_state.get("descriptor_coverage_df")
+descriptor_coverage_summary_view = st.session_state.get("descriptor_coverage_summary_df")
+if isinstance(descriptor_coverage_view, pd.DataFrame) and not descriptor_coverage_view.empty:
+    final_col = t("descriptor_coverage.final_column")
+    included_count = int(
+        descriptor_coverage_view[final_col]
+        .astype(str)
+        .eq(t("descriptor_coverage.status_included"))
+        .sum()
+    ) if final_col in descriptor_coverage_view.columns else len(valid_indices or [])
+    excluded_count = int(len(descriptor_coverage_view) - included_count)
+
+    with st.expander(t("descriptor_coverage.title"), expanded=excluded_count > 0):
+        c_cov_1, c_cov_2, c_cov_3 = st.columns(3)
+        c_cov_1.metric(t("descriptor_coverage.metric_total"), len(descriptor_coverage_view))
+        c_cov_2.metric(t("descriptor_coverage.metric_included"), included_count)
+        c_cov_3.metric(t("descriptor_coverage.metric_excluded"), excluded_count)
+
+        if isinstance(descriptor_coverage_summary_view, pd.DataFrame) and not descriptor_coverage_summary_view.empty:
+            st.dataframe(
+                _streamlit_safe_table_data(descriptor_coverage_summary_view),
+                width="stretch",
+                hide_index=True,
+            )
+
+        st.dataframe(
+            _streamlit_safe_table_data(descriptor_coverage_view),
+            width="stretch",
+            hide_index=True,
+        )
+        st.download_button(
+            t("descriptor_coverage.download"),
+            qspr_core.qspr_csv_download_bytes(descriptor_coverage_view),
+            "descriptor_coverage.csv",
+            "text/csv",
+            key="download_descriptor_coverage_csv",
+        )
+
 descriptor_quality_view = st.session_state.get("descriptor_quality_df")
 if isinstance(descriptor_quality_view, pd.DataFrame) and not descriptor_quality_view.empty:
     descriptor_rows_included = descriptor_quality_view.get(
