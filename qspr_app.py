@@ -1117,6 +1117,11 @@ try:
     from modules import spectra_core as spectra_core_module
     from modules import structural_filter_core
 
+    SPECTRA_BANK_DIR = spectra_core_module.SPECTRA_BANK_DIR
+    SPECTRA_IR_RAW_DIR = spectra_core_module.SPECTRA_IR_RAW_DIR
+    SPECTRA_IR_PROCESSED_DIR = spectra_core_module.SPECTRA_IR_PROCESSED_DIR
+    SPECTRA_MASS_RAW_DIR = spectra_core_module.SPECTRA_MASS_RAW_DIR
+    SPECTRA_MASS_PROCESSED_DIR = spectra_core_module.SPECTRA_MASS_PROCESSED_DIR
 
     try:
         from modules import morfeus_descriptor_core
