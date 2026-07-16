@@ -83,8 +83,8 @@ def t(key, **kwargs):
         "install.missing_required_command": "Install only the missing required packages:",
         "install.optional_extensions_command": "Optional extensions are installed separately when needed:",
         "install.requirements_files_hint": (
-            "Use requirements.txt for Streamlit Cloud, or requirements-local.txt, requirements-full.txt, "
-            "and environment-local.yml for local/full installations "
+            "Use requirements.txt, requirements-local.txt, requirements-full.txt, "
+            "or environment-local.yml for local/full installations "
             "from a terminal or deployment installer."
         ),
         "install.restart_required": (
@@ -623,42 +623,7 @@ def _qspr_bool_setting(value):
 
 
 def qspr_is_online_streamlit_version():
-    for source in (os.environ.get("AUGUR_SHOW_ONLINE_DEMO_NOTICE"),):
-        parsed = _qspr_bool_setting(source)
-        if parsed is not None:
-            return parsed
-
-    try:
-        parsed = _qspr_bool_setting(st.secrets.get("AUGUR_SHOW_ONLINE_DEMO_NOTICE"))
-        if parsed is not None:
-            return parsed
-    except Exception:
-        pass
-
-    streamlit_env_markers = [
-        "STREAMLIT_CLOUD",
-        "STREAMLIT_SHARING_MODE",
-        "STREAMLIT_RUNTIME_ENV",
-    ]
-    for env_name in streamlit_env_markers:
-        value = str(os.environ.get(env_name, "")).strip().lower()
-        if value and value not in {"0", "false", "local", "development"}:
-            return True
-
-    context = getattr(st, "context", None)
-    headers = getattr(context, "headers", {}) if context is not None else {}
-    try:
-        host = str(headers.get("host") or headers.get("Host") or "").lower()
-    except AttributeError:
-        host = ""
-
-    try:
-        url = str(getattr(context, "url", "") or "").lower()
-    except Exception:
-        url = ""
-
-    online_hosts = ("streamlit.app", "share.streamlit.io")
-    return any(marker in host or marker in url for marker in online_hosts)
+    return False
 
 
 def qspr_runtime_mode():
@@ -847,20 +812,7 @@ FULL_REQUIRED_PACKAGES = {
     "openpyxl": "openpyxl",
 }
 
-ONLINE_REQUIRED_PACKAGES = {
-    "pandas": "pandas",
-    "numpy": "numpy",
-    "matplotlib": "matplotlib",
-    "rdkit": "rdkit",
-    "scikit-learn": "sklearn",
-    "joblib": "joblib",
-    "seaborn": "seaborn",
-    "scipy": "scipy",
-    "Pillow": "PIL",
-    "openpyxl": "openpyxl",
-}
-
-REQUIRED_PACKAGES = ONLINE_REQUIRED_PACKAGES if qspr_is_online_mode() else FULL_REQUIRED_PACKAGES
+REQUIRED_PACKAGES = FULL_REQUIRED_PACKAGES
 
 OPTIONAL_PACKAGES = {
     "xgboost": "xgboost",
