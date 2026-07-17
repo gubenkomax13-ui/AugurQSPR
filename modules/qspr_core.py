@@ -2087,7 +2087,7 @@ def qspr_calc_xtb_descriptors_dataframe(
 
     data_for_xtb = data.copy()
     if "row_position" not in data_for_xtb.columns:
-        data_for_xtb["row_position"] = np.arange(len(data_for_xtb), dtype=int)
+        data_for_xtb["row_position"] = list(data_for_xtb.index)
     if "source_index" not in data_for_xtb.columns:
         data_for_xtb["source_index"] = list(data_for_xtb.index)
 

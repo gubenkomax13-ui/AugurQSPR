@@ -5147,7 +5147,7 @@ def qspr_connect_spectral_descriptors_to_session(
 def _qspr_descriptor_table_row_positions(work, source_name):
     if work is None or not isinstance(work, pd.DataFrame) or work.empty:
         return pd.Series(dtype="Int64")
-    for column in ("row_position", "_original_index", "row_index"):
+    for column in ("_original_index", "row_index", "row_position"):
         if column in work.columns:
             values = pd.to_numeric(work[column], errors="coerce")
             if values.notna().all():

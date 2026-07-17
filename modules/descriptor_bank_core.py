@@ -363,6 +363,7 @@ def descriptor_bank_append(
         target_col,
         "_original_index",
         "row_index",
+        "row_position",
         "bank_key_status",
     ]
 
