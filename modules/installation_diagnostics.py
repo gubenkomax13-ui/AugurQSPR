@@ -144,13 +144,11 @@ def _kaleido_functional() -> tuple[bool, str]:
 
 
 def _pysr_functional(julia_ok: bool) -> tuple[bool, str]:
+    if importlib.util.find_spec("pysr") is None:
+        return False, "pysr module spec not found"
     if not julia_ok:
         return False, "Julia is required for PySR"
-    try:
-        import pysr  # noqa: F401
-        return True, "pysr import and Julia executable found"
-    except Exception as exc:
-        return False, str(exc)
+    return True, "pysr package found and Julia executable found; import is skipped to avoid starting Julia during diagnostics"
 
 
 def _combined_status(import_ok: bool, functional_ok: bool | None) -> InstallStatusCode:
@@ -173,7 +171,9 @@ def collect_installation_diagnostics() -> list[InstallationDiagnostic]:
     mordred_import, mordred_import_status, mordred_import_details = _module_import_status("mordred")
     kaleido_import, kaleido_import_status, kaleido_import_details = _module_import_status("kaleido")
     kaleido_func, kaleido_func_details = _kaleido_functional() if kaleido_import else (False, kaleido_import_details or "kaleido is not importable")
-    pysr_import, pysr_import_status, pysr_import_details = _module_import_status("pysr")
+    pysr_import = importlib.util.find_spec("pysr") is not None
+    pysr_import_status = "ok" if pysr_import else "not_installed"
+    pysr_import_details = "" if pysr_import else "module spec not found"
     pysr_func, pysr_func_details = _pysr_functional(julia_ok) if pysr_import else (False, pysr_import_details or "pysr is not importable")
     xtb_import, xtb_import_status, xtb_import_details = _module_import_status("xtb")
     xtb_func, xtb_func_details = _xtb_functional() if xtb_import else (False, xtb_import_details or "xtb Python package is not importable")

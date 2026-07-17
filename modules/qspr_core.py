@@ -23,6 +23,7 @@ import re
 import uuid
 import hashlib
 import shutil
+import importlib.util
 from datetime import datetime
 from pathlib import Path
 from sklearn.svm import SVR
@@ -202,13 +203,13 @@ except Exception as exc:
 pysr_available = False
 pysr_status = _optional_dependency_status("pysr", RuntimeError("not checked"))
 
-try:
-    from pysr import PySRRegressor
+pysr_spec = importlib.util.find_spec("pysr")
+if pysr_spec is not None:
     pysr_available = True
     pysr_status = _optional_dependency_status("pysr")
-except Exception as exc:
+else:
     pysr_available = False
-    pysr_status = _optional_dependency_status("pysr", exc)
+    pysr_status = _optional_dependency_status("pysr", ModuleNotFoundError("pysr"))
 
 xtb_python_available = False
 xtb_python_status = _optional_dependency_status("xtb", RuntimeError("not checked"))
@@ -589,7 +590,7 @@ def qspr_clean_numeric_dataframe(df, return_report=False):
     initial_columns = list(df.columns)
     work = df.copy()
     parse_reports = []
-    quality_flags = pd.DataFrame(index=work.index)
+    quality_flag_columns = {}
 
     for col in work.columns:
         parsed = qspr_parse_numeric_series(work[col])
@@ -598,12 +599,13 @@ def qspr_clean_numeric_dataframe(df, return_report=False):
         parse_reports.append(parsed)
         work[col] = parsed["value"]
         col_name = str(col)
-        quality_flags[f"{col_name}__missing_original"] = parsed["status"].eq("missing")
-        quality_flags[f"{col_name}__positive_infinity"] = parsed["status"].eq("positive_infinity")
-        quality_flags[f"{col_name}__negative_infinity"] = parsed["status"].eq("negative_infinity")
-        quality_flags[f"{col_name}__calculation_failed"] = parsed["status"].eq("calculation_failed")
-        quality_flags[f"{col_name}__censored"] = parsed["status"].eq("censored")
-        quality_flags[f"{col_name}__parse_failed"] = parsed["status"].eq("parse_failed")
+        status = parsed["status"]
+        quality_flag_columns[f"{col_name}__missing_original"] = status.eq("missing")
+        quality_flag_columns[f"{col_name}__positive_infinity"] = status.eq("positive_infinity")
+        quality_flag_columns[f"{col_name}__negative_infinity"] = status.eq("negative_infinity")
+        quality_flag_columns[f"{col_name}__calculation_failed"] = status.eq("calculation_failed")
+        quality_flag_columns[f"{col_name}__censored"] = status.eq("censored")
+        quality_flag_columns[f"{col_name}__parse_failed"] = status.eq("parse_failed")
 
     all_nan_cols = [col for col in work.columns if work[col].isna().all()]
     non_numeric_cols = []
@@ -651,7 +653,13 @@ def qspr_clean_numeric_dataframe(df, return_report=False):
         work.attrs["numeric_quality_report"] = pd.concat(parse_reports, axis=0)
     else:
         work.attrs["numeric_quality_report"] = pd.DataFrame()
-    work.attrs["numeric_quality_flags"] = quality_flags
+    if quality_flag_columns:
+        work.attrs["numeric_quality_flags"] = pd.DataFrame(
+            quality_flag_columns,
+            index=work.index,
+        )
+    else:
+        work.attrs["numeric_quality_flags"] = pd.DataFrame(index=work.index)
     work.attrs["cleaning_report"] = cleaning_report
 
     if return_report:
@@ -3510,6 +3518,8 @@ def qspr_create_regression_model(
             raise ValueError(
                 "PySR недоступен. Установите пакет pysr и настройте Julia."
             )
+
+        from pysr import PySRRegressor
 
         return PySRRegressor(
             niterations=int(p["pysr_niterations"]),
