@@ -43,6 +43,30 @@ st.set_page_config(
 )
 
 
+def _repair_stale_streamlit_widget_state():
+    """Drop orphaned internal Streamlit widget ids left after UI/env restarts."""
+    try:
+        from streamlit.runtime.state.session_state_proxy import get_session_state
+
+        raw_state = getattr(get_session_state(), "_state", None)
+        if raw_state is None:
+            return
+
+        for attr_name in ("_old_state", "_new_session_state"):
+            state_dict = getattr(raw_state, attr_name, None)
+            if not isinstance(state_dict, dict):
+                continue
+
+            for key in list(state_dict.keys()):
+                if str(key).startswith("$$WIDGET_ID-"):
+                    state_dict.pop(key, None)
+    except Exception:
+        pass
+
+
+_repair_stale_streamlit_widget_state()
+
+
 def _patch_streamlit_width_stretch_compat():
     """Streamlit 1.36 does not accept width='stretch'; map it to use_container_width."""
     for attr_name in ("dataframe", "data_editor"):
