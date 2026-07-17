@@ -11,7 +11,13 @@ from modules.advanced_validation_ui import render_advanced_validation_section
 from modules.analysis_state import analysis_result_hash, attach_result_cache_metadata, cached_result_is_current
 from modules.i18n import t
 from modules.module_explain_ui import render_module_explanation
-from modules.qspr_core import qspr_csv_download_bytes
+from modules.qspr_core import (
+    qspr_csv_download_bytes,
+    qspr_external_validation_simulator,
+    qspr_holdout_validation,
+    qspr_kfold_validation,
+    qspr_loo_validation,
+)
 
 
 def _fmt_validation_metric(value, digits=3):
