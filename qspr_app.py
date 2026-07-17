@@ -16134,7 +16134,7 @@ else:
                     xtb_conformer_mode = st.selectbox(
                         t("descriptor_settings.xtb_conformer_mode"),
                         ["fast", "standard", "ensemble"],
-                        index=1,
+                        index=0,
                         format_func=lambda value: {
                             "fast": t("descriptor_settings.xtb_conformer_fast"),
                             "standard": t("descriptor_settings.xtb_conformer_standard"),
@@ -16147,7 +16147,7 @@ else:
                         t("descriptor_settings.xtb_conformer_count"),
                         min_value=1,
                         max_value=50,
-                        value=20,
+                        value=1,
                         step=1,
                         key="xtb_conformer_count",
                     )
@@ -16468,14 +16468,11 @@ if (
                         update_overall_descriptor_progress(t('descriptor_calc.source_molecular'))
 
                     if use_xtb_descriptors_source:
-                        if not bool(getattr(qspr_core, "xtb_python_available", xtb_python_available)):
-                            st.error(t('descriptor_calc.error_xtb_not_available'))
-                            st.stop()
-
                         xtb_max_molecules = None if int(xtb_limit) <= 0 else int(xtb_limit)
 
                         use_descriptor_bank = bool(st.session_state.get("use_descriptor_bank", True))
                         save_descriptor_bank = bool(st.session_state.get("save_descriptor_bank", True))
+                        xtb_can_calculate = bool(getattr(qspr_core, "xtb_python_available", xtb_python_available))
 
                         xtb_use_bank_default_profile = (
                             use_descriptor_bank
@@ -16521,50 +16518,56 @@ if (
                             calculated_xtb_report = {}
 
                             if not xtb_missing_df.empty:
-                                with st.spinner(t('descriptor_calc.spinner_xtb_missing')):
-                                    calculated_xtb_df, calculated_xtb_report = qspr_core.qspr_calc_xtb_descriptors_dataframe(
-                                        data=xtb_missing_df,
-                                        smiles_col=smiles_col_current,
-                                        target_col=target_col,
-                                        method=xtb_method,
-                                        charge=int(xtb_charge),
-                                        uhf=int(xtb_uhf),
-                                        accuracy=float(xtb_accuracy),
-                                        electronic_temperature=float(xtb_etemp),
-                                        max_iterations=int(xtb_max_iter),
-                                        random_seed=1,
-                                        conformer_mode=str(xtb_conformer_mode),
-                                        conformer_count=int(xtb_conformer_count),
-                                        max_embed_attempts=int(xtb_max_embed_attempts),
-                                        optimize_with_rdkit=bool(xtb_optimize_rdkit),
-                                        max_molecules=None,
-                                    )
-
-                                if save_descriptor_bank and calculated_xtb_df is not None and not calculated_xtb_df.empty:
-                                    try:
-                                        calculated_xtb_df["descriptor_profile"] = "default"
-                                        calculated_xtb_df["xtb_method"] = str(xtb_method)
-                                        calculated_xtb_df["xtb_charge_setting"] = int(xtb_charge)
-                                        calculated_xtb_df["xtb_uhf_setting"] = int(xtb_uhf)
-                                        calculated_xtb_df["xtb_accuracy_setting"] = float(xtb_accuracy)
-                                        calculated_xtb_df["xtb_electronic_temperature_setting"] = float(xtb_etemp)
-                                        calculated_xtb_df["xtb_conformer_mode_setting"] = str(xtb_conformer_mode)
-                                        calculated_xtb_df["xtb_conformer_count_setting"] = int(xtb_conformer_count)
-                                        calculated_xtb_df["xtb_max_embed_attempts_setting"] = int(xtb_max_embed_attempts)
-                                        calculated_xtb_df["xtb_max_iterations_setting"] = int(xtb_max_iter)
-                                        calculated_xtb_df["xtb_rdkit_optimize_setting"] = bool(xtb_optimize_rdkit)
-                                        calculated_xtb_df["xtb_random_seed_setting"] = 1
-
-                                        descriptor_bank_core.descriptor_bank_append(
-                                            desc_df=calculated_xtb_df,
-                                            descriptor_family="quantum",
-                                            descriptor_source="xtb",
-                                            descriptor_profile="default",
+                                if xtb_can_calculate:
+                                    with st.spinner(t('descriptor_calc.spinner_xtb_missing')):
+                                        calculated_xtb_df, calculated_xtb_report = qspr_core.qspr_calc_xtb_descriptors_dataframe(
+                                            data=xtb_missing_df,
+                                            smiles_col=smiles_col_current,
                                             target_col=target_col,
+                                            method=xtb_method,
+                                            charge=int(xtb_charge),
+                                            uhf=int(xtb_uhf),
+                                            accuracy=float(xtb_accuracy),
+                                            electronic_temperature=float(xtb_etemp),
+                                            max_iterations=int(xtb_max_iter),
+                                            random_seed=1,
+                                            conformer_mode=str(xtb_conformer_mode),
+                                            conformer_count=int(xtb_conformer_count),
+                                            max_embed_attempts=int(xtb_max_embed_attempts),
+                                            optimize_with_rdkit=bool(xtb_optimize_rdkit),
+                                            max_molecules=None,
                                         )
-                                        st.success(t('descriptor_calc.xtb_bank_success'))
-                                    except Exception as e:
-                                        st.warning(t('descriptor_calc.xtb_bank_error', error=e))
+
+                                    if save_descriptor_bank and calculated_xtb_df is not None and not calculated_xtb_df.empty:
+                                        try:
+                                            calculated_xtb_df["descriptor_profile"] = "default"
+                                            calculated_xtb_df["xtb_method"] = str(xtb_method)
+                                            calculated_xtb_df["xtb_charge_setting"] = int(xtb_charge)
+                                            calculated_xtb_df["xtb_uhf_setting"] = int(xtb_uhf)
+                                            calculated_xtb_df["xtb_accuracy_setting"] = float(xtb_accuracy)
+                                            calculated_xtb_df["xtb_electronic_temperature_setting"] = float(xtb_etemp)
+                                            calculated_xtb_df["xtb_conformer_mode_setting"] = str(xtb_conformer_mode)
+                                            calculated_xtb_df["xtb_conformer_count_setting"] = int(xtb_conformer_count)
+                                            calculated_xtb_df["xtb_max_embed_attempts_setting"] = int(xtb_max_embed_attempts)
+                                            calculated_xtb_df["xtb_max_iterations_setting"] = int(xtb_max_iter)
+                                            calculated_xtb_df["xtb_rdkit_optimize_setting"] = bool(xtb_optimize_rdkit)
+                                            calculated_xtb_df["xtb_random_seed_setting"] = 1
+
+                                            descriptor_bank_core.descriptor_bank_append(
+                                                desc_df=calculated_xtb_df,
+                                                descriptor_family="quantum",
+                                                descriptor_source="xtb",
+                                                descriptor_profile="default",
+                                                target_col=target_col,
+                                            )
+                                            st.success(t('descriptor_calc.xtb_bank_success'))
+                                        except Exception as e:
+                                            st.warning(t('descriptor_calc.xtb_bank_error', error=e))
+                                else:
+                                    st.warning(
+                                        "xTB выбран, но xtb-python не доступен. Используем только готовые xTB-дескрипторы из банка; "
+                                        "строки без готового xTB будут исключены из итоговой матрицы."
+                                    )
 
                             if cached_xtb_df is not None and not cached_xtb_df.empty:
                                 cached_xtb_df = descriptor_bank_core.descriptor_bank_attach_target(
@@ -16599,6 +16602,13 @@ if (
                             else:
                                 xtb_df = pd.DataFrame()
                                 xtb_report = {"descriptor_bank": bank_report}
+
+                            if xtb_df.empty:
+                                st.error(
+                                    "xTB выбран, но для текущего датасета нет готовых xTB-дескрипторов в банке, "
+                                    "а xtb-python в текущем окружении недоступен для досчёта."
+                                )
+                                st.stop()
 
                             st.session_state.xtb_descriptors_df = xtb_df
                             st.session_state.xtb_descriptors_report = xtb_report
@@ -16658,6 +16668,10 @@ if (
                             update_overall_descriptor_progress(t('descriptor_calc.source_xtb'))
 
                         else:
+                            if not xtb_can_calculate:
+                                st.error(t('descriptor_calc.error_xtb_not_available'))
+                                st.stop()
+
                             with st.spinner(t('descriptor_calc.spinner_xtb_calculating')):
                                 xtb_df, xtb_report = qspr_core.qspr_calc_xtb_descriptors_dataframe(
                                     data=xtb_input_data,
