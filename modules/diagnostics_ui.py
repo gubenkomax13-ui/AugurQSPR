@@ -8,6 +8,13 @@ import re
 import streamlit as st
 
 from modules.error_analysis_core import error_analysis_structural_annotations
+from modules.descriptor_importance_core import (
+    descriptor_coefficient_importance,
+    descriptor_grouped_permutation_importance,
+    descriptor_native_importance,
+    descriptor_permutation_importance,
+    descriptor_unified_importance_table,
+)
 from modules.i18n import t
 from modules.module_explain_ui import render_module_explanation
 
