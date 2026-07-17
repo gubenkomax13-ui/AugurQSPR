@@ -5174,6 +5174,357 @@ def qspr_descriptor_row_set(df, source_name):
     }
 
 
+def qspr_spectral_ready_defaults_for_type(spectrum_type_name):
+    spectrum_type_name = spectra_core_module.spectra_normalize_spectrum_type(spectrum_type_name)
+
+    if spectrum_type_name == "Mass":
+        return {
+            "wn_min": 1,
+            "wn_max": 300,
+            "wn_step": 1,
+            "normalization": "sum",
+            "invert_signal": False,
+            "binary_window": 2,
+            "binary_threshold": 0.10,
+            "numeric_window": 10,
+            "svd_components": 20,
+            "axis_label": t("spectra_desc.axis_label_mass"),
+            "window_unit": t("spectra_desc.window_unit_mass"),
+        }
+
+    return {
+        "wn_min": 550,
+        "wn_max": 3798,
+        "wn_step": 4,
+        "normalization": "sum",
+        "invert_signal": False,
+        "binary_window": 20,
+        "binary_threshold": 0.10,
+        "numeric_window": 100,
+        "svd_components": 20,
+        "axis_label": t("spectra_desc.axis_label_ir"),
+        "window_unit": t("spectra_desc.window_unit_ir"),
+    }
+
+
+def qspr_prepare_spectral_df_for_merge(df, spectrum_type_name):
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+
+    key_cols = [
+        c for c in [
+            "row_index",
+            "compound_id",
+            "name",
+            "input_smiles",
+            "canonical_smiles",
+            "inchikey",
+        ]
+        if c in df.columns
+    ]
+    descriptor_prefixes = (
+        f"{spectrum_type_name}_GRID_",
+        f"{spectrum_type_name}_BIN_",
+        f"{spectrum_type_name}_BAND_",
+        f"{spectrum_type_name}_SVD_",
+    )
+    rename_cols = {
+        col: f"{spectrum_type_name}_{col}"
+        for col in df.columns
+        if col not in key_cols
+        and not any(str(col).startswith(prefix) for prefix in descriptor_prefixes)
+    }
+
+    return df.rename(columns=rename_cols)
+
+
+def qspr_add_spectral_sparring_columns(descriptors_df):
+    if descriptors_df is None or not isinstance(descriptors_df, pd.DataFrame) or descriptors_df.empty:
+        return descriptors_df
+    if "inchikey" not in descriptors_df.columns:
+        return descriptors_df
+
+    molwt_rows = []
+
+    for _, row_desc in descriptors_df.iterrows():
+        smi = str(row_desc.get("canonical_smiles", "")).strip()
+        molwt = np.nan
+        exact_molwt = np.nan
+
+        try:
+            mol = Chem.MolFromSmiles(smi)
+
+            if mol is not None:
+                from rdkit.Chem import Descriptors
+
+                molwt = float(Descriptors.MolWt(mol))
+                exact_molwt = float(Descriptors.ExactMolWt(mol))
+        except Exception:
+            pass
+
+        molwt_rows.append({
+            "inchikey": row_desc.get("inchikey", ""),
+            "spectral_sparring_MolWt": molwt,
+            "spectral_sparring_ExactMolWt": exact_molwt,
+        })
+
+    molwt_df = pd.DataFrame(molwt_rows)
+
+    return descriptors_df.merge(
+        molwt_df,
+        on="inchikey",
+        how="left",
+    )
+
+
+def qspr_auto_calculate_spectral_descriptors_for_dataset(
+    current_df,
+    smiles_col_current,
+    progress_callback=None,
+):
+    descriptor_spectrum_selection = str(
+        st.session_state.get("spectral_descriptor_type", "IR")
+    ).strip() or "IR"
+    descriptor_spectrum_types = (
+        ["IR", "Mass"]
+        if descriptor_spectrum_selection == "IR + Mass"
+        else [descriptor_spectrum_selection]
+    )
+    descriptor_spectrum_label = (
+        "IR + Mass"
+        if len(descriptor_spectrum_types) > 1
+        else spectra_core_module.spectra_normalize_spectrum_type(descriptor_spectrum_types[0])
+    )
+
+    phase_mode_label = str(st.session_state.get("spectral_phase_mode_label", "")).strip()
+    phase_mode_map = {
+        t("spectra_desc.phase_prefer_gas"): "prefer_gas",
+        t("spectra_desc.phase_only_gas"): "only_gas",
+        t("spectra_desc.phase_any_active"): "any",
+        t("spectra_desc.phase_manual"): "manual",
+    }
+    spectral_phase_mode = phase_mode_map.get(phase_mode_label, "only_gas")
+    allowed_phases_for_desc = ["gas"] if spectral_phase_mode == "only_gas" else None
+    if spectral_phase_mode == "any":
+        spectral_phase_mode = "manual"
+        allowed_phases_for_desc = None
+    elif spectral_phase_mode == "manual":
+        phase_checkbox_options = [
+            "gas",
+            "liquid",
+            "solid",
+            "solution",
+            "film",
+            "kbr",
+            "nujol",
+            "unknown",
+        ]
+        allowed_phases_for_desc = [
+            phase_value
+            for phase_value in phase_checkbox_options
+            if bool(st.session_state.get(f"spectral_allowed_phase_checkbox_{phase_value}_manual", False))
+        ]
+        if not allowed_phases_for_desc:
+            allowed_phases_for_desc = ["gas"]
+
+    selected_sources_for_desc = st.session_state.get("spectral_selected_sources_for_desc", None)
+    selected_intensity_types_for_desc = st.session_state.get("spectral_selected_intensity_types_for_desc", None)
+    if selected_sources_for_desc == ["unknown"]:
+        selected_sources_for_desc = None
+    if selected_intensity_types_for_desc == ["unknown"]:
+        selected_intensity_types_for_desc = None
+    experimental_only_for_desc = bool(st.session_state.get("spectral_experimental_only_for_desc", True))
+    prefer_quantitative_for_desc = bool(st.session_state.get("spectral_prefer_quantitative_for_desc", False))
+
+    selected_descriptor_configs = []
+
+    for spectrum_type_name in descriptor_spectrum_types:
+        prefix_label = spectra_core_module.spectra_normalize_spectrum_type(spectrum_type_name)
+        defaults = qspr_spectral_ready_defaults_for_type(prefix_label)
+        key_prefix = prefix_label.lower()
+
+        cfg = {
+            "spectrum_type": prefix_label,
+            "wn_min": int(st.session_state.get(f"{key_prefix}_desc_axis_min", defaults["wn_min"])),
+            "wn_max": int(st.session_state.get(f"{key_prefix}_desc_axis_max", defaults["wn_max"])),
+            "wn_step": int(st.session_state.get(f"{key_prefix}_desc_axis_step", defaults["wn_step"])),
+            "normalization": str(st.session_state.get(f"{key_prefix}_desc_normalization", defaults["normalization"])),
+            "invert_signal": bool(st.session_state.get(f"{key_prefix}_desc_invert_signal", defaults["invert_signal"])),
+            "use_grid": bool(st.session_state.get(f"{key_prefix}_ready_desc_use_grid", True)),
+            "use_binary": bool(st.session_state.get(f"{key_prefix}_ready_desc_use_binary", True)),
+            "use_bands": bool(st.session_state.get(f"{key_prefix}_ready_desc_use_bands", True)),
+            "use_svd": bool(st.session_state.get(f"{key_prefix}_ready_desc_use_svd", True)),
+            "binary_window": int(st.session_state.get(f"{key_prefix}_desc_binary_window", defaults["binary_window"])),
+            "binary_threshold": float(st.session_state.get(f"{key_prefix}_desc_binary_threshold", defaults["binary_threshold"])),
+            "numeric_window": int(st.session_state.get(f"{key_prefix}_desc_numeric_window", defaults["numeric_window"])),
+            "svd_components": int(st.session_state.get(f"{key_prefix}_desc_svd_components", defaults["svd_components"])),
+            "axis_label": defaults["axis_label"],
+        }
+        selected_descriptor_configs.append(cfg)
+
+    def run_one_spectral_descriptor_builder(cfg):
+        def update_typed_progress(current, total, stage, payload):
+            if progress_callback is None:
+                return
+            payload = dict(payload or {})
+            payload["spectrum_type"] = cfg["spectrum_type"]
+            progress_callback(current, total, stage, payload)
+
+        return spectra_core_module.spectral_build_descriptors_for_dataset(
+            input_df=current_df,
+            smiles_col=smiles_col_current,
+            spectrum_type=cfg["spectrum_type"],
+            wn_min=cfg["wn_min"],
+            wn_max=cfg["wn_max"],
+            step=cfg["wn_step"],
+            normalization=cfg["normalization"],
+            invert_signal=cfg["invert_signal"],
+            use_grid=cfg["use_grid"],
+            use_binary_fp=cfg["use_binary"],
+            use_binned_numeric=cfg["use_bands"],
+            binary_window=cfg["binary_window"],
+            binary_threshold=cfg["binary_threshold"],
+            numeric_window=cfg["numeric_window"],
+            use_svd=cfg["use_svd"],
+            svd_components=cfg["svd_components"],
+            spectrum_phase_mode=spectral_phase_mode,
+            allowed_phases=allowed_phases_for_desc,
+            allowed_sources=selected_sources_for_desc,
+            allowed_intensity_types=selected_intensity_types_for_desc,
+            prefer_quantitative=prefer_quantitative_for_desc,
+            experimental_only=experimental_only_for_desc,
+            progress_callback=update_typed_progress,
+        )
+
+    if len(selected_descriptor_configs) == 1:
+        descriptors_df, spectral_report = run_one_spectral_descriptor_builder(
+            selected_descriptor_configs[0]
+        )
+    else:
+        partial_results = []
+        partial_reports = {}
+
+        for cfg in selected_descriptor_configs:
+            part_df, part_report = run_one_spectral_descriptor_builder(cfg)
+            partial_reports[cfg["spectrum_type"]] = part_report
+            partial_results.append(
+                (
+                    cfg["spectrum_type"],
+                    qspr_prepare_spectral_df_for_merge(part_df, cfg["spectrum_type"]),
+                )
+            )
+
+        key_cols = [
+            "row_index",
+            "compound_id",
+            "name",
+            "input_smiles",
+            "canonical_smiles",
+            "inchikey",
+        ]
+        descriptors_df = None
+
+        for _, part_df in partial_results:
+            if part_df is None or part_df.empty:
+                descriptors_df = pd.DataFrame()
+                break
+
+            merge_keys = [
+                c for c in key_cols
+                if c in part_df.columns
+                and (
+                    descriptors_df is None
+                    or c in descriptors_df.columns
+                )
+            ]
+
+            if descriptors_df is None:
+                descriptors_df = part_df.copy()
+            else:
+                descriptors_df = descriptors_df.merge(
+                    part_df,
+                    on=merge_keys,
+                    how="inner",
+                )
+
+        if descriptors_df is None:
+            descriptors_df = pd.DataFrame()
+
+        first_report = next(iter(partial_reports.values()), {})
+        spectral_report = {
+            "total_compounds": int(first_report.get("total_compounds", len(current_df))),
+            "with_spectrum": int(len(descriptors_df)),
+            "without_spectrum": max(
+                int(first_report.get("total_compounds", len(current_df))) - int(len(descriptors_df)),
+                0,
+            ),
+            "parse_errors": sum(int(r.get("parse_errors", 0)) for r in partial_reports.values()),
+            "used_spectra": [],
+            "used_phases": {},
+            "spectrum_selection_reasons": {},
+            "descriptor_cache_hits": sum(int(r.get("descriptor_cache_hits", 0)) for r in partial_reports.values()),
+            "descriptor_cache_misses": sum(int(r.get("descriptor_cache_misses", 0)) for r in partial_reports.values()),
+            "ready_descriptor_mode": False,
+            "combined_spectrum_types": list(partial_reports.keys()),
+            "combined_intersection_only": True,
+            "partial_reports": partial_reports,
+            "spectra_bank_status": first_report.get("spectra_bank_status", {}),
+        }
+
+        for spectrum_type_name, part_report in partial_reports.items():
+            spectral_report["used_spectra"].extend(part_report.get("used_spectra", []))
+
+            for phase_key, phase_count in part_report.get("used_phases", {}).items():
+                spectral_report["used_phases"][f"{spectrum_type_name}: {phase_key}"] = int(phase_count)
+
+            for reason_key, reason_count in part_report.get("spectrum_selection_reasons", {}).items():
+                spectral_report["spectrum_selection_reasons"][f"{spectrum_type_name}: {reason_key}"] = int(reason_count)
+
+    add_sparring_columns = bool(
+        st.session_state.get(
+            f"{spectra_core_module.spectra_normalize_spectrum_type(descriptor_spectrum_types[0]).lower()}_desc_add_sparring_columns",
+            True,
+        )
+    )
+    if add_sparring_columns and descriptors_df is not None and not descriptors_df.empty:
+        descriptors_df = qspr_add_spectral_sparring_columns(descriptors_df)
+        spectral_report["sparring_columns_added"] = True
+        spectral_report["sparring_columns"] = [
+            "spectral_sparring_MolWt",
+            "spectral_sparring_ExactMolWt",
+        ]
+    else:
+        spectral_report["sparring_columns_added"] = False
+
+    primary_config = selected_descriptor_configs[0]
+    spectral_report["descriptor_method_mode"] = str(
+        st.session_state.get("spectral_descriptor_method_mode", t("spectra_desc.mode_vazhev"))
+    )
+    spectral_report["descriptor_spectrum_type"] = descriptor_spectrum_label
+    spectral_report["descriptor_type_configs"] = {
+        cfg["spectrum_type"]: cfg for cfg in selected_descriptor_configs
+    }
+    spectral_report["axis_min"] = float(primary_config["wn_min"])
+    spectral_report["axis_max"] = float(primary_config["wn_max"])
+    spectral_report["axis_step"] = float(primary_config["wn_step"])
+    spectral_report["axis_label"] = primary_config["axis_label"]
+    spectral_report["normalization"] = primary_config["normalization"]
+    spectral_report["invert_signal"] = bool(primary_config["invert_signal"])
+    spectral_report["descriptor_input_mode"] = "spectra_bank_processed"
+
+    st.session_state.spectral_descriptors_df = descriptors_df
+    st.session_state.spectral_descriptors_report = spectral_report
+    st.session_state.keep_spectra_expander_open = True
+
+    if descriptors_df is not None and isinstance(descriptors_df, pd.DataFrame) and not descriptors_df.empty:
+        st.session_state.spectral_descriptors_saved_path = spectra_core_module.spectral_save_descriptors(
+            descriptors_df,
+            spectrum_type=descriptor_spectrum_label,
+        )
+
+    return descriptors_df, spectral_report
+
+
 def qspr_build_descriptor_coverage_table(
     current_df,
     target_col,
@@ -14186,7 +14537,7 @@ def render_spectra_descriptor_workbench():
     st.markdown(t('spectra_desc.description'))
 
     spectral_admin_mode = is_admin()
-    spectrum_type_options = ["IR", "Mass"] if spectral_admin_mode else ["IR", "Mass", "IR + Mass"]
+    spectrum_type_options = ["IR", "Mass", "IR + Mass"]
     descriptor_spectrum_selection = st.selectbox(
         t('spectra_desc.spectrum_type_select'),
         spectrum_type_options,
@@ -14551,44 +14902,12 @@ def render_spectra_descriptor_workbench():
         default_use_bands = True
         default_use_svd = True
 
-    def spectral_ready_defaults_for_type(spectrum_type_name):
-        spectrum_type_name = spectra_core_module.spectra_normalize_spectrum_type(spectrum_type_name)
-
-        if spectrum_type_name == "Mass":
-            return {
-                "wn_min": 1,
-                "wn_max": 300,
-                "wn_step": 1,
-                "normalization": "sum",
-                "invert_signal": False,
-                "binary_window": 2,
-                "binary_threshold": 0.10,
-                "numeric_window": 10,
-                "svd_components": 20,
-                "axis_label": t('spectra_desc.axis_label_mass'),
-                "window_unit": t('spectra_desc.window_unit_mass'),
-            }
-
-        return {
-            "wn_min": 550,
-            "wn_max": 3798,
-            "wn_step": 4,
-            "normalization": "sum",
-            "invert_signal": False,
-            "binary_window": 20,
-            "binary_threshold": 0.10,
-            "numeric_window": 100,
-            "svd_components": 20,
-            "axis_label": t('spectra_desc.axis_label_ir'),
-            "window_unit": t('spectra_desc.window_unit_ir'),
-        }
-
     spectral_descriptor_configs = {}
     descriptor_section_start = 2
 
     for spectrum_type_idx, spectrum_type_name in enumerate(descriptor_spectrum_types):
         prefix_label = spectra_core_module.spectra_normalize_spectrum_type(spectrum_type_name)
-        type_defaults = spectral_ready_defaults_for_type(prefix_label)
+        type_defaults = qspr_spectral_ready_defaults_for_type(prefix_label)
         section_number = descriptor_section_start + spectrum_type_idx
 
         if spectral_admin_mode:
@@ -14962,36 +15281,6 @@ def render_spectra_descriptor_workbench():
                         progress_callback=update_typed_progress,
                     )
 
-                def prepare_spectral_df_for_merge(df, spectrum_type_name):
-                    if df is None or df.empty:
-                        return pd.DataFrame()
-
-                    key_cols = [
-                        c for c in [
-                            "row_index",
-                            "compound_id",
-                            "name",
-                            "input_smiles",
-                            "canonical_smiles",
-                            "inchikey",
-                        ]
-                        if c in df.columns
-                    ]
-                    descriptor_prefixes = (
-                        f"{spectrum_type_name}_GRID_",
-                        f"{spectrum_type_name}_BIN_",
-                        f"{spectrum_type_name}_BAND_",
-                        f"{spectrum_type_name}_SVD_",
-                    )
-                    rename_cols = {
-                        col: f"{spectrum_type_name}_{col}"
-                        for col in df.columns
-                        if col not in key_cols
-                        and not any(str(col).startswith(prefix) for prefix in descriptor_prefixes)
-                    }
-
-                    return df.rename(columns=rename_cols)
-
                 if len(selected_descriptor_configs) == 1:
                     descriptors_df, spectral_report = run_one_spectral_descriptor_builder(
                         selected_descriptor_configs[0]
@@ -15006,7 +15295,7 @@ def render_spectra_descriptor_workbench():
                         partial_results.append(
                             (
                                 cfg["spectrum_type"],
-                                prepare_spectral_df_for_merge(part_df, cfg["spectrum_type"]),
+                                qspr_prepare_spectral_df_for_merge(part_df, cfg["spectrum_type"]),
                             )
                         )
 
@@ -17036,6 +17325,55 @@ if (
                     )
                     spectral_source_label = t("descriptor_coverage.source_spectral")
                     spectral_df_for_coverage = st.session_state.get("spectral_descriptors_df")
+                    if use_spectral_descriptors_source:
+                        st.info("Спектральные дескрипторы выбраны: подключаем готовый банк и досчитываем недостающие спектры.")
+                        spectral_auto_progress_bar = st.progress(0.0)
+                        spectral_auto_progress_text = st.empty()
+
+                        def update_auto_spectral_progress(current, total, stage, payload):
+                            total = max(int(total or 0), 1)
+                            current = max(0, min(int(current or 0), total))
+                            spectral_auto_progress_bar.progress(current / total)
+                            payload = payload or {}
+                            spectrum_type_text = str(payload.get("spectrum_type", "spectral")).strip()
+                            inchikey_text = str(payload.get("inchikey", "")).strip()
+                            spectrum_id_text = str(payload.get("spectrum_id", "")).strip()
+                            stage_text = {
+                                "searching": "поиск спектра или готового дескриптора",
+                                "loading_spectrum": "чтение/загрузка спектра",
+                                "done": "готово",
+                                "no_spectrum": "спектр не найден",
+                                "parse_error": "ошибка разбора спектра",
+                                "empty_grid": "пустая сетка спектра",
+                            }.get(str(stage), "обработка")
+                            details = [x for x in [inchikey_text, spectrum_id_text] if x]
+                            suffix = " | " + " | ".join(details) if details else ""
+                            spectral_auto_progress_text.caption(
+                                f"{spectrum_type_text}: {stage_text} {current}/{total}{suffix}"
+                            )
+
+                        with st.spinner("Расчёт спектральных дескрипторов по готовому банку и недостающим спектрам..."):
+                            spectral_df_for_coverage, spectral_report_for_coverage = (
+                                qspr_auto_calculate_spectral_descriptors_for_dataset(
+                                    current_df=current_df,
+                                    smiles_col_current=smiles_col_current,
+                                    progress_callback=update_auto_spectral_progress,
+                                )
+                            )
+
+                        spectral_auto_progress_bar.progress(1.0)
+                        if (
+                            isinstance(spectral_df_for_coverage, pd.DataFrame)
+                            and not spectral_df_for_coverage.empty
+                        ):
+                            spectral_auto_progress_text.success(
+                                f"Спектральные дескрипторы готовы: {len(spectral_df_for_coverage)} строк."
+                            )
+                        else:
+                            spectral_auto_progress_text.warning(
+                                "Спектральные дескрипторы не удалось собрать для текущего датасета."
+                            )
+
                     if (
                         use_spectral_descriptors_source
                         and isinstance(spectral_df_for_coverage, pd.DataFrame)
