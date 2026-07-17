@@ -44,9 +44,12 @@ def _status_renderer(item):
         st.info(line)
 
 
-def render_installation_diagnostics_section():
+def render_installation_diagnostics_section(compact=False):
     """Render a standalone installation diagnostics page."""
-    st.header(t("installation_diagnostics.header"))
+    if compact:
+        st.subheader(t("installation_diagnostics.header"))
+    else:
+        st.header(t("installation_diagnostics.header"))
     st.caption(t("installation_diagnostics.caption"))
 
     diagnostics = collect_installation_diagnostics()
@@ -66,11 +69,11 @@ def render_installation_diagnostics_section():
     for item in diagnostics:
         _status_renderer(item)
 
-    with st.expander(t("installation_diagnostics.details"), expanded=True):
+    with st.expander(t("installation_diagnostics.details"), expanded=not compact):
         display = pd.DataFrame(rows)
         st.dataframe(display, width="stretch", hide_index=True)
 
-    with st.expander(t("installation_diagnostics.maturity_matrix"), expanded=True):
+    with st.expander(t("installation_diagnostics.maturity_matrix"), expanded=not compact):
         maturity = pd.DataFrame(MODULE_MATURITY_ROWS)
         st.dataframe(maturity, width="stretch", hide_index=True)
         st.download_button(

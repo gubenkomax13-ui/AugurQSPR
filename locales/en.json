@@ -1309,8 +1309,8 @@
   },
   "mode": {
     "select": "Select operating mode",
-    "qspr": "QSPR modelling of molecular properties",
-    "prediction": "Predict property for new compounds",
+    "qspr": "Modelling",
+    "prediction": "Prediction",
     "prediction_admin_only": "The \"Predict property for new compounds\" mode is available only in the local version.",
     "local_version_only": "This function is available only in the local Augur QSPR version."
   },
@@ -3701,6 +3701,8 @@
   "installation_diagnostics": {
     "header": "Installation diagnostics",
     "caption": "Import availability and lightweight functional checks are reported separately.",
+    "sidebar_toggle": "Show installation diagnostics",
+    "sidebar_expander": "Installation diagnostics",
     "details": "Details",
     "maturity_matrix": "Module maturity matrix",
     "download_maturity_csv": "Download maturity matrix CSV",

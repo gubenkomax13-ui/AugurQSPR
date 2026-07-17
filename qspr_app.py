@@ -8577,8 +8577,8 @@ if legacy_app_mode in legacy_qspr_labels:
 elif legacy_app_mode in legacy_prediction_labels:
     st.session_state["main_app_mode_code"] = "prediction"
 elif legacy_app_mode in legacy_install_diagnostics_labels:
-    st.session_state["main_app_mode_code"] = "install_diagnostics"
-elif legacy_app_mode not in {"qspr", "prediction", "install_diagnostics"}:
+    st.session_state["main_app_mode_code"] = "qspr"
+elif legacy_app_mode not in {"qspr", "prediction"}:
     st.session_state["main_app_mode_code"] = "qspr"
 else:
     st.session_state["main_app_mode_code"] = legacy_app_mode
@@ -8587,13 +8587,14 @@ if (not qspr_is_online_mode()) and not is_admin() and st.session_state.get("main
     show_admin_only_notice("prediction_mode")
     st.session_state["main_app_mode_code"] = "qspr"
 
-app_mode_options = ["qspr", "install_diagnostics"]
+app_mode_options = ["qspr"]
 if qspr_is_online_mode() or is_admin():
     app_mode_options.insert(1, "prediction")
 
 app_mode = st.radio(
     t('mode.select'),
     app_mode_options,
+    format_func=lambda code: t(f"mode.{code}"),
     horizontal=True,
     key="main_app_mode_code",
 )
@@ -8619,6 +8620,16 @@ with st.sidebar:
         set_language(lang)
         st.rerun()
     # --- конец переключателя ---
+
+    st.toggle(
+        t("installation_diagnostics.sidebar_toggle"),
+        value=False,
+        key="show_installation_diagnostics_panel",
+    )
+
+    if st.session_state.get("show_installation_diagnostics_panel", False):
+        with st.expander(t("installation_diagnostics.sidebar_expander"), expanded=True):
+            render_installation_diagnostics_section(compact=True)
 
     if app_mode == "qspr":
         padel_unique_count = len(qspr_core.qspr_load_padel_unique_from_file())
@@ -8700,10 +8711,6 @@ with st.sidebar:
             )
         else:
             st.session_state.show_data_bank_panel = False
-
-if app_mode == "install_diagnostics":
-    render_installation_diagnostics_section()
-    st.stop()
 
 if app_mode == "prediction" and qspr_is_online_mode():
     st.header(t('mode.prediction'))
