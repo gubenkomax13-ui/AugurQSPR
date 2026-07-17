@@ -6089,10 +6089,16 @@ def qspr_make_xtb_bundle_from_dataframe(xtb_df, target_col):
     if not descriptor_cols:
         raise ValueError(t('xtb.bundle_all_descriptors_empty', statuses=status_counts))
 
+    completeness_source = work.get(
+        "descriptor_completeness",
+        pd.Series(np.nan, index=work.index),
+    )
     completeness = pd.to_numeric(
-        work.get("descriptor_completeness", np.nan),
+        completeness_source,
         errors="coerce",
     )
+    if not isinstance(completeness, pd.Series):
+        completeness = pd.Series(completeness, index=work.index)
     if completeness.isna().all():
         completeness = work[descriptor_cols].notna().mean(axis=1)
     min_completeness = float(getattr(qspr_core, "XTB_MODEL_MIN_COMPLETENESS", 0.75))
