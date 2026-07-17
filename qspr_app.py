@@ -8571,14 +8571,28 @@ legacy_install_diagnostics_labels = {
     "Installation diagnostics",
     "Орнатуды диагностикалау",
 }
+legacy_install_diagnostics_labels.update(
+    load_language(lang).get("mode", {}).get("install_diagnostics")
+    for lang in ("ru", "en", "kk")
+)
+legacy_data_bank_labels = {
+    load_language(lang).get("mode", {}).get("data_bank")
+    for lang in ("ru", "en", "kk")
+}
+legacy_data_bank_labels.update(
+    load_language(lang).get("sidebar", {}).get("manage_data_bank")
+    for lang in ("ru", "en", "kk")
+)
 
 if legacy_app_mode in legacy_qspr_labels:
     st.session_state["main_app_mode_code"] = "qspr"
 elif legacy_app_mode in legacy_prediction_labels:
     st.session_state["main_app_mode_code"] = "prediction"
 elif legacy_app_mode in legacy_install_diagnostics_labels:
-    st.session_state["main_app_mode_code"] = "qspr"
-elif legacy_app_mode not in {"qspr", "prediction"}:
+    st.session_state["main_app_mode_code"] = "install_diagnostics"
+elif legacy_app_mode in legacy_data_bank_labels:
+    st.session_state["main_app_mode_code"] = "data_bank"
+elif legacy_app_mode not in {"qspr", "prediction", "install_diagnostics", "data_bank"}:
     st.session_state["main_app_mode_code"] = "qspr"
 else:
     st.session_state["main_app_mode_code"] = legacy_app_mode
@@ -8590,6 +8604,13 @@ if (not qspr_is_online_mode()) and not is_admin() and st.session_state.get("main
 app_mode_options = ["qspr"]
 if qspr_is_online_mode() or is_admin():
     app_mode_options.insert(1, "prediction")
+if st.session_state.get("show_installation_diagnostics_panel", False):
+    app_mode_options.insert(0, "install_diagnostics")
+if is_admin() and st.session_state.get("show_data_bank_panel", False):
+    app_mode_options.append("data_bank")
+
+if st.session_state.get("main_app_mode_code") not in app_mode_options:
+    st.session_state["main_app_mode_code"] = "qspr"
 
 app_mode = st.radio(
     t('mode.select'),
@@ -8628,8 +8649,16 @@ with st.sidebar:
     )
 
     if st.session_state.get("show_installation_diagnostics_panel", False):
-        with st.expander(t("installation_diagnostics.sidebar_expander"), expanded=True):
-            render_installation_diagnostics_section(compact=True)
+        st.caption(t("installation_diagnostics.sidebar_mode_hint"))
+
+    if is_admin():
+        st.toggle(
+            t('sidebar.show_data_bank'),
+            value=False,
+            key="show_data_bank_panel"
+        )
+    else:
+        st.session_state.show_data_bank_panel = False
 
     if app_mode == "qspr":
         padel_unique_count = len(qspr_core.qspr_load_padel_unique_from_file())
@@ -8701,20 +8730,21 @@ with st.sidebar:
             with st.expander(t('sidebar.show_log')):
                 show_logs()
 
-        st.divider()
-
-        if is_admin():
-            st.toggle(
-                t('sidebar.show_data_bank'),
-                value=False,
-                key="show_data_bank_panel"
-            )
-        else:
-            st.session_state.show_data_bank_panel = False
-
 if app_mode == "prediction" and qspr_is_online_mode():
     st.header(t('mode.prediction'))
     qspr_online_lock_notice("Standalone prediction and model package loading")
+    st.stop()
+
+if app_mode == "install_diagnostics":
+    render_installation_diagnostics_section()
+    st.stop()
+
+if app_mode == "data_bank":
+    if not is_admin():
+        show_admin_only_notice("data_bank")
+    else:
+        st.header(t("mode.data_bank"))
+        manage_data_bank()
     st.stop()
 
 if app_mode == "prediction":
@@ -8727,9 +8757,6 @@ st.markdown(t('data_upload.instruction'))
 st.header(t('data_prep.header'))
 render_module_explanation("data_preparation")
 st.caption(t('data_prep.caption'))
-if app_mode == "qspr" and is_admin() and st.session_state.get("show_data_bank_panel", False):
-    with st.expander(t('sidebar.manage_data_bank'), expanded=True):
-        manage_data_bank()
 
 # ------------------------------------------------------------------
 # Data upload

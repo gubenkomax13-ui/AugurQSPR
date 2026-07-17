@@ -1311,6 +1311,8 @@
     "select": "Select operating mode",
     "qspr": "Modelling",
     "prediction": "Prediction",
+    "install_diagnostics": "Installation diagnostics",
+    "data_bank": "Data bank management",
     "prediction_admin_only": "The \"Predict property for new compounds\" mode is available only in the local version.",
     "local_version_only": "This function is available only in the local Augur QSPR version."
   },
@@ -3703,6 +3705,7 @@
     "caption": "Import availability and lightweight functional checks are reported separately.",
     "sidebar_toggle": "Show installation diagnostics",
     "sidebar_expander": "Installation diagnostics",
+    "sidebar_mode_hint": "The Installation diagnostics item will appear in the top mode selector.",
     "details": "Details",
     "maturity_matrix": "Module maturity matrix",
     "download_maturity_csv": "Download maturity matrix CSV",
