@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from modules.i18n import t
+from modules.model_catalog import get_model_display_name, get_models_by_group
 from modules.module_explain_ui import render_module_explanation
 
 
@@ -24,7 +25,7 @@ def render_model_comparison_section(context):
     try:
         all_model_groups_for_compare = qspr_available_model_options()
     except Exception:
-        all_model_groups_for_compare = {}
+        all_model_groups_for_compare = get_models_by_group(include_unavailable=False)
     
     all_models_for_compare = []
     for _group_name, _models in all_model_groups_for_compare.items():
@@ -71,8 +72,13 @@ def render_model_comparison_section(context):
     safe_default_models = [m for m in safe_default_models if m in all_models_for_compare]
     
     if not all_models_for_compare:
-        st.warning(t('model_comparison.no_models_warning'))
-    else:
+        trained_models = st.session_state.get("trained_models", {}) or {}
+        if trained_models:
+            st.info(t('model_comparison.no_models_warning'))
+        else:
+            st.warning(t('model_comparison.no_models_warning'))
+
+    if all_models_for_compare:
         if online_light_mode:
             st.info(
                 t("model_comparison.online_light_info")
