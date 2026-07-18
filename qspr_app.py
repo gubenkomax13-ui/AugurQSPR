@@ -3065,12 +3065,14 @@ def qspr_make_dataset_passport_excel(
     output.seek(0)
     return output.getvalue()
 
+@st.cache_data(show_spinner=False, max_entries=16)
 def qspr_detect_data_leakage_columns(
     descriptor_cols,
     target_col,
     data=None,
     y=None,
-    correlation_threshold=0.995
+    correlation_threshold=0.995,
+    language_cache_key=None,
 ):
     """
     Ищет потенциальные колонки утечки данных.
@@ -3081,7 +3083,7 @@ def qspr_detect_data_leakage_columns(
     - числовая колонка почти полностью совпадает с y;
     - числовая колонка почти идеально коррелирует с y.
     """
-    descriptor_cols = list(descriptor_cols or [])
+    descriptor_cols = [] if descriptor_cols is None else list(descriptor_cols)
     target_col = str(target_col)
 
     target_lower = target_col.lower().strip()
@@ -3091,6 +3093,21 @@ def qspr_detect_data_leakage_columns(
         for ch in [" ", "_", "-", ".", "/", "\\", "(", ")", "[", "]", "{", "}", "%"]:
             x = x.replace(ch, "")
         return x
+
+    def name_tokens(name):
+        return {
+            normalize_name(part)
+            for part in re.split(r"[^0-9A-Za-zА-Яа-я]+", str(name).lower())
+            if normalize_name(part)
+        }
+
+    def token_matches_name(token, col_norm, col_tokens):
+        token_norm = normalize_name(token)
+        if not token_norm:
+            return False
+        if len(token_norm) <= 3:
+            return token_norm in col_tokens or col_norm == token_norm
+        return token_norm in col_tokens or token_norm in col_norm
 
     target_norm = normalize_name(target_col)
     target_name_can_match_inside = len(target_norm) >= 3
@@ -3142,6 +3159,7 @@ def qspr_detect_data_leakage_columns(
     rows = []
     y_series_for_leakage = None
     y_length_mismatch = False
+    numeric_descriptor_data = {}
     if data is not None and y is not None:
         try:
             y_values = np.asarray(y).reshape(-1)
@@ -3156,10 +3174,28 @@ def qspr_detect_data_leakage_columns(
         except Exception:
             y_series_for_leakage = None
 
+    if data is not None and y_series_for_leakage is not None:
+        existing_cols = [col for col in descriptor_cols if col in data.columns]
+        if existing_cols:
+            try:
+                numeric_frame = data.loc[:, existing_cols].apply(
+                    lambda series: pd.to_numeric(
+                        series.astype(str).str.replace(",", ".", regex=False),
+                        errors="coerce",
+                    )
+                )
+                numeric_descriptor_data = {
+                    col: numeric_frame[col]
+                    for col in numeric_frame.columns
+                }
+            except Exception:
+                numeric_descriptor_data = {}
+
     for col in descriptor_cols:
         col_str = str(col)
         col_lower = col_str.lower().strip()
         col_norm = normalize_name(col_str)
+        col_token_set = name_tokens(col_str)
 
         explicit_reasons = []
         possible_reasons = []
@@ -3176,13 +3212,11 @@ def qspr_detect_data_leakage_columns(
             possible_reasons.append(t('data_leakage.reason_contains_target'))
 
         for part in target_parts:
-            if part in col_lower or part in col_norm:
+            if token_matches_name(part, col_norm, col_token_set):
                 possible_reasons.append(t('data_leakage.reason_contains_part', part=part))
 
         for token in suspicious_tokens:
-            token_norm = normalize_name(token)
-
-            if token_norm and token_norm in col_norm:
+            if token_matches_name(token, col_norm, col_token_set):
                 possible_reasons.append(t('data_leakage.reason_suspicious_token', token=token))
 
         explicit_name_tokens = {
@@ -3208,13 +3242,9 @@ def qspr_detect_data_leakage_columns(
         if y_length_mismatch:
             possible_reasons.append("target length does not match data rows; leakage correlation check skipped")
 
-        if data is not None and y_series_for_leakage is not None and col in data.columns:
+        if y_series_for_leakage is not None and col in numeric_descriptor_data:
             try:
-                x = pd.to_numeric(
-                    data[col].astype(str).str.replace(",", ".", regex=False),
-                    errors="coerce"
-                )
-
+                x = numeric_descriptor_data[col]
                 y_series = y_series_for_leakage
 
                 mask = x.notna() & y_series.notna()
@@ -15895,7 +15925,8 @@ if descriptor_source_mode == "file":
         y=pd.to_numeric(
             data[target_col].astype(str).str.replace(",", ".", regex=False),
             errors="coerce"
-        )
+        ),
+        language_cache_key=st.session_state.get("lang", "ru"),
     )
 
     qspr_show_data_leakage_warning(
@@ -15916,7 +15947,8 @@ if descriptor_source_mode == "file":
                 y=pd.to_numeric(
                     data[target_col].astype(str).str.replace(",", ".", regex=False),
                     errors="coerce"
-                )
+                ),
+                language_cache_key=st.session_state.get("lang", "ru"),
             )
 
             if qspr_leakage_has_blockers(leakage_df):
@@ -17802,7 +17834,8 @@ with st.expander(t('incremental.expander_title'), expanded=False):
                         y=pd.to_numeric(
                             data[target_col].astype(str).str.replace(",", ".", regex=False),
                             errors="coerce"
-                        )
+                        ),
+                        language_cache_key=st.session_state.get("lang", "ru"),
                     )
 
                     if qspr_leakage_has_blockers(leakage_df):
@@ -18095,7 +18128,8 @@ try:
         descriptor_cols=desc_names_current,
         target_col=target_col,
         data=df_desc if isinstance(df_desc, pd.DataFrame) else None,
-        y=y_all
+        y=y_all,
+        language_cache_key=st.session_state.get("lang", "ru"),
     )
 
     has_leakage_blockers = qspr_leakage_has_blockers(leakage_df)
