@@ -18284,11 +18284,31 @@ corr_table = pd.DataFrame()
 
 mahal_message = None
 mahal_message_type = "info"
+descriptor_diagnostics_rows = int(getattr(X_all, "shape", [0, 0])[0] or 0)
+descriptor_diagnostics_features = int(getattr(X_all, "shape", [0, 0])[1] or 0)
+descriptor_diagnostics_is_heavy = (
+    descriptor_diagnostics_features > 500
+    or descriptor_diagnostics_features >= max(100, descriptor_diagnostics_rows * 2)
+)
+run_descriptor_diagnostics = True
+
+if descriptor_diagnostics_is_heavy:
+    st.info(
+        t(
+            "descriptor_diagnostics.deferred",
+            rows=descriptor_diagnostics_rows,
+            descriptors=descriptor_diagnostics_features,
+        )
+    )
+    run_descriptor_diagnostics = st.button(
+        t("descriptor_diagnostics.run_button"),
+        key="run_heavy_descriptor_diagnostics",
+    )
 
 # ------------------------------------------------------------
 # 1. Расчёт Махаланобиса
 
-if len(y_all) > X_all.shape[1] + 10:
+if run_descriptor_diagnostics and len(y_all) > X_all.shape[1] + 10:
     try:
         scaler_maha = StandardScaler()
         X_scaled_maha = scaler_maha.fit_transform(X_all)
@@ -18397,8 +18417,11 @@ if len(y_all) > X_all.shape[1] + 10:
     except Exception as e:
         mahal_message = t('mahalanobis.error', error=e)
         mahal_message_type = "warning"
-else:
+elif run_descriptor_diagnostics:
     mahal_message = t('mahalanobis.insufficient_data')
+    mahal_message_type = "info"
+else:
+    mahal_message = t("descriptor_diagnostics.deferred_short")
     mahal_message_type = "info"
 
 # ------------------------------------------------------------
@@ -18410,22 +18433,22 @@ y_series_for_corr = pd.Series(y_all).reset_index(drop=True)
 
 df_desc_corr = df_desc.copy().reset_index(drop=True)
 
-for col in df_desc_corr.columns:
-    try:
-        x = pd.to_numeric(df_desc_corr[col], errors="coerce")
-
-        valid_mask = x.notna() & y_series_for_corr.notna()
-
-        if valid_mask.sum() < 3:
-            continue
-
-        corr = x.loc[valid_mask].corr(y_series_for_corr.loc[valid_mask])
-
-        if np.isfinite(corr):
-            corr_values.append((col, abs(corr), corr))
-
-    except Exception:
-        pass
+if run_descriptor_diagnostics:
+    numeric_corr_frame = df_desc_corr.apply(pd.to_numeric, errors="coerce")
+    y_numeric_corr = pd.to_numeric(y_series_for_corr, errors="coerce")
+    valid_target_mask = y_numeric_corr.notna()
+    if valid_target_mask.sum() >= 3:
+        corr_series = numeric_corr_frame.loc[valid_target_mask].corrwith(
+            y_numeric_corr.loc[valid_target_mask],
+            axis=0,
+            method="pearson",
+        )
+        corr_series = corr_series.replace([np.inf, -np.inf], np.nan).dropna()
+        corr_values = [
+            (col, abs(float(corr)), float(corr))
+            for col, corr in corr_series.items()
+            if np.isfinite(corr)
+        ]
 
 corr_values.sort(key=lambda x: x[1], reverse=True)
 top_corr = corr_values[:20]

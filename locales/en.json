@@ -1908,7 +1908,10 @@
     "apply_removal": "Apply removal and rebuild descriptor bundle"
   },
   "descriptor_diagnostics": {
-    "title": "🩺 Descriptor diagnostics"
+    "title": "🩺 Descriptor diagnostics",
+    "deferred": "Large matrix: {rows} compounds x {descriptors} descriptors. Extended descriptor diagnostics is not started automatically to avoid freezing the page. Data leakage control has already run; diagnostics can be started manually.",
+    "deferred_short": "Extended diagnostics was skipped automatically for a large matrix.",
+    "run_button": "Run extended descriptor diagnostics"
   },
   "mahalanobis": {
     "help_title": "ℹ️ What is Mahalanobis distance?",
