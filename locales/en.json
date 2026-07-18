@@ -1518,7 +1518,7 @@
   },
   "saod_ui": {
     "tool_badge": "Tool",
-    "expander_title": "🌠 Structural assessment and data consistency control",
+    "expander_title": "🌠 SAOD (Structural assessment and data consistency control)",
     "description": "*SAOD* does not search for individual outliers by overall regression, but looks for internal structural and physicochemical patterns and consistent structural series within a compound set.",
     "source_radio": "Data source for *SAOD*",
     "source_main": "Use the main loaded dataset",
