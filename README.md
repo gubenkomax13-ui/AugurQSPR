@@ -115,6 +115,27 @@ Mordred и PaDEL используются для расширенных набо
 
 ## Run Locally
 
+Recommended full Windows setup:
+
+```bat
+setup_full.bat
+run_augur.bat
+```
+
+PowerShell alternative:
+
+```powershell
+.\setup_full.ps1
+.\run_augur.ps1
+```
+
+The full setup creates `.venv`, installs `requirements-full.txt`, prepares
+PySR/Juliacall on first import, and prints the number of model candidates seen
+by Augur. A complete local installation should report 25 available model
+candidates.
+
+Manual minimal setup:
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate

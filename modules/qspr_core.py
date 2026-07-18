@@ -24,7 +24,9 @@ import uuid
 import hashlib
 import shutil
 import importlib.util
+import time
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from sklearn.svm import SVR
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -266,6 +268,8 @@ DESCRIPTOR_MODE_LEGACY_ALIASES = {
     "👁️‍🗨️ Extended (Mordred)": "mordred",
     "⚙️ Extended (Mordred)": "mordred",
     "⚡ Smart (Mordred + unique PaDEL)": "mordred_padel_unique",
+    "⚡ Smart (unique Mordred + unique PaDEL)": "mordred_padel_unique",
+    "⚡ Умный (уникальные Mordred + уникальные PaDEL)": "mordred_padel_unique",
     "🎯 Maximum accuracy": "max_coverage",
     "max_accuracy": "max_coverage",
 }
@@ -949,7 +953,7 @@ def qspr_compute_descriptor_lists(probe_padel=False):
             calc = MordredCalculator(mordred_descriptors, ignore_3D=True)
 
             for desc in calc.descriptors:
-                name = getattr(desc, "name", str(desc))
+                name = qspr_mordred_descriptor_name(desc)
 
                 if name:
                     mordred_set.add(name)
@@ -1217,6 +1221,37 @@ def qspr_calc_rdkit_descriptors_filtered(mol, allowed_names=None):
     return desc_dict
 
 
+def qspr_mordred_descriptor_name(descriptor):
+    return str(descriptor)
+
+
+@lru_cache(maxsize=32)
+def qspr_cached_mordred_calculator(allowed_names_key=None):
+    if not mordred_available:
+        return None
+
+    base_calc = MordredCalculator(mordred_descriptors, ignore_3D=True)
+    if allowed_names_key is None:
+        return base_calc
+
+    allowed_set = set(allowed_names_key)
+    selected_descriptors = [
+        descriptor
+        for descriptor in base_calc.descriptors
+        if qspr_mordred_descriptor_name(descriptor) in allowed_set
+    ]
+    if not selected_descriptors:
+        return None
+    return MordredCalculator(selected_descriptors, ignore_3D=True)
+
+
+def qspr_make_mordred_calculator(allowed_names=None):
+    if allowed_names is None:
+        return qspr_cached_mordred_calculator(None)
+    names_key = tuple(dict.fromkeys(allowed_names))
+    return qspr_cached_mordred_calculator(names_key)
+
+
 def qspr_mordred_value_error(value):
     value_type = type(value)
     module_name = getattr(value_type, "__module__", "")
@@ -1253,7 +1288,7 @@ def qspr_calc_mordred_descriptors_filtered(
         diagnostics = []
 
         for desc, value in zip(calculator.descriptors, results):
-            dname = getattr(desc, "name", str(desc))
+            dname = qspr_mordred_descriptor_name(desc)
 
             if allowed_names is not None and dname not in allowed_names:
                 continue
@@ -1307,61 +1342,78 @@ def qspr_calc_padel_descriptors_filtered(
             return ({}, diagnostics) if return_diagnostics else {}
 
         padel_dict = {}
-        fp_dict = {}
-        desc_dict = {}
+        allowed_set = set(allowed_names or []) if allowed_names is not None else None
 
-        try:
-            result_fp = from_smiles([smiles_str], fingerprints=True)
+        if allowed_set is None:
+            try:
+                result_all = from_smiles([smiles_str], fingerprints=True)
 
-            if result_fp and len(result_fp) > 0:
-                fp_dict = dict(result_fp[0] or {})
+                if result_all and len(result_all) > 0:
+                    raw_all = dict(result_all[0] or {})
+                    padel_dict = {
+                        f"PaDEL::{name}" if prefix_internal_names else name: value
+                        for name, value in raw_all.items()
+                    }
 
-        except Exception as exc:
-            diagnostics.append({
-                "source": "PaDEL_FP",
-                "descriptor_name": "",
-                "status": "failed",
-                "error_type": type(exc).__name__,
-                "error_message": str(exc),
-            })
+            except Exception as exc:
+                diagnostics.append({
+                    "source": "PaDEL",
+                    "descriptor_name": "",
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                })
+        else:
+            try:
+                result_desc = from_smiles([smiles_str], fingerprints=False)
+                desc_dict = dict(result_desc[0] or {}) if result_desc else {}
+                for name, value in desc_dict.items():
+                    if name in allowed_set or f"PaDEL_2D::{name}" in allowed_set:
+                        out_name = f"PaDEL_2D::{name}" if prefix_internal_names else name
+                        padel_dict[out_name] = value
+            except Exception as exc:
+                diagnostics.append({
+                    "source": "PaDEL_2D",
+                    "descriptor_name": "",
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                })
 
-        try:
-            result_desc = from_smiles([smiles_str], fingerprints=False)
+            found_unprefixed = {
+                str(name).removeprefix("PaDEL_2D::").removeprefix("PaDEL_FP::")
+                for name in padel_dict
+            }
+            requested_unprefixed = {
+                str(name).removeprefix("PaDEL_2D::").removeprefix("PaDEL_FP::")
+                for name in allowed_set
+            }
+            missing_after_2d = requested_unprefixed - found_unprefixed
+            explicitly_fp = any(str(name).startswith("PaDEL_FP::") for name in allowed_set)
 
-            if result_desc and len(result_desc) > 0:
-                desc_dict = dict(result_desc[0] or {})
-
-        except Exception as exc:
-            diagnostics.append({
-                "source": "PaDEL_2D",
-                "descriptor_name": "",
-                "status": "failed",
-                "error_type": type(exc).__name__,
-                "error_message": str(exc),
-            })
-
-        collisions = sorted(set(fp_dict) & set(desc_dict))
-        for name in collisions:
-            diagnostics.append({
-                "source": "PaDEL",
-                "descriptor_name": str(name),
-                "status": "renamed_collision",
-                "error_type": "DescriptorNameCollision",
-                "error_message": "Descriptor name appears in both PaDEL fingerprints and 1D/2D descriptors.",
-            })
-
-        for name, value in fp_dict.items():
-            out_name = f"PaDEL_FP::{name}" if prefix_internal_names else name
-            padel_dict[out_name] = value
-
-        for name, value in desc_dict.items():
-            out_name = f"PaDEL_2D::{name}" if prefix_internal_names else name
-            padel_dict[out_name] = value
+            if missing_after_2d or explicitly_fp:
+                try:
+                    result_fp = from_smiles([smiles_str], fingerprints=True)
+                    fp_dict = dict(result_fp[0] or {}) if result_fp else {}
+                    for name, value in fp_dict.items():
+                        if (
+                            name in missing_after_2d
+                            or name in allowed_set
+                            or f"PaDEL_FP::{name}" in allowed_set
+                        ):
+                            out_name = f"PaDEL_FP::{name}" if prefix_internal_names else name
+                            padel_dict[out_name] = value
+                except Exception as exc:
+                    diagnostics.append({
+                        "source": "PaDEL_FP",
+                        "descriptor_name": "",
+                        "status": "failed",
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    })
 
         if padel_dict:
             if allowed_names is not None:
-                allowed_set = set(allowed_names)
-
                 filtered = {
                     k: v
                     for k, v in padel_dict.items()
@@ -2264,12 +2316,14 @@ def qspr_descriptor_mode_settings(mode, desc_lists=None):
         "🚀 Максимальная скорость (RDKit)": "rdkit_fast",
         "👁️‍🗨️ Расширенный (Mordred)": "mordred",
         "⚡ Умный (Mordred + уникальные PaDEL)": "mordred_padel_unique",
+        "⚡ Умный (уникальные Mordred + уникальные PaDEL)": "mordred_padel_unique",
         "🎯 Максимальная точность": "max_coverage",
         
         # Английский (из вашего интерфейса)
         "🚀 Maximum speed (RDKit)": "rdkit_fast",
         "👁️‍🗨️ Extended (Mordred)": "mordred",
         "⚡ Smart (Mordred + unique PaDEL)": "mordred_padel_unique",
+        "⚡ Smart (unique Mordred + unique PaDEL)": "mordred_padel_unique",
         "🎯 Maximum accuracy": "max_coverage",
         
         # Казахский (добавьте ваши строки, если они отличаются)
@@ -2301,7 +2355,7 @@ def qspr_descriptor_mode_settings(mode, desc_lists=None):
             "use_mordred": True,
             "use_padel": False,
             "rdkit_names": rdkit_all_list if rdkit_all_list else None,
-            "mordred_names": None,
+            "mordred_names": mordred_unique_list,
             "padel_names": [],
             "descriptor_catalog_status": padel_catalog_status,
             "descriptor_catalog_hash": padel_catalog_hash,
@@ -2365,6 +2419,7 @@ def qspr_calculate_molecular_descriptors(
     if smiles_col not in data.columns:
         raise ValueError(f"Не найдена колонка SMILES: {smiles_col}")
 
+    started_at = time.perf_counter()
     settings = qspr_descriptor_mode_settings(
         mode=mode,
         desc_lists=desc_lists
@@ -2427,7 +2482,9 @@ def qspr_calculate_molecular_descriptors(
     mordred_calc = None
 
     if settings["use_mordred"]:
-        mordred_calc = MordredCalculator(mordred_descriptors, ignore_3D=True)
+        mordred_calc = qspr_make_mordred_calculator(settings["mordred_names"])
+        if mordred_calc is None:
+            settings["use_mordred"] = False
 
     all_desc = []
     valid_indices = []
@@ -2438,6 +2495,7 @@ def qspr_calculate_molecular_descriptors(
     invalid_smiles_count = 0
     padel_error_count = 0
     mordred_error_count = 0
+    timing_totals = {"rdkit": 0.0, "mordred": 0.0, "padel": 0.0}
 
     smiles_list = data[smiles_col].astype(str).tolist()
 
@@ -2454,10 +2512,12 @@ def qspr_calculate_molecular_descriptors(
         failure_reasons = []
 
         if settings["use_rdkit"]:
+            step_started = time.perf_counter()
             rdkit_dict = qspr_calc_rdkit_descriptors_filtered(
                 mol,
                 allowed_names=settings["rdkit_names"]
             )
+            timing_totals["rdkit"] += time.perf_counter() - step_started
             module_counts["RDKit"] = len(rdkit_dict)
             module_status["RDKit"] = "ok" if rdkit_dict else "failed"
             if not rdkit_dict:
@@ -2465,12 +2525,14 @@ def qspr_calculate_molecular_descriptors(
             desc_combined.update(qspr_prefix_descriptor_names("RDKit", rdkit_dict))
 
         if settings["use_mordred"]:
+            step_started = time.perf_counter()
             mordred_dict, mordred_diagnostics = qspr_calc_mordred_descriptors_filtered(
                 mol,
                 mordred_calc,
                 allowed_names=settings["mordred_names"],
                 return_diagnostics=True,
             )
+            timing_totals["mordred"] += time.perf_counter() - step_started
             for diagnostic in mordred_diagnostics:
                 if diagnostic.get("status") != "ok":
                     mordred_descriptor_error_rows.append({
@@ -2487,12 +2549,14 @@ def qspr_calculate_molecular_descriptors(
             desc_combined.update(qspr_prefix_descriptor_names("Mordred", mordred_dict))
 
         if settings["use_padel"]:
+            step_started = time.perf_counter()
             padel_dict, padel_diagnostics = qspr_calc_padel_descriptors_filtered(
                 smiles,
                 allowed_names=settings["padel_names"],
                 prefix_internal_names=True,
                 return_diagnostics=True,
             )
+            timing_totals["padel"] += time.perf_counter() - step_started
             for diagnostic in padel_diagnostics:
                 padel_descriptor_warning_rows.append({
                     "row_position": int(idx),
@@ -2627,6 +2691,29 @@ def qspr_calculate_molecular_descriptors(
         "padel_descriptor_warning_count": int(len(padel_descriptor_warning_rows)),
         "descriptor_missing_fraction_limit": float(max_descriptor_missing_fraction),
         "descriptor_rows_excluded": int((~keep_descriptor_rows).sum()),
+        "elapsed_seconds": float(time.perf_counter() - started_at),
+        "rdkit_elapsed_seconds": float(timing_totals["rdkit"]),
+        "mordred_elapsed_seconds": float(timing_totals["mordred"]),
+        "padel_elapsed_seconds": float(timing_totals["padel"]),
+        "rdkit_requested_count": (
+            len(settings["rdkit_names"])
+            if settings.get("rdkit_names") is not None
+            else None
+        ),
+        "mordred_requested_count": (
+            len(settings["mordred_names"])
+            if settings.get("mordred_names") is not None
+            else (
+                len(mordred_calc.descriptors)
+                if mordred_calc is not None
+                else 0
+            )
+        ),
+        "padel_requested_count": (
+            len(settings["padel_names"])
+            if settings.get("padel_names") is not None
+            else None
+        ),
     }
 
     return {

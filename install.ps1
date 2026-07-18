@@ -1,4 +1,4 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
-py install_augur.py --profile local @args
+& (Join-Path $PSScriptRoot "setup_full.ps1") @args

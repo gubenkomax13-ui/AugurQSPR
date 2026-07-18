@@ -6049,8 +6049,8 @@ def run_saod2_analysis(
     if not analysis_coverage.empty:
         coverage_summary = pd.DataFrame([
             {
-                "РџРѕРєР°Р·Р°С‚РµР»СЊ": row.get("label", row.get("metric", "")),
-                "Р—РЅР°С‡РµРЅРёРµ": row.get("value", 0),
+                "Показатель": row.get("label", row.get("metric", "")),
+                "Значение": row.get("value", 0),
             }
             for _, row in analysis_coverage.iterrows()
             if row.get("metric") in {"loaded", "analyzed", "excluded"}
@@ -6101,17 +6101,17 @@ def run_saod2_analysis(
         else {}
     )
     series_quality_diagnostics = pd.DataFrame([
-        {metric_col: "Raw candidate series", value_col: int(series_quality_metrics.get("raw_candidate_series", 0) or 0)},
-        {metric_col: "Deduplicated series", value_col: int(series_quality_metrics.get("deduplicated_series", 0) or 0)},
-        {metric_col: "Independent scaffold families", value_col: int(series_quality_metrics.get("independent_scaffold_families", 0) or 0)},
-        {metric_col: "Full-size discovered series", value_col: int(series_quality_metrics.get("full_series", 0) or 0)},
-        {metric_col: "Small discovered series", value_col: int(series_quality_metrics.get("small_series", 0) or 0)},
-        {metric_col: "Secondary/derived series", value_col: int(series_quality_metrics.get("secondary_series", 0) or 0)},
-        {metric_col: "Overlapping series", value_col: int(series_quality_metrics.get("overlapping_series", 0) or 0)},
-        {metric_col: "Low-confidence series", value_col: int(series_quality_metrics.get("low_confidence_series", 0) or 0)},
-        {metric_col: "Compounds covered by internally consistent series", value_col: int(series_quality_metrics.get("consistent_series_compounds", 0) or 0)},
-        {metric_col: "Median discovered series size", value_col: series_quality_metrics.get("median_series_size", np.nan)},
-        {metric_col: "Weighted dataset coverage by consistent series", value_col: series_quality_metrics.get("weighted_consistent_coverage", np.nan)},
+        {metric_col: "Сырых рядов-кандидатов", value_col: int(series_quality_metrics.get("raw_candidate_series", 0) or 0)},
+        {metric_col: "Рядов после удаления дублей", value_col: int(series_quality_metrics.get("deduplicated_series", 0) or 0)},
+        {metric_col: "Независимых семейств каркасов", value_col: int(series_quality_metrics.get("independent_scaffold_families", 0) or 0)},
+        {metric_col: "Полноразмерных найденных рядов", value_col: int(series_quality_metrics.get("full_series", 0) or 0)},
+        {metric_col: "Малых найденных рядов", value_col: int(series_quality_metrics.get("small_series", 0) or 0)},
+        {metric_col: "Вторичных/производных рядов", value_col: int(series_quality_metrics.get("secondary_series", 0) or 0)},
+        {metric_col: "Перекрывающихся рядов", value_col: int(series_quality_metrics.get("overlapping_series", 0) or 0)},
+        {metric_col: "Низконадёжных рядов", value_col: int(series_quality_metrics.get("low_confidence_series", 0) or 0)},
+        {metric_col: "Веществ, покрытых внутренне согласованными рядами", value_col: int(series_quality_metrics.get("consistent_series_compounds", 0) or 0)},
+        {metric_col: "Медианный размер найденного ряда", value_col: series_quality_metrics.get("median_series_size", np.nan)},
+        {metric_col: "Взвешенное покрытие датасета согласованными рядами", value_col: series_quality_metrics.get("weighted_consistent_coverage", np.nan)},
     ])
     summary = pd.concat(
         [summary, series_quality_diagnostics],
@@ -6119,19 +6119,19 @@ def run_saod2_analysis(
     )
     diagnostics_summary = pd.DataFrame([
         {
-            metric_col: "SAOD trend method requested",
+            metric_col: "Запрошенный метод тренда SAOD",
             value_col: trend_method,
         },
         {
-            metric_col: "Measurement uncertainty used",
+            metric_col: "Использованная неопределённость измерения",
             value_col: (
                 measurement_uncertainty_used
                 if measurement_uncertainty_used is not None
-                else "not provided"
+                else "не задана"
             ),
         },
         {
-            metric_col: "Replicated structures",
+            metric_col: "Повторяющиеся структуры",
             value_col: int(len(measurement_replicates)),
         },
     ])

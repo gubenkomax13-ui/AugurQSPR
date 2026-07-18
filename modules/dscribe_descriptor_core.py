@@ -149,7 +149,8 @@ def dscribe_make_coulomb_matrix_descriptor(max_atoms=60):
 
 def calculate_dscribe_coulomb_descriptors_for_atoms(
     atoms,
-    max_atoms=60
+    max_atoms=60,
+    calculator=None
 ):
     """
     Считает Coulomb Matrix eigenspectrum через DScribe.
@@ -172,7 +173,7 @@ def calculate_dscribe_coulomb_descriptors_for_atoms(
         return result
 
     try:
-        cm = dscribe_make_coulomb_matrix_descriptor(max_atoms=max_atoms)
+        cm = calculator or dscribe_make_coulomb_matrix_descriptor(max_atoms=max_atoms)
         values = cm.create(atoms)
 
         values = np.asarray(values, dtype=float).reshape(-1)
@@ -213,7 +214,8 @@ def calculate_dscribe_descriptors_for_smiles(
     random_seed=42,
     optimize=True,
     max_atoms=60,
-    calc_coulomb=True
+    calc_coulomb=True,
+    coulomb_calculator=None
 ):
     """
     Рассчитывает DScribe-дескрипторы для одного SMILES.
@@ -253,6 +255,7 @@ def calculate_dscribe_descriptors_for_smiles(
                 calculate_dscribe_coulomb_descriptors_for_atoms(
                     atoms=atoms,
                     max_atoms=max_atoms,
+                    calculator=coulomb_calculator,
                 )
             )
 
@@ -303,6 +306,11 @@ def calculate_dscribe_descriptors_for_dataframe(
 
     rows = []
     total = len(work)
+    coulomb_calculator = (
+        dscribe_make_coulomb_matrix_descriptor(max_atoms=max_atoms)
+        if calc_coulomb
+        else None
+    )
 
     for done, (idx, row) in enumerate(work.iterrows(), start=1):
         smiles = row.get(smiles_col, "")
@@ -327,6 +335,7 @@ def calculate_dscribe_descriptors_for_dataframe(
             optimize=optimize,
             max_atoms=max_atoms,
             calc_coulomb=calc_coulomb,
+            coulomb_calculator=coulomb_calculator,
         )
 
         rows.append(desc)

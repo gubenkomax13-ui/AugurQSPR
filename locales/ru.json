@@ -516,7 +516,7 @@
     "rdkit_checkbox_title": "RDKit-группы",
     "mordred_checkbox_title": "Mordred-группы",
     "warning_max_accuracy_no_padel_all": "Для режима «Максимальный охват дескрипторов» нужен полный список PaDEL-дескрипторов, но в desc_lists найден только список уникальных PaDEL. Сейчас этот режим визуально совпадает с «Умным» по PaDEL-группам.",
-    "info_smart_mode": "⚡ Умный режим: используется компактный набор уникальных PaDEL ({count}) поверх RDKit/Mordred.",
+    "info_smart_mode": "⚡ Умный режим: используется RDKit + уникальные Mordred + уникальные PaDEL ({count} PaDEL).",
     "info_max_accuracy_mode": "🎯 Максимальный охват дескрипторов: используется полный доступный набор PaDEL ({total}) вместо только уникального набора ({unique}).",
     "warning_no_groups_selected": "Не выбрана ни одна группа молекулярных дескрипторов.",
     "caption_total_selected": "Всего выбрано молекулярных дескрипторов: {count}",
@@ -1812,11 +1812,11 @@
     "radio_label": "Выберите режим:",
     "speed": "🚀 Максимальная скорость (RDKit)",
     "extended": "👁️‍🗨️ Расширенный (Mordred)",
-    "smart": "⚡ Умный (Mordred + уникальные PaDEL)",
+    "smart": "⚡ Умный (уникальные Mordred + уникальные PaDEL)",
     "accuracy": "🎯 Максимальный охват дескрипторов",
     "help_speed": "только RDKit-дескрипторы",
     "help_extended": "RDKit + Mordred",
-    "help_smart": "Mordred + уникальные PaDEL",
+    "help_smart": "RDKit + уникальные Mordred + уникальные PaDEL",
     "help_accuracy": "Mordred + все доступные PaDEL; точность оценивается только валидацией",
     "help_prefix": "ℹ️"
   },
@@ -3726,7 +3726,7 @@
   },
   "feature_sources": {
     "header": "Источник дескрипторов",
-    "caption": "Selection of descriptor sources and assembly of the final X/y matrix for QSPR modelling."
+    "caption": "Выбор источников дескрипторов и сборка итоговой матрицы X/y для QSPR-моделирования."
   },
   "structural_filter": {
     "descriptor_meanings_caption": "Расшифровка берётся из файла `descriptor_meanings.json`. Если написано «Нет расшифровки», значит этот дескриптор нужно добавить в JSON.",

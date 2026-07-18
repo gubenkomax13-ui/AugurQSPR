@@ -3431,8 +3431,8 @@ def qspr_descriptor_group_selection_ui(mode, desc_lists):
 
     Логика режимов:
     - RDKit: только RDKit-группы;
-    - Mordred: RDKit + Mordred;
-    - Умный: RDKit + Mordred + уникальные PaDEL;
+    - Mordred: RDKit + уникальные Mordred;
+    - Умный: RDKit + уникальные Mordred + уникальные PaDEL;
     - max_coverage: RDKit + Mordred + all available PaDEL.
     """
     desc_lists = desc_lists or {}
@@ -8421,6 +8421,12 @@ def saod2_ru_table(df):
         "delta_spread_within_formula": t('saod2_ru.delta_spread_within_formula'),
         "n_raw_comparisons": t('saod2_ru.n_raw_comparisons'),
         "ambiguity_note": t('saod2_ru.ambiguity_note'),
+        "metric": "Код",
+        "label": "Показатель",
+        "value": "Значение",
+        "status_label": "Статус",
+        "reason": "Причина",
+        "count": "Количество",
     }
 
     return df.rename(columns=rename_map)
@@ -11244,7 +11250,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                                 .sort_values("count", ascending=False)
                             )
                             st.markdown(t("saod_ui.exclusion_reasons"))
-                            st.dataframe(reason_summary, width="stretch", hide_index=True)
+                            st.dataframe(saod2_ru_table(reason_summary), width="stretch", hide_index=True)
                             with st.expander(t("saod_ui.excluded_compounds"), expanded=False):
                                 st.dataframe(group_exclusions, width="stretch", hide_index=True)
                 st.stop()
@@ -11299,7 +11305,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                         .sort_values("count", ascending=False)
                     )
                     st.markdown(t("saod_ui.exclusion_reasons_from_saod"))
-                    st.dataframe(reason_summary, width="stretch", hide_index=True)
+                    st.dataframe(saod2_ru_table(reason_summary), width="stretch", hide_index=True)
                     with st.expander(t("saod_ui.excluded_compounds_and_reasons"), expanded=False):
                         st.dataframe(exclusion_table, width="stretch", hide_index=True)
                 with st.expander(t("saod_ui.artificial_calibration_title"), expanded=False):
