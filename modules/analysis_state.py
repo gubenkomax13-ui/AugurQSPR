@@ -64,6 +64,7 @@ STATE_KEYS_BY_NODE = {
         "allow_mismatched_uploaded_descriptors",
         "saod2_cleaning_summary",
         "saod2_show_cleaning_status",
+        "descriptor_preflight_banner",
     ],
     "standardization": [
         "standardization_result",

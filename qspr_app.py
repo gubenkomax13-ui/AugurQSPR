@@ -8825,6 +8825,7 @@ SESSION_DEFAULTS = {
     "saod2_original_before_cleaning": None,
     "saod2_cleaning_summary": None,
     "saod2_show_cleaning_status": False,
+    "descriptor_preflight_banner": "",
     "data_source_note": "",
     "incremental_result": None,
     "incremental_cols": [],
@@ -11546,12 +11547,20 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                                 "remaining": int(len(cleaned_df)),
                                 "excluded": int(max(len(st.session_state.saod2_review_df) - len(cleaned_df), 0)),
                             }
+                            descriptor_preflight_banner = t(
+                                "saod_ui.cleaned_dataset_banner",
+                                mode=cleaning_summary["mode"],
+                                remaining=cleaning_summary["remaining"],
+                                excluded=cleaning_summary["excluded"],
+                                total=cleaning_summary["total"],
+                            )
 
                             # Главное: делаем очищенный датасет текущим рабочим датасетом
                             st.session_state.data = cleaned_df.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
                             st.session_state.saod2_cleaning_summary = cleaning_summary
                             st.session_state.saod2_show_cleaning_status = True
+                            st.session_state.descriptor_preflight_banner = descriptor_preflight_banner
 
                             # Ставим флаг, чтобы повторно не резать уже очищенный датасет
                             st.session_state.saod2_cleaning_applied = True
@@ -11568,6 +11577,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             st.session_state.saod2_cleaning_summary = cleaning_summary
                             st.session_state.saod2_show_cleaning_status = True
                             st.session_state.data_source_note = cleaned_note
+                            st.session_state.descriptor_preflight_banner = descriptor_preflight_banner
 
                             st.success(t('saod_ui.manual_cleaned_success', count=len(cleaned_df)))
 
@@ -11608,6 +11618,13 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                                 "remaining": int(len(cleaned_df)),
                                 "excluded": int(max(len(auto_review_df) - len(cleaned_df), 0)),
                             }
+                            descriptor_preflight_banner = t(
+                                "saod_ui.cleaned_dataset_banner",
+                                mode=cleaning_summary["mode"],
+                                remaining=cleaning_summary["remaining"],
+                                excluded=cleaning_summary["excluded"],
+                                total=cleaning_summary["total"],
+                            )
 
                             # Главное: делаем очищенный датасет текущим рабочим датасетом
                             st.session_state.data = cleaned_df.copy()
@@ -11615,6 +11632,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
                             st.session_state.saod2_cleaning_summary = cleaning_summary
                             st.session_state.saod2_show_cleaning_status = True
+                            st.session_state.descriptor_preflight_banner = descriptor_preflight_banner
 
                             # Флаг защиты от повторного удаления
                             st.session_state.saod2_cleaning_applied = True
@@ -11635,6 +11653,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             st.session_state.saod2_cleaning_summary = cleaning_summary
                             st.session_state.saod2_show_cleaning_status = True
                             st.session_state.data_source_note = cleaned_note
+                            st.session_state.descriptor_preflight_banner = descriptor_preflight_banner
 
                             st.success(t('saod_ui.auto_cleaned_success',
                                 count=len(cleaned_df),
@@ -11901,17 +11920,21 @@ spectra_expander_should_be_open = (
 )
 
 
-saod2_cleaning_summary = st.session_state.get("saod2_cleaning_summary")
-saod2_cleaning_applied = bool(st.session_state.get("saod2_cleaning_applied", False))
-saod2_cleaned_for_banner = st.session_state.get("saod2_cleaned_df")
-saod2_note_for_banner = str(st.session_state.get("data_source_note", ""))
-saod2_cleaning_status_available = (
-    saod2_cleaning_applied
-    or isinstance(saod2_cleaned_for_banner, pd.DataFrame)
-    or "SAOD" in saod2_note_for_banner.upper()
-)
-if saod2_cleaning_status_available:
-    if isinstance(saod2_cleaning_summary, dict):
+descriptor_preflight_banner = str(st.session_state.get("descriptor_preflight_banner", "") or "").strip()
+if descriptor_preflight_banner:
+    st.success(descriptor_preflight_banner)
+    st.caption(t("saod_ui.cleaned_dataset_next_step"))
+else:
+    saod2_cleaning_summary = st.session_state.get("saod2_cleaning_summary")
+    saod2_cleaning_applied = bool(st.session_state.get("saod2_cleaning_applied", False))
+    saod2_cleaned_for_banner = st.session_state.get("saod2_cleaned_df")
+    saod2_note_for_banner = str(st.session_state.get("data_source_note", ""))
+    saod2_cleaning_status_available = (
+        saod2_cleaning_applied
+        or isinstance(saod2_cleaned_for_banner, pd.DataFrame)
+        or "SAOD" in saod2_note_for_banner.upper()
+    )
+    if saod2_cleaning_status_available and isinstance(saod2_cleaning_summary, dict):
         st.success(
             t(
                 "saod_ui.cleaned_dataset_banner",
@@ -11921,7 +11944,8 @@ if saod2_cleaning_status_available:
                 total=int(saod2_cleaning_summary.get("total", len(data)) or 0),
             )
         )
-    else:
+        st.caption(t("saod_ui.cleaned_dataset_next_step"))
+    elif saod2_cleaning_status_available:
         remaining_for_banner = (
             len(saod2_cleaned_for_banner)
             if isinstance(saod2_cleaned_for_banner, pd.DataFrame)
@@ -11933,7 +11957,7 @@ if saod2_cleaning_status_available:
                 remaining=int(remaining_for_banner),
             )
         )
-    st.caption(t("saod_ui.cleaned_dataset_next_step"))
+        st.caption(t("saod_ui.cleaned_dataset_next_step"))
 
 st.header(t("feature_sources.header"))
 st.caption(t("feature_sources.caption"))
