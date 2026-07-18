@@ -880,7 +880,7 @@ from modules.training_ui import render_training_section
 from modules.report_ui import render_report_section
 from modules.statistics_summary_ui import render_final_statistics_summary
 from modules.chemical_diversity_ui import render_chemical_diversity_section
-from modules.model_catalog import MODEL_GROUP_LINEAR
+from modules.model_catalog import MODEL_GROUP_LINEAR, get_model_group
 from modules.training_ui import MODEL_GROUP_TREE_ENSEMBLES
 from modules.analysis_state import (
     ALGORITHM_VERSIONS,
