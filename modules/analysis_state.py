@@ -79,6 +79,8 @@ STATE_KEYS_BY_NODE = {
         "saod2_cleaned_df",
         "saod2_cleaning_applied",
         "saod2_original_before_cleaning",
+        "saod2_cleaning_summary",
+        "saod2_show_cleaning_status",
         "saod2_summary",
         "saod2_tables",
         "saod3_result",

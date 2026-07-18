@@ -8823,6 +8823,8 @@ SESSION_DEFAULTS = {
     "saod2_cleaned_df": None,
     "saod2_cleaning_applied": False,
     "saod2_original_before_cleaning": None,
+    "saod2_cleaning_summary": None,
+    "saod2_show_cleaning_status": False,
     "data_source_note": "",
     "incremental_result": None,
     "incremental_cols": [],
@@ -8930,6 +8932,8 @@ def reset_project_state_for_new_file():
         "saod2_cleaned_df",
         "saod2_cleaning_applied",
         "saod2_original_before_cleaning",
+        "saod2_cleaning_summary",
+        "saod2_show_cleaning_status",
 
         # Структурный фильтр
         "struct_filter_result_df",
@@ -11536,10 +11540,18 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                                 st.session_state.saod2_review_df,
                                 decision_col="SAOD_manual_decision"
                             )
+                            cleaning_summary = {
+                                "mode": t("saod_ui.cleaning_mode_manual"),
+                                "total": int(len(st.session_state.saod2_review_df)),
+                                "remaining": int(len(cleaned_df)),
+                                "excluded": int(max(len(st.session_state.saod2_review_df) - len(cleaned_df), 0)),
+                            }
 
                             # Главное: делаем очищенный датасет текущим рабочим датасетом
                             st.session_state.data = cleaned_df.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
+                            st.session_state.saod2_cleaning_summary = cleaning_summary
+                            st.session_state.saod2_show_cleaning_status = True
 
                             # Ставим флаг, чтобы повторно не резать уже очищенный датасет
                             st.session_state.saod2_cleaning_applied = True
@@ -11552,6 +11564,8 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             st.session_state.saod2_original_before_cleaning = data.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
                             st.session_state.saod2_cleaning_applied = True
+                            st.session_state.saod2_cleaning_summary = cleaning_summary
+                            st.session_state.saod2_show_cleaning_status = True
                             st.session_state.data_source_note = cleaned_note
 
                             st.success(t('saod_ui.manual_cleaned_success', count=len(cleaned_df)))
@@ -11587,11 +11601,19 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                                 auto_review_df,
                                 decision_col="SAOD_manual_decision"
                             )
+                            cleaning_summary = {
+                                "mode": t("saod_ui.cleaning_mode_auto"),
+                                "total": int(len(auto_review_df)),
+                                "remaining": int(len(cleaned_df)),
+                                "excluded": int(max(len(auto_review_df) - len(cleaned_df), 0)),
+                            }
 
                             # Главное: делаем очищенный датасет текущим рабочим датасетом
                             st.session_state.data = cleaned_df.copy()
                             st.session_state.saod2_review_df = auto_review_df.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
+                            st.session_state.saod2_cleaning_summary = cleaning_summary
+                            st.session_state.saod2_show_cleaning_status = True
 
                             # Флаг защиты от повторного удаления
                             st.session_state.saod2_cleaning_applied = True
@@ -11608,6 +11630,8 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             st.session_state.saod2_review_df = auto_review_df.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
                             st.session_state.saod2_cleaning_applied = True
+                            st.session_state.saod2_cleaning_summary = cleaning_summary
+                            st.session_state.saod2_show_cleaning_status = True
                             st.session_state.data_source_note = cleaned_note
 
                             st.success(t('saod_ui.auto_cleaned_success',
@@ -11874,6 +11898,22 @@ spectra_expander_should_be_open = (
     or st.session_state.get("pending_qspr_descriptor_bundle_ready", False)
 )
 
+
+saod2_cleaning_summary = st.session_state.get("saod2_cleaning_summary")
+if (
+    st.session_state.get("saod2_show_cleaning_status", False)
+    and isinstance(saod2_cleaning_summary, dict)
+):
+    st.success(
+        t(
+            "saod_ui.cleaned_dataset_banner",
+            mode=saod2_cleaning_summary.get("mode", ""),
+            remaining=int(saod2_cleaning_summary.get("remaining", len(data)) or 0),
+            excluded=int(saod2_cleaning_summary.get("excluded", 0) or 0),
+            total=int(saod2_cleaning_summary.get("total", len(data)) or 0),
+        )
+    )
+    st.caption(t("saod_ui.cleaned_dataset_next_step"))
 
 st.header(t("feature_sources.header"))
 st.caption(t("feature_sources.caption"))
