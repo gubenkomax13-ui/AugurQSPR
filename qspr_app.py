@@ -3167,10 +3167,13 @@ def qspr_detect_data_leakage_columns(
             y_values = np.asarray(y).reshape(-1)
             if len(y_values) == len(data):
                 y_series_for_leakage = pd.Series(y_values, index=data.index)
-                y_series_for_leakage = pd.to_numeric(
-                    y_series_for_leakage.astype(str).str.replace(",", ".", regex=False),
-                    errors="coerce"
-                )
+                if pd.api.types.is_numeric_dtype(y_series_for_leakage.dtype):
+                    y_series_for_leakage = y_series_for_leakage.astype(float, copy=False)
+                else:
+                    y_series_for_leakage = pd.to_numeric(
+                        y_series_for_leakage.astype(str).str.replace(",", ".", regex=False),
+                        errors="coerce"
+                    )
             else:
                 y_length_mismatch = True
         except Exception:
@@ -3180,12 +3183,19 @@ def qspr_detect_data_leakage_columns(
         existing_cols = [col for col in descriptor_cols if col in data.columns]
         if existing_cols:
             try:
-                numeric_frame = data.loc[:, existing_cols].apply(
-                    lambda series: pd.to_numeric(
-                        series.astype(str).str.replace(",", ".", regex=False),
-                        errors="coerce",
+                descriptor_frame = data.loc[:, existing_cols]
+                if all(
+                    pd.api.types.is_numeric_dtype(dtype)
+                    for dtype in descriptor_frame.dtypes
+                ):
+                    numeric_frame = descriptor_frame.astype(float, copy=False)
+                else:
+                    numeric_frame = descriptor_frame.apply(
+                        lambda series: pd.to_numeric(
+                            series.astype(str).str.replace(",", ".", regex=False),
+                            errors="coerce",
+                        )
                     )
-                )
                 numeric_descriptor_cols = set(numeric_frame.columns)
                 valid_target_mask = y_series_for_leakage.notna()
                 if int(valid_target_mask.sum()) >= 5:
@@ -17704,11 +17714,11 @@ if (
                         )
                         st.session_state.update({
                             "molecular_descriptors_ready": True,
-                            "molecular_df_desc": bundle["df_desc"].copy(),
+                            "molecular_df_desc": st.session_state.df_desc,
                             "molecular_valid_indices": list(bundle["valid_indices"]),
                             "molecular_desc_names": list(bundle["desc_names"]),
-                            "molecular_X_all": np.array(bundle["X_all"], copy=True),
-                            "molecular_y_all": np.array(bundle["y_all"], copy=True),
+                            "molecular_X_all": st.session_state.X_all,
+                            "molecular_y_all": st.session_state.y_all,
                             "molecular_descriptor_source": source_label,
                         })
 
@@ -17742,6 +17752,7 @@ if (
                         target_col,
                         len(bundle["y_all"])
                     )
+                    del descriptors_df
                     overall_progress_bar.progress(1.0)
                     overall_progress_text.caption(t('descriptor_calc.progress_all_done'))
 

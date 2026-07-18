@@ -18,6 +18,7 @@ qspr_core.py
 """
 
 import os
+import gc
 import json
 import re
 import uuid
@@ -1208,9 +1209,10 @@ def qspr_calc_rdkit_descriptors_filtered(mol, allowed_names=None):
     Расчёт RDKit-дескрипторов.
     """
     desc_dict = {}
+    allowed_set = None if allowed_names is None else set(allowed_names)
 
     for name, func in Descriptors._descList:
-        if allowed_names is not None and name not in allowed_names:
+        if allowed_set is not None and name not in allowed_set:
             continue
 
         try:
@@ -1286,11 +1288,12 @@ def qspr_calc_mordred_descriptors_filtered(
 
         desc_dict = {}
         diagnostics = []
+        allowed_set = None if allowed_names is None else set(allowed_names)
 
         for desc, value in zip(calculator.descriptors, results):
             dname = qspr_mordred_descriptor_name(desc)
 
-            if allowed_names is not None and dname not in allowed_names:
+            if allowed_set is not None and dname not in allowed_set:
                 continue
 
             value_error = qspr_mordred_value_error(value)
@@ -1302,12 +1305,6 @@ def qspr_calc_mordred_descriptors_filtered(
                 continue
 
             desc_dict[dname] = value
-            diagnostics.append({
-                "descriptor_name": dname,
-                "status": "ok",
-                "error_type": "",
-                "error_message": "",
-            })
 
         return (desc_dict, diagnostics) if return_diagnostics else desc_dict
 
@@ -2490,6 +2487,8 @@ def qspr_calculate_molecular_descriptors(
     valid_indices = []
     descriptor_quality_rows = []
     mordred_descriptor_error_rows = []
+    mordred_descriptor_error_count = 0
+    mordred_error_sample_limit = 500
     padel_descriptor_warning_rows = []
 
     invalid_smiles_count = 0
@@ -2535,6 +2534,9 @@ def qspr_calculate_molecular_descriptors(
             timing_totals["mordred"] += time.perf_counter() - step_started
             for diagnostic in mordred_diagnostics:
                 if diagnostic.get("status") != "ok":
+                    mordred_descriptor_error_count += 1
+                    if len(mordred_descriptor_error_rows) >= mordred_error_sample_limit:
+                        continue
                     mordred_descriptor_error_rows.append({
                         "row_position": int(idx),
                         "source_index": data.index[idx],
@@ -2547,6 +2549,12 @@ def qspr_calculate_molecular_descriptors(
                 mordred_error_count += 1
                 failure_reasons.append("Mordred returned no descriptors")
             desc_combined.update(qspr_prefix_descriptor_names("Mordred", mordred_dict))
+
+            # Mordred error objects can retain calculation stacks. Reclaim them in
+            # bounded batches so a long dataset does not pressure the page file.
+            if (idx + 1) % 32 == 0:
+                del mordred_diagnostics
+                gc.collect()
 
         if settings["use_padel"]:
             step_started = time.perf_counter()
@@ -2597,6 +2605,8 @@ def qspr_calculate_molecular_descriptors(
 
     df_desc_raw = pd.DataFrame(all_desc)
     descriptor_quality_df = pd.DataFrame(descriptor_quality_rows)
+    del all_desc
+    del descriptor_quality_rows
     numeric_raw = df_desc_raw.apply(pd.to_numeric, errors="coerce")
     requested_descriptor_count = int(numeric_raw.shape[1])
     if requested_descriptor_count <= 0:
@@ -2604,6 +2614,7 @@ def qspr_calculate_molecular_descriptors(
     successful_counts = numeric_raw.notna().sum(axis=1).astype(int)
     success_fraction = successful_counts / float(requested_descriptor_count)
     missing_fraction = 1.0 - success_fraction
+    del numeric_raw
     descriptor_quality_df["n_successful_descriptors"] = successful_counts.values
     descriptor_quality_df["n_requested_descriptors"] = requested_descriptor_count
     descriptor_quality_df["descriptor_success_fraction"] = success_fraction.values
@@ -2687,7 +2698,11 @@ def qspr_calculate_molecular_descriptors(
         "descriptor_catalog_hash": settings.get("descriptor_catalog_hash", "none"),
         "padel_available_count": int(settings.get("padel_available_count", 0) or 0),
         "mordred_error_count": mordred_error_count,
-        "mordred_descriptor_error_count": int(len(mordred_descriptor_error_rows)),
+        "mordred_descriptor_error_count": int(mordred_descriptor_error_count),
+        "mordred_descriptor_error_sample_count": int(len(mordred_descriptor_error_rows)),
+        "mordred_descriptor_errors_truncated": bool(
+            mordred_descriptor_error_count > len(mordred_descriptor_error_rows)
+        ),
         "padel_descriptor_warning_count": int(len(padel_descriptor_warning_rows)),
         "descriptor_missing_fraction_limit": float(max_descriptor_missing_fraction),
         "descriptor_rows_excluded": int((~keep_descriptor_rows).sum()),
@@ -2716,7 +2731,7 @@ def qspr_calculate_molecular_descriptors(
         ),
     }
 
-    return {
+    result = {
         "df_desc": df_desc.reset_index(drop=True),
         "X_all": X_all,
         "y_all": y_all,
@@ -2737,6 +2752,9 @@ def qspr_calculate_molecular_descriptors(
         "padel_descriptor_warnings": pd.DataFrame(padel_descriptor_warning_rows),
         "report": report
     }
+    if settings.get("use_mordred", False):
+        gc.collect()
+    return result
 
 
 def qspr_prepare_custom_descriptors_from_file(
