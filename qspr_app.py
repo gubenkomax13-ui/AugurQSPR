@@ -18781,15 +18781,32 @@ if mark_target_extremes_choice:
 # ------------------------------------------------------------------
 # Model training
 
-training_context = render_training_section({**globals(), **locals()})
-globals().update(training_context)
+training_mode = st.radio(
+    t("post_descriptor_flow.mode_label"),
+    ["single", "compare"],
+    horizontal=True,
+    key="post_descriptor_training_mode",
+    format_func=lambda mode: (
+        t("post_descriptor_flow.mode_single")
+        if mode == "single"
+        else t("post_descriptor_flow.mode_compare")
+    ),
+)
+
+training_context = {}
+if training_mode == "single":
+    training_context = render_training_section({**globals(), **locals()})
+    globals().update(training_context)
+else:
+    render_model_comparison_section({**globals(), **locals()})
+    st.info(t("post_descriptor_flow.compare_mode_info"))
+    st.stop()
 
 current_trained_model_name = training_context.get(
     "model_name",
     st.session_state.get("last_model_algorithm", ""),
 )
 if current_trained_model_name not in st.session_state.get("trained_models", {}):
-    render_model_comparison_section({**globals(), **locals()})
     st.info(t("post_descriptor_flow.train_first_info"))
     st.stop()
 
@@ -18844,7 +18861,8 @@ if model_name in st.session_state.trained_models:
 # ------------------------------------------------------------------
 # Model comparison
 
-render_model_comparison_section({**globals(), **locals()})
+if training_mode != "compare":
+    render_model_comparison_section({**globals(), **locals()})
 
 # ------------------------------------------------------------------
 # Consensus prediction

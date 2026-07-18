@@ -3803,6 +3803,10 @@
     "missing_keys_warning": "Missing localization keys detected."
   },
   "post_descriptor_flow": {
-    "train_first_info": "After descriptor assembly, single-model training and multi-model comparison are shown. Validation, diagnostics, consensus, prediction, and reports will appear after at least one model is trained."
+    "train_first_info": "Choose a mode above: train one model or train several models at once. Validation, diagnostics, consensus, prediction, and reports will appear after at least one model is trained.",
+    "mode_label": "Training mode",
+    "mode_single": "One model",
+    "mode_compare": "Train several models",
+    "compare_mode_info": "In multi-model mode, validation is already included in the comparison table. For detailed validation, diagnostics, and reporting for one model, switch to `One model` and select the model you need."
   }
 }
