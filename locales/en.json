@@ -3801,5 +3801,8 @@
   "i18n": {
     "expander_title": "🌐 i18n",
     "missing_keys_warning": "Missing localization keys detected."
+  },
+  "post_descriptor_flow": {
+    "train_first_info": "After descriptor assembly, single-model training and multi-model comparison are shown. Validation, diagnostics, consensus, prediction, and reports will appear after at least one model is trained."
   }
 }

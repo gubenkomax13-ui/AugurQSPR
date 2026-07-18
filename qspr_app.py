@@ -18784,6 +18784,15 @@ if mark_target_extremes_choice:
 training_context = render_training_section({**globals(), **locals()})
 globals().update(training_context)
 
+current_trained_model_name = training_context.get(
+    "model_name",
+    st.session_state.get("last_model_algorithm", ""),
+)
+if current_trained_model_name not in st.session_state.get("trained_models", {}):
+    render_model_comparison_section({**globals(), **locals()})
+    st.info(t("post_descriptor_flow.train_first_info"))
+    st.stop()
+
 # ------------------------------------------------------------------
 # Validation
 
