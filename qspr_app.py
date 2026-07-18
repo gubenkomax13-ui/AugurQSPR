@@ -8963,6 +8963,30 @@ def reset_project_state_for_new_file():
         elif key in st.session_state:
             del st.session_state[key]
 
+
+def set_current_dataset_after_saod_cleaning(cleaned_df):
+    cleaned_work = qspr_ensure_record_ids(cleaned_df.copy()).reset_index(drop=True)
+    cleaned_signature = dataset_signature(
+        cleaned_work,
+        file_name=st.session_state.get("uploaded_file_name", ""),
+        file_size=st.session_state.get("uploaded_file_size", 0),
+    )
+    st.session_state.data = cleaned_work.copy()
+    st.session_state.dataset_signature = cleaned_signature
+    update_analysis_bundle(
+        st.session_state,
+        "dataset",
+        {
+            "signature": cleaned_signature,
+            "file_name": st.session_state.get("uploaded_file_name", ""),
+            "file_size": int(st.session_state.get("uploaded_file_size", 0) or 0),
+            "rows": int(len(cleaned_work)),
+            "columns": [str(col) for col in cleaned_work.columns],
+            "source": "saod_cleaned",
+        },
+    )
+    return cleaned_work
+
     ensure_analysis_bundle(st.session_state)
 
 # ------------------------------------------------------------------
@@ -11556,7 +11580,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             )
 
                             # Главное: делаем очищенный датасет текущим рабочим датасетом
-                            st.session_state.data = cleaned_df.copy()
+                            cleaned_df = set_current_dataset_after_saod_cleaning(cleaned_df)
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
                             st.session_state.saod2_cleaning_summary = cleaning_summary
                             st.session_state.saod2_show_cleaning_status = True
@@ -11570,7 +11594,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             # Сбрасываем старые дескрипторы и модели
                             cleaned_note = st.session_state.data_source_note
                             reset_analysis_nodes(st.session_state, "standardization", SESSION_DEFAULTS)
-                            st.session_state.data = cleaned_df.copy()
+                            cleaned_df = set_current_dataset_after_saod_cleaning(cleaned_df)
                             st.session_state.saod2_original_before_cleaning = data.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
                             st.session_state.saod2_cleaning_applied = True
@@ -11627,7 +11651,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             )
 
                             # Главное: делаем очищенный датасет текущим рабочим датасетом
-                            st.session_state.data = cleaned_df.copy()
+                            cleaned_df = set_current_dataset_after_saod_cleaning(cleaned_df)
                             st.session_state.saod2_review_df = auto_review_df.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
                             st.session_state.saod2_cleaning_summary = cleaning_summary
@@ -11645,7 +11669,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             # Сбрасываем старые дескрипторы и модели
                             cleaned_note = st.session_state.data_source_note
                             reset_analysis_nodes(st.session_state, "standardization", SESSION_DEFAULTS)
-                            st.session_state.data = cleaned_df.copy()
+                            cleaned_df = set_current_dataset_after_saod_cleaning(cleaned_df)
                             st.session_state.saod2_original_before_cleaning = data.copy()
                             st.session_state.saod2_review_df = auto_review_df.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
