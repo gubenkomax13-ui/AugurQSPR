@@ -593,31 +593,26 @@ def qspr_clean_numeric_dataframe(df, return_report=False):
     заполняет пропуски медианами.
     """
     initial_columns = list(df.columns)
-    work = df.copy()
-    parse_reports = []
-    quality_flag_columns = {}
+    work = pd.DataFrame(index=df.index)
+    status_sets = {}
 
-    for col in work.columns:
-        parsed = qspr_parse_numeric_series(work[col])
-        parsed = parsed.copy()
-        parsed.insert(0, "column", col)
-        parse_reports.append(parsed)
-        work[col] = parsed["value"]
-        col_name = str(col)
-        status = parsed["status"]
-        quality_flag_columns[f"{col_name}__missing_original"] = status.eq("missing")
-        quality_flag_columns[f"{col_name}__positive_infinity"] = status.eq("positive_infinity")
-        quality_flag_columns[f"{col_name}__negative_infinity"] = status.eq("negative_infinity")
-        quality_flag_columns[f"{col_name}__calculation_failed"] = status.eq("calculation_failed")
-        quality_flag_columns[f"{col_name}__censored"] = status.eq("censored")
-        quality_flag_columns[f"{col_name}__parse_failed"] = status.eq("parse_failed")
+    for col in initial_columns:
+        source = df[col]
+        if pd.api.types.is_numeric_dtype(source.dtype):
+            numeric = pd.to_numeric(source, errors="coerce").astype(float, copy=False)
+            numeric = numeric.replace([np.inf, -np.inf], np.nan)
+            status_sets[col] = {"missing"} if numeric.isna().all() else {"ok"}
+        else:
+            parsed = qspr_parse_numeric_series(source)
+            numeric = parsed["value"]
+            status_sets[col] = set(parsed["status"].dropna().astype(str).unique())
+        work[col] = numeric
 
     all_nan_cols = [col for col in work.columns if work[col].isna().all()]
     non_numeric_cols = []
     empty_cols = []
     for col in all_nan_cols:
-        report = parse_reports[initial_columns.index(col)]
-        statuses = set(report["status"].dropna().astype(str).unique())
+        statuses = status_sets.get(col, set())
         if statuses and statuses.issubset({"missing"}):
             empty_cols.append(col)
         elif statuses.intersection({"parse_failed", "calculation_failed"}):
@@ -627,13 +622,9 @@ def qspr_clean_numeric_dataframe(df, return_report=False):
 
     work = work.drop(columns=all_nan_cols)
 
-    for col in work.columns:
-        median_value = work[col].median()
-
-        if pd.isna(median_value):
-            median_value = 0.0
-
-        work[col] = work[col].fillna(median_value)
+    if not work.empty:
+        medians = work.median(axis=0).fillna(0.0)
+        work = work.fillna(medians)
 
     const_cols = [
         col for col in work.columns
@@ -654,17 +645,10 @@ def qspr_clean_numeric_dataframe(df, return_report=False):
         "constant_descriptors": [str(col) for col in const_cols],
     }
 
-    if parse_reports:
-        work.attrs["numeric_quality_report"] = pd.concat(parse_reports, axis=0)
-    else:
-        work.attrs["numeric_quality_report"] = pd.DataFrame()
-    if quality_flag_columns:
-        work.attrs["numeric_quality_flags"] = pd.DataFrame(
-            quality_flag_columns,
-            index=work.index,
-        )
-    else:
-        work.attrs["numeric_quality_flags"] = pd.DataFrame(index=work.index)
+    # Per-cell quality tables used to be attached here. With wide Mordred
+    # matrices pandas deep-copied those attrs on every Streamlit state update.
+    work.attrs["numeric_quality_report"] = pd.DataFrame()
+    work.attrs["numeric_quality_flags"] = pd.DataFrame(index=work.index)
     work.attrs["cleaning_report"] = cleaning_report
 
     if return_report:

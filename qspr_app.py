@@ -18474,9 +18474,10 @@ corr_values = []
 
 y_series_for_corr = pd.Series(y_all).reset_index(drop=True)
 
-df_desc_corr = df_desc.copy().reset_index(drop=True)
+df_desc_corr = None
 
 if run_descriptor_diagnostics:
+    df_desc_corr = df_desc.reset_index(drop=True)
     numeric_corr_frame = df_desc_corr.apply(pd.to_numeric, errors="coerce")
     y_numeric_corr = pd.to_numeric(y_series_for_corr, errors="coerce")
     valid_target_mask = y_numeric_corr.notna()
@@ -18517,7 +18518,7 @@ for desc in candidate_desc:
     if len(selected_heatmap_desc) >= 15:
         break
 
-    if desc not in df_desc_corr.columns:
+    if df_desc_corr is None or desc not in df_desc_corr.columns:
         continue
 
     if not selected_heatmap_desc:
