@@ -62,6 +62,8 @@ STATE_KEYS_BY_NODE = {
         "uploaded_descriptor_structure_mismatch",
         "uploaded_descriptor_structure_mismatch_message",
         "allow_mismatched_uploaded_descriptors",
+        "saod2_cleaning_summary",
+        "saod2_show_cleaning_status",
     ],
     "standardization": [
         "standardization_result",
@@ -79,8 +81,6 @@ STATE_KEYS_BY_NODE = {
         "saod2_cleaned_df",
         "saod2_cleaning_applied",
         "saod2_original_before_cleaning",
-        "saod2_cleaning_summary",
-        "saod2_show_cleaning_status",
         "saod2_summary",
         "saod2_tables",
         "saod3_result",

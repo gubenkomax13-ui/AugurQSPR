@@ -11561,6 +11561,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             # Сбрасываем старые дескрипторы и модели
                             cleaned_note = st.session_state.data_source_note
                             reset_analysis_nodes(st.session_state, "standardization", SESSION_DEFAULTS)
+                            st.session_state.data = cleaned_df.copy()
                             st.session_state.saod2_original_before_cleaning = data.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
                             st.session_state.saod2_cleaning_applied = True
@@ -11626,6 +11627,7 @@ with st.expander(t('saod_ui.expander_title'), expanded=False):
                             # Сбрасываем старые дескрипторы и модели
                             cleaned_note = st.session_state.data_source_note
                             reset_analysis_nodes(st.session_state, "standardization", SESSION_DEFAULTS)
+                            st.session_state.data = cleaned_df.copy()
                             st.session_state.saod2_original_before_cleaning = data.copy()
                             st.session_state.saod2_review_df = auto_review_df.copy()
                             st.session_state.saod2_cleaned_df = cleaned_df.copy()
@@ -11900,19 +11902,37 @@ spectra_expander_should_be_open = (
 
 
 saod2_cleaning_summary = st.session_state.get("saod2_cleaning_summary")
-if (
-    st.session_state.get("saod2_show_cleaning_status", False)
-    and isinstance(saod2_cleaning_summary, dict)
-):
-    st.success(
-        t(
-            "saod_ui.cleaned_dataset_banner",
-            mode=saod2_cleaning_summary.get("mode", ""),
-            remaining=int(saod2_cleaning_summary.get("remaining", len(data)) or 0),
-            excluded=int(saod2_cleaning_summary.get("excluded", 0) or 0),
-            total=int(saod2_cleaning_summary.get("total", len(data)) or 0),
+saod2_cleaning_applied = bool(st.session_state.get("saod2_cleaning_applied", False))
+saod2_cleaned_for_banner = st.session_state.get("saod2_cleaned_df")
+saod2_note_for_banner = str(st.session_state.get("data_source_note", ""))
+saod2_cleaning_status_available = (
+    saod2_cleaning_applied
+    or isinstance(saod2_cleaned_for_banner, pd.DataFrame)
+    or "SAOD" in saod2_note_for_banner.upper()
+)
+if saod2_cleaning_status_available:
+    if isinstance(saod2_cleaning_summary, dict):
+        st.success(
+            t(
+                "saod_ui.cleaned_dataset_banner",
+                mode=saod2_cleaning_summary.get("mode", ""),
+                remaining=int(saod2_cleaning_summary.get("remaining", len(data)) or 0),
+                excluded=int(saod2_cleaning_summary.get("excluded", 0) or 0),
+                total=int(saod2_cleaning_summary.get("total", len(data)) or 0),
+            )
         )
-    )
+    else:
+        remaining_for_banner = (
+            len(saod2_cleaned_for_banner)
+            if isinstance(saod2_cleaned_for_banner, pd.DataFrame)
+            else len(data)
+        )
+        st.success(
+            t(
+                "saod_ui.cleaned_dataset_banner_fallback",
+                remaining=int(remaining_for_banner),
+            )
+        )
     st.caption(t("saod_ui.cleaned_dataset_next_step"))
 
 st.header(t("feature_sources.header"))

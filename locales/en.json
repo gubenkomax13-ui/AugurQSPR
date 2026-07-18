@@ -1557,6 +1557,7 @@
     "cleaning_mode_manual": "manual review",
     "cleaning_mode_auto": "automatic exclusion",
     "cleaned_dataset_banner": "SAOD cleaning has been applied ({mode}). A new dataset is now used for the next analysis: {remaining} compounds remain from {total}, {excluded} excluded.",
+    "cleaned_dataset_banner_fallback": "SAOD cleaning has already been applied. The cleaned dataset is now used for the next analysis: {remaining} compounds.",
     "cleaned_dataset_next_step": "The next descriptor calculation and model training will use the cleaned dataset.",
     "context_diversity_warning": "Different experimental contexts were detected in the dataset. Structural-effect comparisons may be unreliable.",
     "contexts_expander": "SAOD experimental contexts",
