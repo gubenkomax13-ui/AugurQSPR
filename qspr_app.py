@@ -18186,11 +18186,19 @@ if isinstance(descriptor_coverage_view, pd.DataFrame) and not descriptor_coverag
                 hide_index=True,
             )
 
-        st.dataframe(
-            _streamlit_safe_table_data(descriptor_coverage_view),
-            width="stretch",
-            hide_index=True,
+        show_descriptor_coverage_details = st.checkbox(
+            t("descriptor_coverage.show_details"),
+            value=False,
+            key="show_descriptor_coverage_details",
         )
+        if show_descriptor_coverage_details:
+            st.dataframe(
+                _streamlit_safe_table_data(descriptor_coverage_view),
+                width="stretch",
+                hide_index=True,
+            )
+        else:
+            st.caption(t("descriptor_coverage.details_deferred"))
         st.download_button(
             t("descriptor_coverage.download"),
             qspr_core.qspr_csv_download_bytes(descriptor_coverage_view),
@@ -18213,11 +18221,19 @@ if isinstance(descriptor_quality_view, pd.DataFrame) and not descriptor_quality_
             st.warning(
                 t("descriptor_settings.row_quality_excluded", rows=excluded_descriptor_rows)
             )
-        st.dataframe(
-            _streamlit_safe_table_data(descriptor_quality_view),
-            width="stretch",
-            hide_index=True,
+        show_descriptor_quality_details = st.checkbox(
+            t("descriptor_settings.row_quality_show_details"),
+            value=False,
+            key="show_descriptor_quality_details",
         )
+        if show_descriptor_quality_details:
+            st.dataframe(
+                _streamlit_safe_table_data(descriptor_quality_view),
+                width="stretch",
+                hide_index=True,
+            )
+        else:
+            st.caption(t("descriptor_settings.row_quality_details_deferred"))
         st.download_button(
             t("descriptor_settings.row_quality_download"),
             qspr_core.qspr_csv_download_bytes(descriptor_quality_view),

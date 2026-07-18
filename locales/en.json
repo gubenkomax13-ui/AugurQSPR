@@ -1785,7 +1785,9 @@
     "selected_spectral": "spectral",
     "row_quality_title": "Descriptor calculation quality by row",
     "row_quality_excluded": "{rows} rows were excluded before imputation because descriptor calculation was incomplete.",
-    "row_quality_download": "Download descriptor quality CSV"
+    "row_quality_download": "Download descriptor quality CSV",
+    "row_quality_show_details": "Show detailed row-quality table",
+    "row_quality_details_deferred": "The detailed row-quality table is not rendered automatically. The CSV can be downloaded below."
   },
   "descriptor_coverage": {
     "title": "Selected descriptor coverage by compound",
@@ -1811,7 +1813,9 @@
     "summary_percent": "Coverage, %",
     "summary_total": "Total compounds",
     "summary_intersection": "Full intersection for modelling",
-    "error_no_full_intersection": "No compounds remain for modelling after the required intersection of selected descriptor sources."
+    "error_no_full_intersection": "No compounds remain for modelling after the required intersection of selected descriptor sources.",
+    "show_details": "Show detailed coverage table",
+    "details_deferred": "The detailed table is not rendered automatically to avoid freezing the page. The CSV can be downloaded below."
   },
   "descriptor_mode": {
     "radio_label": "Select mode:",
