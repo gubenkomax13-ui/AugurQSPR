@@ -3159,7 +3159,9 @@ def qspr_detect_data_leakage_columns(
     rows = []
     y_series_for_leakage = None
     y_length_mismatch = False
-    numeric_descriptor_data = {}
+    numeric_descriptor_cols = set()
+    same_ratio_by_col = {}
+    corr_by_col = {}
     if data is not None and y is not None:
         try:
             y_values = np.asarray(y).reshape(-1)
@@ -3184,12 +3186,43 @@ def qspr_detect_data_leakage_columns(
                         errors="coerce",
                     )
                 )
-                numeric_descriptor_data = {
-                    col: numeric_frame[col]
-                    for col in numeric_frame.columns
-                }
+                numeric_descriptor_cols = set(numeric_frame.columns)
+                valid_target_mask = y_series_for_leakage.notna()
+                if int(valid_target_mask.sum()) >= 5:
+                    numeric_valid = numeric_frame.loc[valid_target_mask]
+                    y_valid = y_series_for_leakage.loc[valid_target_mask].astype(float)
+                    valid_counts = numeric_valid.notna().sum(axis=0)
+
+                    same_matrix = np.isclose(
+                        numeric_valid.to_numpy(dtype=float, copy=False),
+                        y_valid.to_numpy(dtype=float).reshape(-1, 1),
+                        rtol=1e-10,
+                        atol=1e-12,
+                        equal_nan=False,
+                    )
+                    same_counts = pd.Series(
+                        same_matrix.sum(axis=0),
+                        index=numeric_valid.columns,
+                    )
+                    same_ratios = same_counts.divide(valid_counts.replace(0, np.nan))
+                    same_ratio_by_col = {
+                        col: float(value)
+                        for col, value in same_ratios.items()
+                        if pd.notna(value) and int(valid_counts.get(col, 0)) >= 5
+                    }
+
+                    corr_series = numeric_valid.corrwith(
+                        y_valid,
+                        axis=0,
+                        method="pearson",
+                    )
+                    corr_by_col = {
+                        col: float(value)
+                        for col, value in corr_series.items()
+                        if pd.notna(value) and np.isfinite(value)
+                    }
             except Exception:
-                numeric_descriptor_data = {}
+                numeric_descriptor_cols = set()
 
     for col in descriptor_cols:
         col_str = str(col)
@@ -3242,35 +3275,18 @@ def qspr_detect_data_leakage_columns(
         if y_length_mismatch:
             possible_reasons.append("target length does not match data rows; leakage correlation check skipped")
 
-        if y_series_for_leakage is not None and col in numeric_descriptor_data:
+        if y_series_for_leakage is not None and col in numeric_descriptor_cols:
             try:
-                x = numeric_descriptor_data[col]
-                y_series = y_series_for_leakage
+                same_ratio = same_ratio_by_col.get(col)
+                if same_ratio is not None and same_ratio >= 0.98:
+                    possible_reasons.append(t('data_leakage.reason_near_identical', ratio=same_ratio))
 
-                mask = x.notna() & y_series.notna()
+                corr = corr_by_col.get(col)
+                if corr is not None:
+                    correlation_to_target = float(corr)
 
-                if mask.sum() >= 5:
-                    x_valid = x.loc[mask].astype(float)
-                    y_valid = y_series.loc[mask].astype(float)
-
-                    same_mask = np.isclose(
-                        x_valid.values,
-                        y_valid.values,
-                        rtol=1e-10,
-                        atol=1e-12
-                    )
-
-                    same_ratio = float(np.mean(same_mask))
-
-                    if same_ratio >= 0.98:
-                        possible_reasons.append(t('data_leakage.reason_near_identical', ratio=same_ratio))
-
-                    if x_valid.nunique(dropna=True) > 1 and y_valid.nunique(dropna=True) > 1:
-                        corr = float(np.corrcoef(x_valid.values, y_valid.values)[0, 1])
-                        correlation_to_target = corr
-
-                        if np.isfinite(corr) and abs(corr) >= correlation_threshold:
-                            strong_predictor_reasons.append(t('data_leakage.reason_high_correlation', corr=corr))
+                    if abs(float(corr)) >= correlation_threshold:
+                        strong_predictor_reasons.append(t('data_leakage.reason_high_correlation', corr=float(corr)))
 
             except Exception:
                 pass
