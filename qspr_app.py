@@ -3302,7 +3302,17 @@ def render_input_data_quality_control(
         disabled=apply_disabled,
     ):
         reset_analysis_nodes(st.session_state, "dataset", SESSION_DEFAULTS)
-        st.session_state.data = qspr_ensure_record_ids(cleaned_df.copy()).reset_index(drop=True)
+        working_df = cleaned_df.copy()
+        qc_helper_cols = [
+            f"{target_col}__raw_before_qc",
+            f"{target_col}__censor",
+        ]
+        working_df = working_df.drop(columns=qc_helper_cols, errors="ignore")
+        st.session_state.data = qspr_ensure_record_ids(working_df).reset_index(drop=True)
+        st.session_state.target_col = target_col
+        st.session_state.target_col_select = target_col
+        st.session_state.smiles_col = smiles_col
+        st.session_state.smiles_col_current = smiles_col
         st.session_state.data_quality_applied = True
         st.session_state.data_quality_target_col = target_col
         st.session_state.data_quality_smiles_col = smiles_col
