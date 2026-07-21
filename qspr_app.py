@@ -3085,6 +3085,10 @@ def render_input_data_quality_control(
         st.info("Нет данных для QC.")
         return data
 
+    if st.session_state.get("data_quality_applied"):
+        st.success("QC исходных данных уже применён к рабочему датасету.")
+        return data
+
     context_cols = context_cols or {}
     unit_candidates = []
     detected_unit_col = context_cols.get("activity_unit")
@@ -3181,16 +3185,26 @@ def render_input_data_quality_control(
         "оставить все": "keep_all",
     }.get(replicate_policy_label, "median")
 
-    run_cols = st.columns([1, 2])
-    with run_cols[0]:
-        run_qc = st.button(
-            "🔎 Проверить исходные данные",
-            type="primary",
-            key="run_input_data_quality_control",
-        )
-    with run_cols[1]:
-        if st.session_state.get("data_quality_applied"):
-            st.success("QC исходных данных уже применён к рабочему датасету.")
+    # QC is a mandatory preflight, not a separate user action.  Recalculate
+    # automatically for a new dataset or whenever its QC rules are changed.
+    qc_signature = json.dumps({
+        "dataset": st.session_state.get("dataset_signature", ""),
+        "rows": len(data),
+        "smiles_col": str(smiles_col),
+        "target_col": str(target_col),
+        "unit_col": str(unit_col or ""),
+        "target_unit": str(target_unit),
+        "convert_units": bool(convert_units),
+        "censored_policy": censored_policy,
+        "replicate_policy": replicate_policy,
+        "iqr_multiplier": float(outlier_iqr_multiplier),
+        "technical_min": float(technical_min) if use_hard_min else None,
+        "technical_max": float(technical_max) if use_hard_max else None,
+    }, ensure_ascii=False, sort_keys=True)
+    run_qc = st.session_state.get("data_quality_check_signature") != qc_signature
+
+    if run_qc:
+        st.caption("QC запускается автоматически. Изменение настроек пересчитывает его до применения датасета.")
 
     if run_qc:
         qc_input = data.copy()
@@ -3221,6 +3235,7 @@ def render_input_data_quality_control(
             st.session_state.data_quality_replicates_df = result.get("replicates_df")
             st.session_state.data_quality_conversions_df = result.get("conversions_df")
             st.session_state.data_quality_outliers_df = result.get("outliers_df")
+            st.session_state.data_quality_check_signature = qc_signature
             add_log(
                 "QC исходных данных выполнен",
                 stage="data_quality",
@@ -3238,7 +3253,7 @@ def render_input_data_quality_control(
 
     result = st.session_state.get("data_quality_result")
     if not isinstance(result, dict):
-        st.info("QC ещё не запускался. Перед моделированием рекомендуется выполнить проверку и применить результат.")
+        st.info("QC готовится автоматически. Дождитесь результата проверки перед применением датасета.")
         return data
 
     summary_df = result.get("summary_df", pd.DataFrame())
@@ -3307,6 +3322,20 @@ def render_input_data_quality_control(
             file_name=st.session_state.get("uploaded_file_name", ""),
             file_size=st.session_state.get("uploaded_file_size", 0),
         )
+        st.session_state.data_quality_check_signature = json.dumps({
+            "dataset": st.session_state.dataset_signature,
+            "rows": len(st.session_state.data),
+            "smiles_col": str(smiles_col),
+            "target_col": str(target_col),
+            "unit_col": str(unit_col or ""),
+            "target_unit": str(target_unit),
+            "convert_units": bool(convert_units),
+            "censored_policy": censored_policy,
+            "replicate_policy": replicate_policy,
+            "iqr_multiplier": float(outlier_iqr_multiplier),
+            "technical_min": float(technical_min) if use_hard_min else None,
+            "technical_max": float(technical_max) if use_hard_max else None,
+        }, ensure_ascii=False, sort_keys=True)
         update_analysis_bundle(
             st.session_state,
             "dataset",
@@ -9147,6 +9176,7 @@ SESSION_DEFAULTS = {
     "data_quality_outliers_df": None,
     "data_quality_target_col": "",
     "data_quality_smiles_col": "",
+    "data_quality_check_signature": "",
     "incremental_result": None,
     "incremental_cols": [],
     "incremental_use_intercept": True,
@@ -9213,6 +9243,7 @@ def reset_project_state_for_new_file():
         "data_quality_outliers_df",
         "data_quality_target_col",
         "data_quality_smiles_col",
+        "data_quality_check_signature",
 
         # Дескрипторы
         "desc_calculated",
@@ -9446,7 +9477,10 @@ with st.sidebar:
 
         if is_admin() and st.button(t('sidebar.update_desc_lists')):
             with st.spinner(t('sidebar.spinner_computing')):
-                lists = qspr_core.qspr_compute_descriptor_lists()
+                # Обновление каталога должно опрашивать установленный PaDEL.
+                # Без probe_padel=True использовался только сохранённый список
+                # уникальных имён и интерфейс ошибочно сообщал о fallback.
+                lists = qspr_core.qspr_compute_descriptor_lists(probe_padel=True)
                 qspr_core.qspr_save_descriptor_lists(lists)
                 st.session_state.desc_lists = lists
                 add_log(t('sidebar.log_lists_updated',
@@ -9829,6 +9863,7 @@ if target_col != old_target:
         "data_quality_outliers_df",
         "data_quality_target_col",
         "data_quality_smiles_col",
+        "data_quality_check_signature",
     ]:
         if dq_key in SESSION_DEFAULTS:
             st.session_state[dq_key] = deepcopy(SESSION_DEFAULTS[dq_key])
@@ -9892,6 +9927,7 @@ if (
 ):
     st.session_state.data_quality_applied = False
     st.session_state.data_quality_result = None
+    st.session_state.data_quality_check_signature = ""
     st.warning("Вы изменили SMILES или целевую колонку — QC исходных данных нужно выполнить заново.")
 
 render_input_data_quality_control(
