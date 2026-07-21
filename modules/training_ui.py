@@ -7,10 +7,12 @@ import pandas as pd
 import seaborn as sns
 import streamlit as st
 from scipy.stats import norm
+from sklearn.impute import SimpleImputer
 
 from modules.i18n import t
 from modules.analysis_state import analysis_result_hash, attach_result_cache_metadata, cached_result_is_current
 from modules.module_explain_ui import render_module_explanation
+from modules.ui_timer import finish_elapsed_timer, show_last_elapsed_time, start_elapsed_timer
 from modules.model_catalog import (
     MODEL_GROUP_BOOSTING,
     MODEL_GROUP_KERNEL_SIMILARITY,
@@ -39,13 +41,277 @@ from modules.qspr_core import (
 from modules.structural_filter_core import qspr_show_descriptor_meaning_table
 
 
+def render_auto_selection_settings(context):
+    """Render pre-training feature selection and tuning settings."""
+    globals().update(context)
+
+    desc_names_current = st.session_state.get("desc_names", [])
+    if desc_names_current is None:
+        desc_names_current = []
+
+    y_all_current = st.session_state.get("y_all", [])
+
+    st.markdown(
+        f'<div class="tool-badge">{t("auto_select.tool_badge")}</div>',
+        unsafe_allow_html=True
+    )
+    with st.expander(t('auto_select.expander_title'), expanded=True):
+        st.session_state.auto_feature_selection = st.checkbox(
+            t('auto_select.enable_selection'),
+            value=bool(st.session_state.get("auto_feature_selection", False)),
+            key="auto_feature_selection_checkbox"
+        )
+
+        st.markdown(t('auto_select.mode_title'))
+
+        feature_selection_label_to_value = {
+            t('auto_select.method_none'): "none",
+            t('auto_select.method_fast'): "fast",
+            t('auto_select.method_f_regression'): "f_regression",
+            t('auto_select.method_mutual_info'): "mutual_info",
+            t('auto_select.method_lasso'): "lasso",
+            t('auto_select.method_rf'): "random_forest",
+            t('auto_select.method_rfe'): "rfe_ridge",
+        }
+
+        current_feature_selection_value = st.session_state.get(
+            "auto_feature_selection_method",
+            "fast"
+        )
+
+        label_values = list(feature_selection_label_to_value.values())
+        label_names = list(feature_selection_label_to_value.keys())
+
+        if current_feature_selection_value in label_values:
+            current_feature_selection_index = label_values.index(current_feature_selection_value)
+        else:
+            current_feature_selection_index = label_values.index("fast")
+
+        selected_feature_selection_label = st.selectbox(
+            t('auto_select.method_label'),
+            label_names,
+            index=current_feature_selection_index,
+            key="auto_feature_selection_method_select_label"
+        )
+
+        st.session_state.auto_feature_selection_method = feature_selection_label_to_value[
+            selected_feature_selection_label
+        ]
+
+        max_possible_features = max(1, len(desc_names_current))
+
+        st.session_state.auto_max_features = st.slider(
+            t('auto_select.max_features_label'),
+            min_value=1,
+            max_value=max_possible_features,
+            value=min(int(st.session_state.get("auto_max_features", 50)), max_possible_features),
+            step=1,
+            key="auto_max_features_slider"
+        )
+
+        st.markdown(t('auto_select.cleaning_title'))
+
+        col_auto_clean_1, col_auto_clean_2, col_auto_clean_3 = st.columns(3)
+
+        with col_auto_clean_1:
+            st.session_state.auto_remove_constant_descriptors = st.checkbox(
+                t('auto_select.remove_constant'),
+                value=bool(st.session_state.get("auto_remove_constant_descriptors", True)),
+                key="auto_remove_constant_descriptors_checkbox"
+            )
+
+        with col_auto_clean_2:
+            st.session_state.auto_remove_correlated_descriptors = st.checkbox(
+                t('auto_select.remove_correlated'),
+                value=bool(st.session_state.get("auto_remove_correlated_descriptors", True)),
+                key="auto_remove_correlated_descriptors_checkbox"
+            )
+
+        with col_auto_clean_3:
+            st.session_state.auto_corr_threshold = st.slider(
+                t('auto_select.corr_threshold_label'),
+                min_value=0.70,
+                max_value=0.999,
+                value=float(st.session_state.get("auto_corr_threshold", 0.95)),
+                step=0.01,
+                format="%.3f",
+                key="auto_corr_threshold_slider"
+            )
+
+        st.caption(t('auto_select.corr_caption'))
+
+        st.markdown(t('auto_select.advanced_title'))
+
+        col_auto_adv_1, col_auto_adv_2, col_auto_adv_3 = st.columns(3)
+
+        with col_auto_adv_1:
+            st.session_state.auto_lasso_selection_alpha = st.number_input(
+                t('auto_select.lasso_alpha_label'),
+                min_value=0.000001,
+                value=float(st.session_state.get("auto_lasso_selection_alpha", 0.01)),
+                step=0.01,
+                format="%.6f",
+                key="auto_lasso_selection_alpha_input"
+            )
+
+        with col_auto_adv_2:
+            st.session_state.auto_rf_selection_estimators = st.slider(
+                t('auto_select.rf_estimators_label'),
+                min_value=50,
+                max_value=1000,
+                value=int(st.session_state.get("auto_rf_selection_estimators", 300)),
+                step=50,
+                key="auto_rf_selection_estimators_slider"
+            )
+
+        with col_auto_adv_3:
+            st.session_state.auto_rfe_step = st.slider(
+                t('auto_select.rfe_step_label'),
+                min_value=0.05,
+                max_value=0.50,
+                value=float(st.session_state.get("auto_rfe_step", 0.2)),
+                step=0.05,
+                format="%.2f",
+                key="auto_rfe_step_slider"
+            )
+
+        show_markdown_help(
+            t('auto_select.help_title'),
+            os.path.join(HELP_DIR, "auto_feature_selection_workflow_help.md"),
+            expanded=False
+        )
+
+        st.caption(t('auto_select.application_caption'))
+
+        auto_feature_enabled = bool(st.session_state.get("auto_feature_selection", False))
+        preview_settings = {
+            "method": st.session_state.get("auto_feature_selection_method", "fast"),
+            "max_features": int(st.session_state.get("auto_max_features", 50)),
+            "remove_constant": bool(st.session_state.get("auto_remove_constant_descriptors", True)),
+            "remove_correlated": bool(st.session_state.get("auto_remove_correlated_descriptors", True)),
+            "corr_threshold": float(st.session_state.get("auto_corr_threshold", 0.95)),
+            "lasso_alpha": float(st.session_state.get("auto_lasso_selection_alpha", 0.01)),
+            "rf_n_estimators": int(st.session_state.get("auto_rf_selection_estimators", 300)),
+            "rfe_step": float(st.session_state.get("auto_rfe_step", 0.2)),
+            "random_state": 42,
+        }
+
+        if st.button(
+            t('auto_select.run_preview_button'),
+            key="run_descriptor_selection_preview",
+            disabled=not auto_feature_enabled,
+            type="primary",
+        ):
+            try:
+                with st.spinner(t('auto_select.preview_spinner')):
+                    X_preview = np.asarray(st.session_state.get("X_all"), dtype=float)
+                    y_preview = np.asarray(y_all_current, dtype=float)
+                    X_preview_imputed = SimpleImputer(strategy="median").fit_transform(X_preview)
+                    selector_preview = qspr_core.qspr_make_descriptor_selector({
+                        **preview_settings,
+                        "desc_names": list(desc_names_current),
+                    })
+                    selector_preview.fit(X_preview_imputed, y_preview)
+                    st.session_state.descriptor_selection_preview = {
+                        "settings": dict(preview_settings),
+                        "selected_desc_names": list(selector_preview.selected_names_),
+                        "selection_summary": dict(selector_preview.selection_summary_),
+                        "selection_table": selector_preview.selection_table_.copy(),
+                        "initial_descriptor_count": len(desc_names_current),
+                    }
+                st.rerun()
+            except Exception as exc:
+                st.error(t('auto_select.preview_error', error=exc))
+
+        selection_preview = st.session_state.get("descriptor_selection_preview")
+        if isinstance(selection_preview, dict):
+            preview_message = t(
+                'auto_select.preview_completed',
+                initial=selection_preview.get("initial_descriptor_count", len(desc_names_current)),
+                selected=len(selection_preview.get("selected_desc_names", []) or []),
+            )
+            if selection_preview.get("settings") == preview_settings and auto_feature_enabled:
+                st.success(preview_message)
+            else:
+                st.warning(t('auto_select.preview_settings_changed', result=preview_message))
+        elif auto_feature_enabled:
+            st.info(t('auto_select.preview_pending'))
+
+
+def render_hyperparameter_optimization_settings(context, model_name, sample_count):
+    """Render model-specific hyperparameter search settings immediately before training."""
+    globals().update(context)
+    optimization_supported = bool(qspr_core.qspr_get_param_grid(model_name))
+    if not optimization_supported:
+        st.session_state.auto_hyperparameter_optimization = False
+        st.session_state.auto_hyperparameter_optimization_checkbox = False
+
+    with st.expander(
+        t(
+            'hyperparameter_optimization.expander_title',
+            model=get_model_display_name(model_name),
+        ),
+        expanded=bool(st.session_state.get("auto_hyperparameter_optimization", False)),
+    ):
+        st.session_state.auto_hyperparameter_optimization = st.checkbox(
+            t('hyperparameter_optimization.enable'),
+            value=bool(st.session_state.get("auto_hyperparameter_optimization", False)),
+            key="auto_hyperparameter_optimization_checkbox",
+            disabled=not optimization_supported,
+        )
+
+        if not optimization_supported:
+            st.warning(t(
+                'hyperparameter_optimization.unsupported_warning',
+                model=get_model_display_name(model_name),
+            ))
+        elif st.session_state.auto_hyperparameter_optimization:
+            max_cv = max(2, min(10, int(sample_count)))
+            st.session_state.auto_cv = st.slider(
+                t('hyperparameter_optimization.cv_label'),
+                min_value=2,
+                max_value=max_cv,
+                value=min(int(st.session_state.get("auto_cv", 5)), max_cv),
+                step=1,
+                key="auto_cv_slider",
+            )
+            st.session_state.auto_search_method = st.radio(
+                t('hyperparameter_optimization.search_method_label'),
+                ["grid", "random"],
+                index=(
+                    0
+                    if st.session_state.get("auto_search_method", "grid") == "grid"
+                    else 1
+                ),
+                horizontal=True,
+                format_func=lambda value: t(
+                    f'hyperparameter_optimization.search_{value}'
+                ),
+                key="auto_search_method_radio",
+            )
+            st.info(t(
+                'hyperparameter_optimization.enabled_info',
+                model=get_model_display_name(model_name),
+                cv=st.session_state.auto_cv,
+            ))
+        else:
+            st.caption(t('hyperparameter_optimization.disabled_caption'))
+
+        show_markdown_help(
+            t('hyperparameter_optimization.help_title'),
+            os.path.join(HELP_DIR, "hyperparameter_optimization_help.md"),
+            expanded=False,
+        )
+
+
 def render_training_section(context):
     """Рендерит обучение и возвращает контекст выбранной модели."""
     globals().update(context)
     # ------------------------------------------------------------------
     # Model selection
     
-    st.header(t('model_selection.header'))
+    if not context.get("skip_model_selection_header", False):
+        st.header(t('model_selection.header'))
     render_module_explanation("training")
     
     MODEL_FILTER_OPTIONS = {
@@ -135,6 +401,29 @@ def render_training_section(context):
             filtered=filtered_model_count,
             total=total_model_count,
         ))
+
+    # A comparison result can request a transition to single-model mode.
+    # Apply it before the model widgets are created, otherwise Streamlit keeps
+    # their previous values after the rerun.
+    pending_model_value = st.session_state.get("pending_selected_model")
+    pending_model = (
+        normalize_model_id(pending_model_value)
+        if pending_model_value
+        else None
+    )
+    if pending_model:
+        pending_group = next(
+            (
+                group
+                for group, models in model_groups.items()
+                if pending_model in models
+            ),
+            None,
+        )
+        if pending_group is not None:
+            st.session_state.model_group_radio = pending_group
+            st.session_state.model_algorithm_radio = pending_model
+            st.session_state.pending_selected_model = None
     
     if st.session_state.get("model_group_radio") not in model_groups:
         st.session_state.model_group_radio = next(iter(model_groups))
@@ -946,162 +1235,8 @@ def render_training_section(context):
         desc_names_current = []
         st.info(t('model_params.gep_info'))
     
-    
-    st.markdown(
-        f'<div class="tool-badge">{t("auto_select.tool_badge")}</div>',
-        unsafe_allow_html=True
-    )
-    with st.expander(t('auto_select.expander_title'), expanded=False):
-        st.session_state.auto_feature_selection = st.checkbox(
-            t('auto_select.enable_selection'),
-            value=bool(st.session_state.get("auto_feature_selection", False)),
-            key="auto_feature_selection_checkbox"
-        )
-    
-        st.session_state.auto_hyperparameter_optimization = st.checkbox(
-            t('auto_select.enable_optimization'),
-            value=bool(st.session_state.get("auto_hyperparameter_optimization", False)),
-            key="auto_hyperparameter_optimization_checkbox"
-        )
-    
-        st.markdown(t('auto_select.mode_title'))
-    
-        # Переведённые названия методов
-        feature_selection_label_to_value = {
-            t('auto_select.method_none'): "none",
-            t('auto_select.method_fast'): "fast",
-            t('auto_select.method_f_regression'): "f_regression",
-            t('auto_select.method_mutual_info'): "mutual_info",
-            t('auto_select.method_lasso'): "lasso",
-            t('auto_select.method_rf'): "random_forest",
-            t('auto_select.method_rfe'): "rfe_ridge",
-        }
-    
-        current_feature_selection_value = st.session_state.get(
-            "auto_feature_selection_method",
-            "fast"
-        )
-    
-        label_values = list(feature_selection_label_to_value.values())
-        label_names = list(feature_selection_label_to_value.keys())
-    
-        if current_feature_selection_value in label_values:
-            current_feature_selection_index = label_values.index(current_feature_selection_value)
-        else:
-            current_feature_selection_index = label_values.index("fast")
-    
-        selected_feature_selection_label = st.selectbox(
-            t('auto_select.method_label'),
-            label_names,
-            index=current_feature_selection_index,
-            key="auto_feature_selection_method_select_label"
-        )
-    
-        st.session_state.auto_feature_selection_method = feature_selection_label_to_value[
-            selected_feature_selection_label
-        ]
-    
-        max_possible_features = max(1, len(desc_names_current))
-    
-        st.session_state.auto_max_features = st.slider(
-            t('auto_select.max_features_label'),
-            min_value=1,
-            max_value=max_possible_features,
-            value=min(int(st.session_state.get("auto_max_features", 50)), max_possible_features),
-            step=1,
-            key="auto_max_features_slider"
-        )
-    
-        st.markdown(t('auto_select.cleaning_title'))
-    
-        col_auto_clean_1, col_auto_clean_2, col_auto_clean_3 = st.columns(3)
-    
-        with col_auto_clean_1:
-            st.session_state.auto_remove_constant_descriptors = st.checkbox(
-                t('auto_select.remove_constant'),
-                value=bool(st.session_state.get("auto_remove_constant_descriptors", True)),
-                key="auto_remove_constant_descriptors_checkbox"
-            )
-    
-        with col_auto_clean_2:
-            st.session_state.auto_remove_correlated_descriptors = st.checkbox(
-                t('auto_select.remove_correlated'),
-                value=bool(st.session_state.get("auto_remove_correlated_descriptors", True)),
-                key="auto_remove_correlated_descriptors_checkbox"
-            )
-    
-        with col_auto_clean_3:
-            st.session_state.auto_corr_threshold = st.slider(
-                t('auto_select.corr_threshold_label'),
-                min_value=0.70,
-                max_value=0.999,
-                value=float(st.session_state.get("auto_corr_threshold", 0.95)),
-                step=0.01,
-                format="%.3f",
-                key="auto_corr_threshold_slider"
-            )
-    
-        st.caption(t('auto_select.corr_caption'))
-    
-        st.markdown(t('auto_select.advanced_title'))
-    
-        col_auto_adv_1, col_auto_adv_2, col_auto_adv_3 = st.columns(3)
-    
-        with col_auto_adv_1:
-            st.session_state.auto_lasso_selection_alpha = st.number_input(
-                t('auto_select.lasso_alpha_label'),
-                min_value=0.000001,
-                value=float(st.session_state.get("auto_lasso_selection_alpha", 0.01)),
-                step=0.01,
-                format="%.6f",
-                key="auto_lasso_selection_alpha_input"
-            )
-    
-        with col_auto_adv_2:
-            st.session_state.auto_rf_selection_estimators = st.slider(
-                t('auto_select.rf_estimators_label'),
-                min_value=50,
-                max_value=1000,
-                value=int(st.session_state.get("auto_rf_selection_estimators", 300)),
-                step=50,
-                key="auto_rf_selection_estimators_slider"
-            )
-    
-        with col_auto_adv_3:
-            st.session_state.auto_rfe_step = st.slider(
-                t('auto_select.rfe_step_label'),
-                min_value=0.05,
-                max_value=0.50,
-                value=float(st.session_state.get("auto_rfe_step", 0.2)),
-                step=0.05,
-                format="%.2f",
-                key="auto_rfe_step_slider"
-            )
-    
-        st.markdown(t('auto_select.cv_title'))
-    
-        st.session_state.auto_cv = st.slider(
-            t('auto_select.cv_slider_label'),
-            min_value=2,
-            max_value=max(2, min(10, len(y_all_current))),
-            value=min(int(st.session_state.get("auto_cv", 5)), max(2, min(10, len(y_all_current)))),
-            step=1,
-            key="auto_cv_slider"
-        )
-    
-        st.session_state.auto_search_method = st.radio(
-            t('auto_select.search_method_label'),
-            ["grid", "random"],
-            index=0 if st.session_state.get("auto_search_method", "grid") == "grid" else 1,
-            horizontal=True,
-            key="auto_search_method_radio"
-        )
-    
-        show_markdown_help(
-            t('auto_select.help_title'),
-            os.path.join(HELP_DIR, "auto_feature_selection_help.md"),
-            expanded=False
-        )
+    if not context.get("skip_auto_select_settings", False):
+        render_auto_selection_settings(context)
 
     current_params_for_guidance = get_model_params_from_session()
     current_guidance = qspr_model_applicability_guidance(
@@ -1185,14 +1320,29 @@ def render_training_section(context):
                 )
                 st.json(seed_result.get("summary", {}))
     
+    render_hyperparameter_optimization_settings(
+        context,
+        model_name,
+        len(y_all_current),
+    )
+
     # Training
     train_clicked = st.button(
         t('model_training.train_button'),
         type="primary",
         disabled=online_model_locked or model_resource_blocked,
     )
+    show_last_elapsed_time(
+        "single_model_training",
+        t('timing.last_single_model_training'),
+    )
     
     if train_clicked:
+        timer_started_at, timer_placeholder = start_elapsed_timer(
+            "single_model_training",
+            t('timing.single_model_in_progress', model=get_model_display_name(model_name)),
+        )
+        timer_finished = False
         try:
             use_auto = (
                 st.session_state.get("auto_feature_selection", False) or
@@ -1231,6 +1381,8 @@ def render_training_section(context):
                         rf_selection_estimators=st.session_state.get("auto_rf_selection_estimators", 300),
                         rfe_step=st.session_state.get("auto_rfe_step", 0.2)
                     )
+                    auto_result["model_name"] = model_name
+                    auto_result["initial_descriptor_count"] = len(desc_names_current)
     
                     X_model_space = auto_result.get("X_model_space", X_all_current)
                     y_pred_all = np.ravel(
@@ -1309,7 +1461,13 @@ def render_training_section(context):
                         },
                         event="auto_feature_selection_completed",
                     )
-    
+                    finish_elapsed_timer(
+                        "single_model_training",
+                        timer_started_at,
+                        timer_placeholder,
+                        t('timing.last_single_model_training'),
+                    )
+                    timer_finished = True
                     st.rerun()
     
             else:
@@ -1360,10 +1518,25 @@ def render_training_section(context):
                     st.session_state.kfold_results_dict.pop(model_name, None)
                     st.session_state.loo_results_dict.pop(model_name, None)
                     add_log(t('model_training.log_trained', model=model_name))
+                    finish_elapsed_timer(
+                        "single_model_training",
+                        timer_started_at,
+                        timer_placeholder,
+                        t('timing.last_single_model_training'),
+                    )
+                    timer_finished = True
                     st.rerun()
     
         except Exception as e:
             st.error(t('model_training.train_error', error=e))
+        finally:
+            if not timer_finished:
+                finish_elapsed_timer(
+                    "single_model_training",
+                    timer_started_at,
+                    timer_placeholder,
+                    t('timing.last_single_model_training'),
+                )
     
     # ------------------------------------------------------------------
     # Display trained model

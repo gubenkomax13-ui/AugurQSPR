@@ -10,6 +10,7 @@ from scipy.stats import norm
 from modules.advanced_validation_ui import render_advanced_validation_section
 from modules.analysis_state import analysis_result_hash, attach_result_cache_metadata, cached_result_is_current
 from modules.i18n import t
+from modules.model_catalog import normalize_model_id
 from modules.module_explain_ui import render_module_explanation
 from modules.qspr_core import (
     qspr_csv_download_bytes,
@@ -34,6 +35,19 @@ def _fmt_mape_metric(metrics):
     if not metrics.get("MAPE_applicable", True):
         return "N/A"
     return _fmt_validation_metric(metrics.get("MAPE_percent"), 2)
+
+
+def _model_result_from_store(store, model_name):
+    """Find a model result even when one screen stored an alias/display name."""
+    if not isinstance(store, dict):
+        return None
+    if model_name in store:
+        return store[model_name]
+    target_id = normalize_model_id(model_name)
+    for stored_name, result in store.items():
+        if normalize_model_id(stored_name) == target_id:
+            return result
+    return None
 
 
 def _render_metric_diagnostics(metrics, label):
@@ -116,14 +130,158 @@ def render_validation_section(context):
             valid_indices=valid_indices_current,
         )
 
-    def _current_cached_validation_result(store_name, model_name, settings):
-        result = st.session_state.get(store_name, {}).get(model_name)
+    def _normalized_validation_settings(settings):
+        normalized = dict(settings or {})
+        if normalized.get("kind") == "holdout":
+            normalized.setdefault("stratify_y_quantiles", False)
+            normalized.setdefault("manual_indices", None)
+        return normalized
+
+    def _cached_validation_result_is_current(result, model_name, settings):
         if not isinstance(result, dict):
-            return None
-        expected_hash = _validation_cache_hash(model_name, settings)
-        if not cached_result_is_current(result, expected_hash):
+            return False
+        stored_settings = result.get("validation_settings")
+        if not isinstance(stored_settings, dict):
+            return False
+        if _normalized_validation_settings(stored_settings) != _normalized_validation_settings(settings):
+            return False
+        # Hash with the settings representation that was used when the result
+        # was created. This treats omitted default values as equivalent to
+        # explicitly stored defaults without accepting changed calculations.
+        return cached_result_is_current(
+            result,
+            _validation_cache_hash(model_name, stored_settings),
+        )
+
+    def _current_cached_validation_result(store_name, model_name, settings):
+        result = _model_result_from_store(
+            st.session_state.get(store_name, {}),
+            model_name,
+        )
+        if not _cached_validation_result_is_current(result, model_name, settings):
             return None
         return result
+
+    # Comparison mode calculates the same validations. Promote legacy
+    # comparison results into the single-model stores and align the controls
+    # with the settings that produced them, without recalculation.
+    comparison_model = st.session_state.get("last_model_algorithm")
+    if comparison_model:
+        handoff = st.session_state.get("pending_comparison_validation_handoff")
+        if not isinstance(handoff, dict):
+            best_from_comparison = st.session_state.get("best_model_from_comparison")
+            legacy_marker = st.session_state.get("comparison_validation_handoff_applied_for")
+            if (
+                best_from_comparison
+                and normalize_model_id(best_from_comparison) == normalize_model_id(comparison_model)
+                and legacy_marker != normalize_model_id(comparison_model)
+            ):
+                handoff = {
+                    "model": best_from_comparison,
+                    "holdout_enabled": bool(st.session_state.get("cmp_run_holdout", True)),
+                    "holdout_test_percent": int(st.session_state.get("cmp_holdout_test_size_percent", 20)),
+                    "holdout_random_state": 42,
+                    "kfold_enabled": bool(st.session_state.get("cmp_run_kfold", True)),
+                    "kfold_k": int(st.session_state.get("cmp_kfold_k", 5)),
+                    "montecarlo_enabled": bool(st.session_state.get("cmp_run_montecarlo_top", False)),
+                    "montecarlo_repeats": int(st.session_state.get("cmp_mc_repeats", 50)),
+                    "bootstrap_enabled": bool(st.session_state.get("cmp_run_bootstrap_top", False)),
+                    "bootstrap_repeats": int(st.session_state.get("cmp_bootstrap_repeats", 100)),
+                    "yrandom_enabled": bool(st.session_state.get("cmp_run_yrandom_top", False)),
+                    "yrandom_repeats": int(st.session_state.get("cmp_yrandom_repeats", 100)),
+                }
+
+        if (
+            isinstance(handoff, dict)
+            and normalize_model_id(handoff.get("model")) == normalize_model_id(comparison_model)
+        ):
+            st.session_state.holdout_test_size = int(handoff.get("holdout_test_percent", 20))
+            st.session_state.holdout_random = True
+            st.session_state.holdout_rs = int(handoff.get("holdout_random_state", 42))
+            st.session_state.holdout_stratify_y_quantiles = False
+            st.session_state.kfold_k = int(handoff.get("kfold_k", 5))
+
+            if handoff.get("montecarlo_enabled"):
+                st.session_state.repeated_holdout_n = int(handoff.get("montecarlo_repeats", 50))
+                st.session_state.repeated_holdout_test_percent = int(handoff.get("holdout_test_percent", 20))
+                st.session_state.repeated_holdout_seed = 42
+                st.session_state.repeated_holdout_save_details = True
+
+            if handoff.get("bootstrap_enabled"):
+                st.session_state.bootstrap_n_iterations = int(handoff.get("bootstrap_repeats", 100))
+                st.session_state.bootstrap_sample_percent = 100
+                st.session_state.bootstrap_seed = 42
+                st.session_state.bootstrap_save_oob_predictions = True
+
+            if handoff.get("yrandom_enabled"):
+                st.session_state.y_randomization_method = "kfold"
+                st.session_state.y_randomization_n_perm = int(handoff.get("yrandom_repeats", 100))
+                st.session_state.y_randomization_k = int(handoff.get("kfold_k", 5))
+                st.session_state.y_randomization_seed = 42
+
+            st.session_state.comparison_validation_handoff_applied_for = normalize_model_id(
+                comparison_model
+            )
+            st.session_state.pending_comparison_validation_handoff = None
+
+        mc_result = _model_result_from_store(
+            st.session_state.get("montecarlo_results_dict", {}),
+            comparison_model,
+        )
+        if isinstance(mc_result, dict):
+            st.session_state.setdefault("repeated_holdout_results_dict", {})[
+                comparison_model
+            ] = mc_result
+
+        bootstrap_result = _model_result_from_store(
+            st.session_state.get("bootstrap_results_dict", {}),
+            comparison_model,
+        )
+        if isinstance(bootstrap_result, dict) and "config_hash" not in bootstrap_result:
+            bootstrap_summary = bootstrap_result.get("summary", {}) or {}
+            bootstrap_settings = {
+                "kind": "bootstrap",
+                "n_iterations": int(bootstrap_summary.get("n_iterations_requested", 200)),
+                "sample_fraction": float(bootstrap_summary.get("sample_fraction", 1.0)),
+                "random_state": 42,
+                "save_oob_predictions": True,
+            }
+            bootstrap_result = dict(bootstrap_result)
+            bootstrap_result["validation_settings"] = bootstrap_settings
+            bootstrap_result = attach_result_cache_metadata(
+                bootstrap_result,
+                _validation_cache_hash(comparison_model, bootstrap_settings),
+            )
+            st.session_state.bootstrap_results_dict[comparison_model] = bootstrap_result
+
+        yr_result = _model_result_from_store(
+            st.session_state.get("yrandom_results_dict", {}),
+            comparison_model,
+        )
+        if isinstance(yr_result, dict):
+            yr_summary = yr_result.get("summary", {}) or {}
+            yr_method = (
+                "loo"
+                if str(yr_summary.get("validation_method", "")).lower().startswith("leave")
+                else "kfold"
+            )
+            yr_settings = {
+                "kind": "y_randomization",
+                "method": yr_method,
+                "n_permutations": int(yr_summary.get("n_permutations", 100)),
+                "k": int(st.session_state.get("cmp_kfold_k", 5)),
+                "random_state": 42,
+            }
+            if "config_hash" not in yr_result:
+                yr_result = dict(yr_result)
+                yr_result["validation_settings"] = yr_settings
+                yr_result = attach_result_cache_metadata(
+                    yr_result,
+                    _validation_cache_hash(comparison_model, yr_settings),
+                )
+            st.session_state.setdefault("y_randomization_results_dict", {})[
+                comparison_model
+            ] = yr_result
     # ------------------------------------------------------------------
     # Validation
     
@@ -286,24 +444,19 @@ def render_validation_section(context):
     
         res = st.session_state.holdout_results_dict.get(st.session_state.last_model_algorithm)
         if isinstance(res, dict):
-            expected_hash = analysis_result_hash(
-                st.session_state,
+            current_holdout_settings = {
+                "kind": "holdout",
+                "test_size": test_size,
+                "random_state": int(random_state) if use_random else 42,
+                "use_random": use_random,
+                "stratify_y_quantiles": bool(stratify_y_quantiles),
+                "manual_indices": manual_indices,
+            }
+            if not _cached_validation_result_is_current(
+                res,
                 st.session_state.last_model_algorithm,
-                params=get_model_params_from_session(),
-                validation_settings={
-                    "kind": "holdout",
-                    "test_size": test_size,
-                    "random_state": int(random_state) if use_random else 42,
-                    "use_random": use_random,
-                    "stratify_y_quantiles": bool(stratify_y_quantiles),
-                    "manual_indices": manual_indices,
-                },
-                X=X_all_current,
-                y=y_all_current,
-                desc_names=desc_names_for_validation,
-                valid_indices=valid_indices_current,
-            )
-            if not cached_result_is_current(res, expected_hash):
+                current_holdout_settings,
+            ):
                 st.warning(
                     t("validation.stale_holdout_warning")
                 )

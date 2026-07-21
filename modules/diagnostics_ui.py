@@ -15,8 +15,13 @@ from modules.descriptor_importance_core import (
     descriptor_permutation_importance,
     descriptor_unified_importance_table,
 )
+from modules.descriptor_mechanism_core import (
+    build_mechanistic_interpretation_table,
+    raw_scale_linear_equation,
+)
 from modules.i18n import t
 from modules.module_explain_ui import render_module_explanation
+from modules.qspr_core import qspr_csv_download_bytes, qspr_load_descriptor_meanings
 
 try:
     from scipy.stats import pearsonr, spearmanr
@@ -858,6 +863,7 @@ def render_model_diagnostics_section(context):
             t('feature_importance.tab_permutation'),
             t('feature_importance.tab_shap'),
             t('feature_importance.tab_summary'),
+            "Механистическая интерпретация",
         ])
     
         with importance_tabs[0]:
@@ -1433,4 +1439,95 @@ def render_model_diagnostics_section(context):
                     "text/csv",
                     key=f"download_descriptor_importance_unified_{model_name}",
                 )
+
+        with importance_tabs[4]:
+            permutation_result = st.session_state.get(
+                f"descriptor_importance_result_{model_name}",
+                {},
+            )
+            permutation_table_summary = (
+                permutation_result.get("permutation")
+                if isinstance(permutation_result, dict)
+                else None
+            )
+            shap_table_summary = st.session_state.get(
+                f"descriptor_shap_result_{model_name}"
+            )
+            unified_importance = descriptor_unified_importance_table(
+                coefficient_table=coefficient_table,
+                native_table=native_importance_table,
+                permutation_table=permutation_table_summary,
+                shap_table=shap_table_summary,
+            )
+            if unified_importance.empty:
+                st.info(
+                    "Сначала нужны коэффициенты, native importance, permutation importance или SHAP. "
+                    "Механистическая таблица строится поверх этих сигналов."
+                )
+            else:
+                descriptor_meanings = qspr_load_descriptor_meanings()
+                top_mechanism_n = st.number_input(
+                    "Сколько ключевых дескрипторов интерпретировать",
+                    min_value=5,
+                    max_value=max(5, min(100, len(unified_importance))),
+                    value=min(20, max(5, len(unified_importance))),
+                    step=5,
+                    key=f"mechanistic_top_n_{model_name}",
+                )
+                mechanism_table, mode_note = build_mechanistic_interpretation_table(
+                    unified_importance=unified_importance,
+                    descriptor_meanings=descriptor_meanings,
+                    X=np.asarray(X_all_current, dtype=float),
+                    desc_names=desc_names_current,
+                    target_col=target_col,
+                    model_name=model_name,
+                    top_n=int(top_mechanism_n),
+                )
+                st.warning(mode_note)
+                st.caption(
+                    "Это не доказательство причинности: таблица связывает статистический вклад дескриптора "
+                    "с его физико-химическим смыслом и областью данных, где наблюдался эффект."
+                )
+                st.dataframe(
+                    mechanism_table,
+                    width="stretch",
+                    hide_index=True,
+                )
+                st.download_button(
+                    "Скачать механистическую интерпретацию CSV",
+                    qspr_csv_download_bytes(mechanism_table),
+                    f"mechanistic_interpretation_{model_name}.csv",
+                    "text/csv",
+                    key=f"download_mechanistic_interpretation_{model_name}",
+                )
+
+                raw_equation = raw_scale_linear_equation(
+                    model=model,
+                    scaler=context.get("scaler", globals().get("scaler", None)),
+                    feature_names=native_feature_names,
+                    target_name=target_col,
+                )
+                if raw_equation is not None:
+                    st.markdown("#### Уравнение линейной модели в исходной шкале дескрипторов")
+                    st.code(raw_equation["equation"])
+                    st.caption(
+                        "Уравнение пересчитано из scaled-признаков в raw units через параметры StandardScaler. "
+                        f"Масштаб: {raw_equation['scale_note']}."
+                    )
+                    st.dataframe(
+                        raw_equation["coefficient_table"],
+                        width="stretch",
+                        hide_index=True,
+                    )
+                    st.download_button(
+                        "Скачать raw-коэффициенты CSV",
+                        qspr_csv_download_bytes(raw_equation["coefficient_table"]),
+                        f"raw_scale_coefficients_{model_name}.csv",
+                        "text/csv",
+                        key=f"download_raw_scale_coefficients_{model_name}",
+                    )
+                else:
+                    st.info(
+                        "Raw-уравнение доступно только для линейных моделей, когда можно сопоставить коэффициенты, scaler и активные дескрипторы."
+                    )
     

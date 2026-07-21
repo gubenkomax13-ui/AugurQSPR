@@ -27,7 +27,8 @@ from sklearn.metrics import r2_score
 from datetime import datetime
 import os
 
-from rdkit import Chem
+from rdkit import Chem, DataStructs
+from rdkit.Chem import rdFingerprintGenerator
 
 try:
     from .i18n import t
@@ -261,7 +262,7 @@ def qspr_prog_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
 
 
 def qspr_prog_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
-    """Leverage AD with rank-aware threshold and stable status codes."""
+    """Stable leverage-like AD for prediction without pseudo-inverse failures."""
     X_train = np.asarray(X_train, dtype=float)
 
     if X_train.ndim != 2:
@@ -288,13 +289,18 @@ def qspr_prog_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
         )
 
     n, p = X_train.shape
-    X_aug = np.column_stack([np.ones(n), X_train])
-    Xq_aug = np.column_stack([np.ones(X_query.shape[0]), X_query])
-
-    xtx_inv = np.linalg.pinv(X_aug.T @ X_aug)
-    leverage = np.einsum("ij,jk,ik->i", Xq_aug, xtx_inv, Xq_aug)
-
-    rank = int(np.linalg.matrix_rank(X_aug))
+    center = np.nanmean(X_train, axis=0)
+    scale = np.nanstd(X_train, axis=0, ddof=1)
+    active = np.isfinite(scale) & (scale > 1e-12)
+    if not np.any(active):
+        leverage = np.full(X_query.shape[0], 1.0 / float(n))
+        rank = 1
+    else:
+        z_query = (X_query[:, active] - center[active]) / scale[active]
+        leverage = (1.0 / float(n)) + (
+            np.sum(z_query * z_query, axis=1) / max(float(n - 1), 1.0)
+        )
+        rank = min(int(np.sum(active)) + 1, n)
     threshold = 3.0 * float(rank) / float(n)
     warnings = []
     if rank < p + 1:
@@ -548,6 +554,159 @@ def qspr_prog_range_ad(X_train_raw, X_query_raw):
     inside_mask = (X_query_raw >= mins) & (X_query_raw <= maxs)
     outside_fraction = 1.0 - np.mean(inside_mask, axis=1)
     return outside_fraction, outside_fraction <= 0.0
+
+
+def qspr_prog_density_ad(X_train_scaled, X_query_scaled, k=5, quantile=95):
+    """Local density AD: mean distance to k nearest training neighbours."""
+    X_train_scaled = np.asarray(X_train_scaled, dtype=float)
+    X_query_scaled = np.asarray(X_query_scaled, dtype=float)
+    if X_query_scaled.ndim == 1:
+        X_query_scaled = X_query_scaled.reshape(1, -1)
+    if X_train_scaled.ndim != 2 or X_query_scaled.ndim != 2:
+        raise ValueError("Density AD expects two-dimensional matrices.")
+    if X_train_scaled.shape[0] < 3:
+        n_query = X_query_scaled.shape[0]
+        return np.full(n_query, np.nan), np.nan, np.array([False] * n_query)
+
+    k = min(max(1, int(k)), X_train_scaled.shape[0] - 1)
+    train_delta = X_train_scaled[:, None, :] - X_train_scaled[None, :, :]
+    train_pairwise = np.sqrt(np.sum(train_delta * train_delta, axis=2))
+    np.fill_diagonal(train_pairwise, np.nan)
+    train_distances = np.sort(train_pairwise, axis=1)[:, :k]
+    train_density_distance = np.mean(train_distances, axis=1)
+    threshold = float(np.nanpercentile(train_density_distance, float(quantile)))
+
+    query_delta = X_query_scaled[:, None, :] - X_train_scaled[None, :, :]
+    query_pairwise = np.sqrt(np.sum(query_delta * query_delta, axis=2))
+    query_density_distance = np.mean(np.sort(query_pairwise, axis=1)[:, :k], axis=1)
+    return (
+        query_density_distance,
+        threshold,
+        query_density_distance <= threshold,
+    )
+
+
+def qspr_prog_morgan_fingerprint(smiles):
+    if Chem is None or rdFingerprintGenerator is None:
+        return None
+    mol = Chem.MolFromSmiles(str(smiles))
+    if mol is None:
+        return None
+    generator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
+    return generator.GetFingerprint(mol)
+
+
+def qspr_prog_tanimoto_similarity_ad(train_smiles, query_smiles, threshold=0.50):
+    """Maximum Morgan/Tanimoto similarity to training structures."""
+    if Chem is None or DataStructs is None:
+        return None
+    train_fps = [
+        qspr_prog_morgan_fingerprint(value)
+        for value in safe_list(train_smiles)
+    ]
+    train_fps = [fp for fp in train_fps if fp is not None]
+    query_values = safe_list(query_smiles)
+    if not train_fps or not query_values:
+        return None
+
+    maximum = []
+    for value in query_values:
+        fp = qspr_prog_morgan_fingerprint(value)
+        if fp is None:
+            maximum.append(np.nan)
+        else:
+            maximum.append(max(DataStructs.BulkTanimotoSimilarity(fp, train_fps)))
+    maximum = np.asarray(maximum, dtype=float)
+    return maximum, float(threshold), maximum >= float(threshold)
+
+
+def qspr_prog_build_ad_profile(
+    X_train_raw=None,
+    X_train_scaled=None,
+    train_smiles=None,
+    desc_names=None,
+):
+    """Save reusable AD thresholds and settings into the prognostic package."""
+    profile = {
+        "schema_version": "1.0",
+        "status_rule": "outside if any hard AD signal is outside; borderline if near a threshold or medium reliability; inside otherwise",
+        "leverage": {
+            "method": "stable diagonal leverage-like distance in scaled descriptor space",
+            "threshold_formula": "h* = 3 * min(active_features + 1, n) / n",
+        },
+        "distance": {
+            "method": "nearest-neighbour distance in scaled descriptor space",
+            "threshold_quantile": 0.95,
+        },
+        "density": {
+            "method": "mean distance to k nearest neighbours in scaled descriptor space",
+            "k": 5,
+            "threshold_quantile": 0.95,
+        },
+        "similarity": {
+            "method": "Morgan radius 2 / 2048-bit Tanimoto similarity",
+            "threshold": 0.50,
+        },
+        "descriptor_range": {
+            "method": "training descriptor min/max range",
+            "status": "inside only when no descriptor is outside the saved range",
+        },
+        "desc_names": safe_list(desc_names),
+    }
+    try:
+        train_scaled = qspr_prog_safe_numeric_matrix(X_train_scaled)
+        if train_scaled is not None:
+            _, distance_threshold, _ = qspr_prog_nearest_distance_ad(
+                train_scaled,
+                train_scaled,
+            )
+            _, density_threshold, _ = qspr_prog_density_ad(
+                train_scaled,
+                train_scaled,
+                k=profile["density"]["k"],
+            )
+            n_train, n_features = train_scaled.shape
+            rank_approx = min(n_features + 1, n_train)
+            leverage_threshold = 3.0 * float(rank_approx) / float(n_train)
+            profile["leverage"].update({
+                "threshold": float(leverage_threshold),
+                "n": int(n_train),
+                "p": int(n_features),
+                "rank": int(rank_approx),
+                "warnings": (
+                    ["LEVERAGE_THRESHOLD_GE_1_NOT_INFORMATIVE"]
+                    if leverage_threshold >= 1.0
+                    else []
+                ),
+            })
+            profile["distance"]["threshold"] = float(distance_threshold)
+            profile["density"]["threshold"] = float(density_threshold)
+    except Exception as exc:
+        profile["threshold_error"] = str(exc)
+
+    train_raw = qspr_prog_safe_numeric_matrix(X_train_raw)
+    if train_raw is not None:
+        profile["descriptor_range"]["minimum"] = np.nanmin(
+            train_raw,
+            axis=0,
+        ).tolist()
+        profile["descriptor_range"]["maximum"] = np.nanmax(
+            train_raw,
+            axis=0,
+        ).tolist()
+
+    try:
+        profile["similarity"]["available"] = bool(
+            qspr_prog_tanimoto_similarity_ad(
+                train_smiles,
+                safe_list(train_smiles)[:1],
+            )
+            is not None
+        )
+    except Exception as exc:
+        profile["similarity"]["available"] = False
+        profile["similarity"]["error"] = str(exc)
+    return profile
 
 
 def qspr_prog_cosine_similarity_ad(X_train, X_query):
@@ -844,6 +1003,12 @@ def qspr_prog_train_selected_model(
         "X_train_scaled": X_train_scaled,
         "y_train": np.asarray(y_prog, dtype=float),
         "train_smiles": train_smiles,
+        "ad_profile": qspr_prog_build_ad_profile(
+            X_train_raw=np.asarray(X_prog, dtype=float),
+            X_train_scaled=X_train_scaled,
+            train_smiles=train_smiles,
+            desc_names=desc_names,
+        ),
         "train_df": train_df,
         "desc_names": list(desc_names),
         "descriptor_groups": qspr_prog_build_descriptor_groups(desc_names),
@@ -876,6 +1041,15 @@ def qspr_prog_store_model_in_session(package):
     st.session_state.prog_X_train_scaled = package["X_train_scaled"]
     st.session_state.prog_y_train = package["y_train"]
     st.session_state.prog_train_smiles = package["train_smiles"]
+    st.session_state.prog_ad_profile = package.get(
+        "ad_profile",
+        qspr_prog_build_ad_profile(
+            X_train_raw=package.get("X_train_raw"),
+            X_train_scaled=package.get("X_train_scaled"),
+            train_smiles=package.get("train_smiles"),
+            desc_names=package.get("desc_names", []),
+        ),
+    )
     st.session_state.prog_descriptor_groups = package.get(
         "descriptor_groups",
         qspr_prog_build_descriptor_groups(package.get("desc_names", [])),
@@ -924,6 +1098,15 @@ def qspr_prog_load_saved_package_to_session(package):
     st.session_state.prog_X_train_scaled = package.get("X_train_scaled", None)
     st.session_state.prog_y_train = package.get("y_train", None)
     st.session_state.prog_train_smiles = package.get("train_smiles", None)
+    st.session_state.prog_ad_profile = package.get(
+        "ad_profile",
+        qspr_prog_build_ad_profile(
+            X_train_raw=st.session_state.prog_X_train_raw,
+            X_train_scaled=st.session_state.prog_X_train_scaled,
+            train_smiles=st.session_state.prog_train_smiles,
+            desc_names=st.session_state.prog_desc_names,
+        ),
+    )
     st.session_state.prog_descriptor_groups = package.get(
         "descriptor_groups",
         qspr_prog_build_descriptor_groups(st.session_state.prog_desc_names),
@@ -1067,11 +1250,17 @@ def qspr_prog_make_save_package(target_col, smiles_col, desc_names, model_name):
         "X_train_scaled": st.session_state.get("prog_X_train_scaled", None),
         "y_train": st.session_state.get("prog_y_train", None),
         "train_smiles": st.session_state.get("prog_train_smiles", None),
+        "ad_profile": qspr_prog_build_ad_profile(
+            X_train_raw=st.session_state.get("prog_X_train_raw", None),
+            X_train_scaled=st.session_state.get("prog_X_train_scaled", None),
+            train_smiles=st.session_state.get("prog_train_smiles", None),
+            desc_names=package_desc_names,
+        ),
         "n_train_compounds": len(st.session_state.get("prog_y_train", []))
         if st.session_state.get("prog_y_train", None) is not None
         else None,
-        "ad_method": "leverage",
-        "ad_threshold_formula": "h* = 3(p + 1) / n",
+        "ad_method": "leverage + descriptor distance + density + descriptor range + optional Tanimoto similarity",
+        "ad_threshold_formula": "saved in ad_profile",
         "uncertainty_supported": True,
         "uncertainty_schema_version": "1.0",
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1203,6 +1392,188 @@ def qspr_prog_uncertainty_neighbour_table(result, query_smiles=None):
                 row["Эксперимент аналога"] = float(y_train[int(train_index)])
             rows.append(row)
     return pd.DataFrame(rows)
+
+
+def qspr_prog_bool_array(values, length):
+    if values is None:
+        return np.full(length, True, dtype=bool)
+    series = pd.Series(values)
+    if len(series) != length:
+        return np.full(length, True, dtype=bool)
+    return series.map(
+        lambda value: (
+            bool(value)
+            if isinstance(value, (bool, np.bool_))
+            else str(value).strip().lower() in {"true", "1", "yes", "inside", "in_ad", "в ad"}
+        )
+    ).to_numpy(dtype=bool)
+
+
+def qspr_prog_add_descriptor_ad_columns(
+    pred_df,
+    X_new_raw,
+    X_new_scaled,
+    X_train_scaled,
+):
+    """Adds practical AD signals for external prediction rows."""
+    result = pred_df.copy()
+    X_new_raw = np.asarray(X_new_raw, dtype=float)
+    X_new_scaled = np.asarray(X_new_scaled, dtype=float)
+    X_train_scaled = qspr_prog_safe_numeric_matrix(X_train_scaled)
+    X_train_raw = qspr_prog_safe_numeric_matrix(
+        st.session_state.get("prog_X_train_raw")
+    )
+    if X_train_scaled is None:
+        return result
+
+    try:
+        distance, distance_threshold, distance_inside = qspr_prog_nearest_distance_ad(
+            X_train_scaled,
+            X_new_scaled,
+        )
+        result["Distance AD: расстояние"] = distance
+        result["Distance AD: порог"] = distance_threshold
+        result["Distance AD: внутри"] = distance_inside
+    except Exception:
+        pass
+
+    try:
+        density, density_threshold, density_inside = qspr_prog_density_ad(
+            X_train_scaled,
+            X_new_scaled,
+            k=5,
+        )
+        result["Density AD: среднее расстояние"] = density
+        result["Density AD: порог"] = density_threshold
+        result["Density AD: внутри"] = density_inside
+    except Exception:
+        pass
+
+    if X_train_raw is not None and X_train_raw.shape[1] == X_new_raw.shape[1]:
+        try:
+            range_outside, range_inside = qspr_prog_range_ad(
+                X_train_raw,
+                X_new_raw,
+            )
+            result["Descriptor-range AD: доля вне диапазона"] = range_outside
+            result["Descriptor-range AD: внутри"] = range_inside
+        except Exception:
+            pass
+
+    query_smiles = qspr_prog_query_smiles(result)
+    similarity = qspr_prog_tanimoto_similarity_ad(
+        st.session_state.get("prog_train_smiles"),
+        query_smiles,
+    )
+    if similarity is not None:
+        max_similarity, similarity_threshold, similarity_inside = similarity
+        result["Similarity AD: max Tanimoto"] = max_similarity
+        result["Similarity AD: порог"] = similarity_threshold
+        result["Similarity AD: внутри"] = similarity_inside
+
+    return result
+
+
+def qspr_prog_normalize_leverage_status(value):
+    value = str(value).strip()
+    if value in {"IN_AD", "в AD", "inside", "True", "true"}:
+        return "в AD"
+    if value in {"OUT_OF_AD", "вне AD", "outside", "False", "false"}:
+        return "вне AD"
+    return "не оценено"
+
+
+def qspr_prog_add_final_ad_status(pred_df):
+    """Combines AD signals into the regulatory-facing prediction status."""
+    result = pred_df.copy()
+    n = len(result)
+    if n == 0:
+        return result
+
+    leverage_status = (
+        result["AD-статус"].map(qspr_prog_normalize_leverage_status)
+        if "AD-статус" in result.columns
+        else pd.Series(["не оценено"] * n)
+    )
+    result["AD-статус"] = leverage_status.values
+
+    hard_outside = leverage_status.eq("вне AD").to_numpy(dtype=bool)
+    borderline = np.zeros(n, dtype=bool)
+
+    signal_columns = [
+        "Distance AD: внутри",
+        "Density AD: внутри",
+        "Descriptor-range AD: внутри",
+        "Similarity AD: внутри",
+        "Внутри distance AD",
+        "Внутри диапазонов дескрипторов",
+        "Внутри similarity AD",
+    ]
+    for column in signal_columns:
+        if column in result.columns:
+            hard_outside |= ~qspr_prog_bool_array(result[column], n)
+
+    status_columns = [
+        "molecular_ad_status",
+        "spectral_ad_status",
+        "combined_ad_status",
+    ]
+    for column in status_columns:
+        if column in result.columns:
+            values = result[column].astype(str).str.lower()
+            hard_outside |= values.eq("outside").to_numpy(dtype=bool)
+
+    ratio_specs = [
+        ("Leverage h", "Порог h*"),
+        ("Distance AD: расстояние", "Distance AD: порог"),
+        ("Density AD: среднее расстояние", "Density AD: порог"),
+        ("Расстояние до ближайшего аналога", "Порог distance AD"),
+    ]
+    for value_col, threshold_col in ratio_specs:
+        if value_col not in result.columns or threshold_col not in result.columns:
+            continue
+        values = pd.to_numeric(result[value_col], errors="coerce")
+        thresholds = pd.to_numeric(result[threshold_col], errors="coerce")
+        ratio = values / thresholds.replace(0, np.nan)
+        hard_outside |= ratio.gt(1.0).fillna(False).to_numpy(dtype=bool)
+        borderline |= ratio.ge(0.85).fillna(False).to_numpy(dtype=bool)
+
+    if "Максимальное сходство Tanimoto" in result.columns:
+        similarity = pd.to_numeric(
+            result["Максимальное сходство Tanimoto"],
+            errors="coerce",
+        )
+        threshold = 0.50
+        if "Similarity AD: порог" in result.columns:
+            threshold_values = pd.to_numeric(
+                result["Similarity AD: порог"],
+                errors="coerce",
+            )
+            if threshold_values.notna().any():
+                threshold = float(threshold_values.dropna().iloc[0])
+        borderline |= similarity.between(threshold, threshold + 0.10).fillna(False).to_numpy(dtype=bool)
+
+    if "Надёжность" in result.columns:
+        reliability = result["Надёжность"].astype(str).str.lower()
+        hard_outside |= reliability.eq("низкая").to_numpy(dtype=bool)
+        borderline |= reliability.eq("средняя").to_numpy(dtype=bool)
+
+    final_status = np.where(
+        hard_outside,
+        "вне AD",
+        np.where(borderline, "погранично", "в AD"),
+    )
+    result["Итоговый AD-статус"] = final_status
+    result["Итоговый вывод прогноза"] = np.where(
+        final_status == "вне AD",
+        "вне AD: экстраполяция, прогноз менее надёжен",
+        np.where(
+            final_status == "погранично",
+            "погранично: близко к границе области применимости",
+            "в AD: интерполяционный прогноз в области модели",
+        ),
+    )
+    return result
 
 
 def qspr_prog_add_complete_uncertainty(X_new, pred_df):
@@ -1401,11 +1772,20 @@ def qspr_prog_predict_from_matrix(X_new, new_df, target_col, fallback_X_train_sc
         )
         pred_df["Leverage h"] = ad["leverage"]
         pred_df["Порог h*"] = ad["threshold"]
-        pred_df["AD-статус"] = ad["status"]
+        pred_df["AD-статус"] = [
+            qspr_prog_normalize_leverage_status(value)
+            for value in ad["status"]
+        ]
         pred_df["Надёжность по AD"] = pred_df["AD-статус"].map({
             "в AD": "надёжнее: внутри области модели",
             "вне AD": "осторожно: экстраполяция, прогноз менее надёжен",
         }).fillna("не оценено")
+        pred_df = qspr_prog_add_descriptor_ad_columns(
+            pred_df=pred_df,
+            X_new_raw=X_new,
+            X_new_scaled=X_model,
+            X_train_scaled=X_train_ad,
+        )
         pred_df = qspr_prog_add_spectral_ad_columns(
             pred_df=pred_df,
             X_new_raw=X_new,
@@ -1419,6 +1799,8 @@ def qspr_prog_predict_from_matrix(X_new, new_df, target_col, fallback_X_train_sc
         st.session_state.prediction_uncertainty_result = {
             "error": f"Не удалось рассчитать полную неопределённость: {error}"
         }
+
+    pred_df = qspr_prog_add_final_ad_status(pred_df)
 
     return pred_df, ad_done
 
@@ -2378,7 +2760,14 @@ def qspr_prog_show_ad_summary(pred_df):
     Единый блок отображения AD-сводки для новых прогнозов.
     """
     n_total = len(pred_df)
-    n_out = int((pred_df["AD-статус"] == "вне AD").sum())
+    status_column = (
+        "Итоговый AD-статус"
+        if "Итоговый AD-статус" in pred_df.columns
+        else "AD-статус"
+    )
+    statuses = pred_df[status_column].astype(str)
+    n_out = int((statuses == "вне AD").sum())
+    n_borderline = int((statuses == "погранично").sum())
 
     st.caption(
         t("prognostic.ad_summary_caption")
@@ -2386,15 +2775,17 @@ def qspr_prog_show_ad_summary(pred_df):
 
     qspr_prog_show_extended_ad_summary(pred_df)
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         st.metric(t("prognostic.metric_new_compounds"), n_total)
     with col2:
         st.metric(t("prognostic.metric_outside_ad"), n_out)
     with col3:
-        st.metric(t("prognostic.metric_outside_ad_percent"), f"{n_out / n_total * 100:.1f}%" if n_total else "0.0%")
+        st.metric("Погранично", n_borderline)
     with col4:
+        st.metric(t("prognostic.metric_outside_ad_percent"), f"{n_out / n_total * 100:.1f}%" if n_total else "0.0%")
+    with col5:
         if "Порог h*" in pred_df.columns and len(pred_df) > 0:
             st.metric(t("prognostic.metric_h_threshold"), f"{float(pred_df['Порог h*'].iloc[0]):.4f}")
         else:
@@ -2415,7 +2806,7 @@ def qspr_prog_show_ad_summary(pred_df):
     if n_out > 0:
         st.markdown(t("prognostic.outside_ad_table_title"))
         st.dataframe(
-            pred_df[pred_df["AD-статус"] == "вне AD"].copy(),
+            pred_df[pred_df[status_column].astype(str) == "вне AD"].copy(),
             width="stretch",
             hide_index=True,
         )

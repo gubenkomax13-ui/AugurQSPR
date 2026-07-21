@@ -52,6 +52,14 @@ def _format_metric(value, digits=3):
     return "-"
 
 
+def _render_tool_badge():
+    """Use the same visual marker as validation tools in the main module."""
+    st.markdown(
+        f'<div class="tool-badge">{t("repeated_holdout.tool_badge")}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_metric_triplet(metrics, prefix=""):
     col1, col2, col3 = st.columns(3)
     col1.metric(f"{prefix}R2", _format_metric(metrics.get("R2")))
@@ -74,6 +82,7 @@ def render_advanced_validation_section(context):
     params = get_model_params_from_session()
     smiles_values = _advanced_validation_smiles()
 
+    _render_tool_badge()
     with st.expander(t("advanced_validation.repeated_kfold_title"), expanded=False):
         st.markdown(t(TOOL_EXPLANATION_KEYS["repeated_kfold"]))
         col1, col2, col3 = st.columns(3)
@@ -159,6 +168,7 @@ def render_advanced_validation_section(context):
                 st.pyplot(fig_rkf)
                 plt.close(fig_rkf)
 
+    _render_tool_badge()
     with st.expander(t("advanced_validation.group_scaffold_title"), expanded=False):
         st.markdown(t(TOOL_EXPLANATION_KEYS["group_scaffold"]))
         group_mode = st.radio(
@@ -258,6 +268,7 @@ def render_advanced_validation_section(context):
                 hide_index=True,
             )
 
+    _render_tool_badge()
     with st.expander(t("advanced_validation.learning_curves_title"), expanded=False):
         st.markdown(t(TOOL_EXPLANATION_KEYS["learning_curves"]))
         lc_k = st.slider(
@@ -314,6 +325,7 @@ def render_advanced_validation_section(context):
                 plt.close(fig_lc)
                 st.dataframe(lc_table, width="stretch", hide_index=True)
 
+    _render_tool_badge()
     with st.expander(t("advanced_validation.interval_coverage_title"), expanded=False):
         st.markdown(t(TOOL_EXPLANATION_KEYS["interval_coverage"]))
         col1, col2, col3 = st.columns(3)

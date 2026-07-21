@@ -865,6 +865,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.linear_model import LinearRegression
 from modules import applicability_domain_core
+from modules import data_quality_core
 from modules.methodology_generator import generate_methodology_text
 from modules.module_explain_ui import render_module_explanation
 from modules.module_registry import module_overview_markdown
@@ -873,10 +874,9 @@ from modules.save_model_ui import render_verified_model_save
 from modules.validation_ui import render_validation_section
 from modules.error_analysis_ui import render_error_analysis_section
 from modules.comparison_ui import render_model_comparison_section
-from modules.consensus_ui import render_consensus_section
 from modules.diagnostics_ui import render_model_diagnostics_section
 from modules.installation_diagnostics_ui import render_installation_diagnostics_section
-from modules.training_ui import render_training_section
+from modules.training_ui import render_auto_selection_settings, render_training_section
 from modules.report_ui import render_report_section
 from modules.statistics_summary_ui import render_final_statistics_summary
 from modules.chemical_diversity_ui import render_chemical_diversity_section
@@ -3064,6 +3064,274 @@ def qspr_make_dataset_passport_excel(
 
     output.seek(0)
     return output.getvalue()
+
+
+def render_input_data_quality_control(
+    data,
+    smiles_col,
+    target_col,
+    context_cols=None,
+    raw_target_values=None,
+):
+    """UI for mandatory source-data QC before descriptors/modeling."""
+    st.header("🧾 Контроль качества исходных данных")
+    render_tool_badge()
+    st.caption(
+        "Проверяет цензурированные значения, единицы, повторные измерения и выбросы. "
+        "Строки не исключаются молча: каждое исключение попадает в export с причиной."
+    )
+
+    if data is None or not isinstance(data, pd.DataFrame) or data.empty:
+        st.info("Нет данных для QC.")
+        return data
+
+    context_cols = context_cols or {}
+    unit_candidates = []
+    detected_unit_col = context_cols.get("activity_unit")
+    for col in data.columns:
+        norm = qspr_norm_column_name(col)
+        if col == detected_unit_col or norm in {
+            "activity_unit",
+            "unit",
+            "units",
+            "standard_unit",
+            "standard_units",
+            "единица",
+            "единицы",
+        }:
+            unit_candidates.append(col)
+    unit_candidates = list(dict.fromkeys(unit_candidates))
+
+    with st.expander("⚙️ Настройки контроля качества исходных данных", expanded=False):
+        st.markdown("**Правила обработки**")
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            censored_policy_label = st.selectbox(
+                "Цензурированные значения (<10, >1000)",
+                ["исключить из моделирования", "оставить числовую границу и пометить"],
+                index=0,
+                key="data_quality_censored_policy_label",
+                help=(
+                    "Для строгой QSPR-оценки цензурированные значения лучше не смешивать "
+                    "с точными измерениями без специальной модели цензуры."
+                ),
+            )
+        with col_b:
+            replicate_policy_label = st.selectbox(
+                "Повторные измерения",
+                ["объединить медианой", "объединить средним", "оставить все"],
+                index=0,
+                key="data_quality_replicate_policy_label",
+            )
+        with col_c:
+            outlier_iqr_multiplier = st.number_input(
+                "Порог IQR для научных экстремумов",
+                min_value=1.0,
+                max_value=10.0,
+                value=3.0,
+                step=0.5,
+                key="data_quality_outlier_iqr_multiplier",
+            )
+
+        st.markdown("**Единицы измерения**")
+        unit_col_options = ["не использовать колонку единиц"] + unit_candidates
+        selected_unit_col = st.selectbox(
+            "Колонка единиц",
+            unit_col_options,
+            index=unit_col_options.index(detected_unit_col) if detected_unit_col in unit_col_options else 0,
+            key="data_quality_unit_col",
+        )
+        unit_col = None if selected_unit_col == "не использовать колонку единиц" else selected_unit_col
+        col_u1, col_u2 = st.columns(2)
+        with col_u1:
+            convert_units = st.checkbox(
+                "Автоматически конвертировать известные концентрационные единицы",
+                value=bool(unit_col),
+                key="data_quality_convert_units",
+            )
+        with col_u2:
+            target_unit = st.selectbox(
+                "Целевая единица после QC",
+                data_quality_core.DISPLAY_UNITS,
+                index=2,
+                key="data_quality_target_unit",
+                disabled=not convert_units,
+            )
+
+        st.markdown("**Технически невозможный диапазон**")
+        col_r1, col_r2, col_r3 = st.columns(3)
+        with col_r1:
+            use_hard_min = st.checkbox("Задать нижнюю границу", value=False, key="data_quality_use_hard_min")
+        with col_r2:
+            technical_min = st.number_input("Нижняя граница", value=0.0, key="data_quality_hard_min", disabled=not use_hard_min)
+        with col_r3:
+            st.caption("Ниже границы — техническая ошибка, строка исключается с причиной.")
+        col_r4, col_r5, col_r6 = st.columns(3)
+        with col_r4:
+            use_hard_max = st.checkbox("Задать верхнюю границу", value=False, key="data_quality_use_hard_max")
+        with col_r5:
+            technical_max = st.number_input("Верхняя граница", value=1_000_000.0, key="data_quality_hard_max", disabled=not use_hard_max)
+        with col_r6:
+            st.caption("IQR-выбросы не удаляются автоматически: они помечаются как научный экстремум.")
+
+    censored_policy = "exclude" if censored_policy_label.startswith("исключить") else "keep_boundary"
+    replicate_policy = {
+        "объединить медианой": "median",
+        "объединить средним": "mean",
+        "оставить все": "keep_all",
+    }.get(replicate_policy_label, "median")
+
+    run_cols = st.columns([1, 2])
+    with run_cols[0]:
+        run_qc = st.button(
+            "🔎 Проверить исходные данные",
+            type="primary",
+            key="run_input_data_quality_control",
+        )
+    with run_cols[1]:
+        if st.session_state.get("data_quality_applied"):
+            st.success("QC исходных данных уже применён к рабочему датасету.")
+
+    if run_qc:
+        qc_input = data.copy()
+        if raw_target_values is not None:
+            try:
+                qc_input[target_col] = list(raw_target_values)
+            except Exception:
+                qc_input[target_col] = raw_target_values
+        try:
+            result = data_quality_core.run_input_data_quality_control(
+                qc_input,
+                smiles_col=smiles_col,
+                target_col=target_col,
+                unit_col=unit_col,
+                target_unit=target_unit,
+                convert_units=bool(convert_units),
+                censored_policy=censored_policy,
+                replicate_policy=replicate_policy,
+                context_cols=list((context_cols or {}).values()),
+                outlier_iqr_multiplier=float(outlier_iqr_multiplier),
+                technical_min=float(technical_min) if use_hard_min else None,
+                technical_max=float(technical_max) if use_hard_max else None,
+            )
+            st.session_state.data_quality_result = result
+            st.session_state.data_quality_summary_df = result.get("summary_df")
+            st.session_state.data_quality_audit_df = result.get("audit_df")
+            st.session_state.data_quality_excluded_df = result.get("excluded_df")
+            st.session_state.data_quality_replicates_df = result.get("replicates_df")
+            st.session_state.data_quality_conversions_df = result.get("conversions_df")
+            st.session_state.data_quality_outliers_df = result.get("outliers_df")
+            add_log(
+                "QC исходных данных выполнен",
+                stage="data_quality",
+                event="input_data_quality_checked",
+                counts={
+                    "rows_initial": len(qc_input),
+                    "rows_cleaned": len(result.get("cleaned_df", pd.DataFrame())),
+                    "rows_excluded": len(result.get("excluded_df", pd.DataFrame())),
+                },
+            )
+        except Exception as exc:
+            qspr_log_exception("qspr_app", "render_input_data_quality_control", exc)
+            st.error(f"Ошибка QC исходных данных: {exc}")
+            return data
+
+    result = st.session_state.get("data_quality_result")
+    if not isinstance(result, dict):
+        st.info("QC ещё не запускался. Перед моделированием рекомендуется выполнить проверку и применить результат.")
+        return data
+
+    summary_df = result.get("summary_df", pd.DataFrame())
+    audit_df = result.get("audit_df", pd.DataFrame())
+    excluded_df = result.get("excluded_df", pd.DataFrame())
+    replicates_df = result.get("replicates_df", pd.DataFrame())
+    conversions_df = result.get("conversions_df", pd.DataFrame())
+    outliers_df = result.get("outliers_df", pd.DataFrame())
+    cleaned_df = result.get("cleaned_df", pd.DataFrame())
+
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
+        st.dataframe(summary_df, width="stretch", hide_index=True)
+
+    q1, q2, q3, q4 = st.columns(4)
+    with q1:
+        st.metric("Исключено", len(excluded_df) if isinstance(excluded_df, pd.DataFrame) else 0)
+    with q2:
+        st.metric("Конверсий единиц", len(conversions_df) if isinstance(conversions_df, pd.DataFrame) else 0)
+    with q3:
+        st.metric("Групп повторов", len(replicates_df) if isinstance(replicates_df, pd.DataFrame) else 0)
+    with q4:
+        st.metric("IQR-экстремумов", len(outliers_df) if isinstance(outliers_df, pd.DataFrame) else 0)
+
+    tabs = st.tabs(["Журнал решений", "Исключённые строки", "Конверсии", "Повторы", "Выбросы"])
+    tab_tables = [audit_df, excluded_df, conversions_df, replicates_df, outliers_df]
+    tab_names = ["audit", "excluded", "conversions", "replicates", "outliers"]
+    for tab, table, tab_name in zip(tabs, tab_tables, tab_names):
+        with tab:
+            if isinstance(table, pd.DataFrame) and not table.empty:
+                st.dataframe(table.head(500), width="stretch", hide_index=True)
+                st.download_button(
+                    "⬇️ Скачать CSV",
+                    qspr_core.qspr_csv_download_bytes(table),
+                    file_name=f"input_data_quality_{tab_name}.csv",
+                    mime="text/csv",
+                    key=f"download_input_qc_{tab_name}",
+                )
+            else:
+                st.caption("Нет записей.")
+
+    apply_disabled = not isinstance(cleaned_df, pd.DataFrame) or cleaned_df.empty
+    if st.button(
+        "✅ Применить QC к рабочему датасету",
+        type="primary",
+        key="apply_input_data_quality_control",
+        disabled=apply_disabled,
+    ):
+        reset_analysis_nodes(st.session_state, "dataset", SESSION_DEFAULTS)
+        st.session_state.data = qspr_ensure_record_ids(cleaned_df.copy()).reset_index(drop=True)
+        st.session_state.data_quality_applied = True
+        st.session_state.data_quality_target_col = target_col
+        st.session_state.data_quality_smiles_col = smiles_col
+        st.session_state.data_quality_result = result
+        st.session_state.data_quality_summary_df = summary_df
+        st.session_state.data_quality_audit_df = audit_df
+        st.session_state.data_quality_excluded_df = excluded_df
+        st.session_state.data_quality_replicates_df = replicates_df
+        st.session_state.data_quality_conversions_df = conversions_df
+        st.session_state.data_quality_outliers_df = outliers_df
+        st.session_state.data_source_note = (
+            f"QC исходных данных применён: осталось {len(cleaned_df)} строк; "
+            f"исключено {len(excluded_df) if isinstance(excluded_df, pd.DataFrame) else 0}."
+        )
+        st.session_state.dataset_signature = dataset_signature(
+            st.session_state.data,
+            file_name=st.session_state.get("uploaded_file_name", ""),
+            file_size=st.session_state.get("uploaded_file_size", 0),
+        )
+        update_analysis_bundle(
+            st.session_state,
+            "dataset",
+            {
+                "signature": st.session_state.dataset_signature,
+                "file_name": st.session_state.get("uploaded_file_name", ""),
+                "file_size": int(st.session_state.get("uploaded_file_size", 0) or 0),
+                "rows": int(len(st.session_state.data)),
+                "columns": [str(col) for col in st.session_state.data.columns],
+                "source": "input_data_quality_control",
+            },
+        )
+        add_log(
+            "QC исходных данных применён к рабочему датасету",
+            stage="data_quality",
+            event="input_data_quality_applied",
+            counts={
+                "rows_cleaned": len(st.session_state.data),
+                "rows_excluded": len(excluded_df) if isinstance(excluded_df, pd.DataFrame) else 0,
+            },
+        )
+        st.rerun()
+
+    return data
+
 
 @st.cache_data(show_spinner=False, max_entries=16)
 def qspr_detect_data_leakage_columns(
@@ -6627,6 +6895,8 @@ def qspr_run_missing_validation_for_models(
             "test_size": holdout_test_size,
             "random_state": holdout_random_state,
             "use_random": True,
+            "stratify_y_quantiles": False,
+            "manual_indices": None,
         }
         holdout_hash = analysis_result_hash(
             st.session_state,
@@ -6754,6 +7024,7 @@ def qspr_auto_train_validate_models_for_comparison(
     holdout_random_state=42,
     kfold_k=5,
     force_retrain=True,
+    progress_callback=None,
 ):
     """
     Настоящее сравнение моделей-кандидатов:
@@ -6775,7 +7046,10 @@ def qspr_auto_train_validate_models_for_comparison(
     if "loo_results_dict" not in st.session_state:
         st.session_state.loo_results_dict = {}
 
-    for candidate_model in model_names:
+    total_models = len(model_names)
+    for model_index, candidate_model in enumerate(model_names, 1):
+        if progress_callback is not None:
+            progress_callback(candidate_model, model_index, total_models)
         try:
             train_hash = analysis_result_hash(
                 st.session_state,
@@ -6809,6 +7083,8 @@ def qspr_auto_train_validate_models_for_comparison(
                 "test_size": holdout_test_size,
                 "random_state": holdout_random_state,
                 "use_random": True,
+                "stratify_y_quantiles": False,
+                "manual_indices": None,
             }
             holdout_hash = analysis_result_hash(
                 st.session_state,
@@ -7785,6 +8061,7 @@ def invalidate_descriptor_state():
     st.session_state.ext_validation_result = None
     st.session_state.ext_validation_results_dict = {}
     st.session_state.auto_tuning_result = None
+    st.session_state.descriptor_selection_preview = None
     st.session_state.model_comparison_df = None
     st.session_state.best_model_from_comparison = None
     st.session_state.pending_selected_model = None
@@ -7798,11 +8075,14 @@ def invalidate_descriptor_state():
     st.session_state.consensus_result = None
     st.session_state.consensus_prediction_table = None
     st.session_state.consensus_models = []
+    st.session_state.final_analysis_choice = None
     st.session_state.model_comparison_errors_df = None
     st.session_state.auto_model_comparison_df = None
     st.session_state.auto_model_comparison_table = None
     st.session_state.true_model_comparison_df = None
     st.session_state.yrandom_best_model_result = None
+    st.session_state.yrandom_best_model_name = None
+    st.session_state.yrandom_results_dict = {}
     st.session_state.descriptor_coverage_df = None
     st.session_state.descriptor_coverage_summary_df = None
 
@@ -8842,9 +9122,13 @@ SESSION_DEFAULTS = {
     "auto_rf_selection_estimators": 300,
     "auto_rfe_step": 0.2,
     "auto_tuning_result": None,
+    "descriptor_selection_preview": None,
     "model_comparison_df": None,
     "best_model_from_comparison": None,
     "pending_selected_model": None,
+    "final_analysis_choice": None,
+    "yrandom_best_model_name": None,
+    "yrandom_results_dict": {},
     "saod2_review_df": None,
     "saod2_cleaned_df": None,
     "saod2_cleaning_applied": False,
@@ -8853,6 +9137,16 @@ SESSION_DEFAULTS = {
     "saod2_show_cleaning_status": False,
     "descriptor_preflight_banner": "",
     "data_source_note": "",
+    "data_quality_result": None,
+    "data_quality_applied": False,
+    "data_quality_audit_df": None,
+    "data_quality_excluded_df": None,
+    "data_quality_summary_df": None,
+    "data_quality_replicates_df": None,
+    "data_quality_conversions_df": None,
+    "data_quality_outliers_df": None,
+    "data_quality_target_col": "",
+    "data_quality_smiles_col": "",
     "incremental_result": None,
     "incremental_cols": [],
     "incremental_use_intercept": True,
@@ -8909,6 +9203,16 @@ def reset_project_state_for_new_file():
         # Данные и цель
         "target_col",
         "data_source_note",
+        "data_quality_result",
+        "data_quality_applied",
+        "data_quality_audit_df",
+        "data_quality_excluded_df",
+        "data_quality_summary_df",
+        "data_quality_replicates_df",
+        "data_quality_conversions_df",
+        "data_quality_outliers_df",
+        "data_quality_target_col",
+        "data_quality_smiles_col",
 
         # Дескрипторы
         "desc_calculated",
@@ -9462,8 +9766,8 @@ if not numeric_cols:
             continue
 
         converted = pd.to_numeric(
-            data[col].astype(str).str.replace(",", ".", regex=False),
-            errors="coerce"
+            data[col].map(lambda value: data_quality_core.parse_target_value(value).value),
+            errors="coerce",
         )
 
         if converted.notna().mean() >= 0.7:
@@ -9514,6 +9818,22 @@ target_col = st.selectbox(
 
 if target_col != old_target:
     st.session_state.target_col = target_col
+    for dq_key in [
+        "data_quality_result",
+        "data_quality_applied",
+        "data_quality_audit_df",
+        "data_quality_excluded_df",
+        "data_quality_summary_df",
+        "data_quality_replicates_df",
+        "data_quality_conversions_df",
+        "data_quality_outliers_df",
+        "data_quality_target_col",
+        "data_quality_smiles_col",
+    ]:
+        if dq_key in SESSION_DEFAULTS:
+            st.session_state[dq_key] = deepcopy(SESSION_DEFAULTS[dq_key])
+        else:
+            st.session_state.pop(dq_key, None)
 
     invalidate_descriptor_state()
 
@@ -9526,9 +9846,11 @@ if target_col != old_target:
 else:
     st.session_state.target_col = target_col
 
+target_raw_for_quality_control = data[target_col].copy()
+
 data[target_col] = pd.to_numeric(
-    data[target_col].astype(str).str.replace(",", ".", regex=False),
-    errors="coerce"
+    data[target_col].map(lambda value: data_quality_core.parse_target_value(value).value),
+    errors="coerce",
 )
 
 context_cols = qspr_context_columns(data, detected_optional_cols)
@@ -9560,6 +9882,29 @@ if data.empty:
 
 st.session_state.experimental_context_columns = context_cols
 st.session_state.experimental_context_selection = selected_context
+
+if (
+    st.session_state.get("data_quality_applied")
+    and (
+        st.session_state.get("data_quality_target_col") != target_col
+        or st.session_state.get("data_quality_smiles_col") != smiles_col_current
+    )
+):
+    st.session_state.data_quality_applied = False
+    st.session_state.data_quality_result = None
+    st.warning("Вы изменили SMILES или целевую колонку — QC исходных данных нужно выполнить заново.")
+
+render_input_data_quality_control(
+    data=data,
+    smiles_col=smiles_col_current,
+    target_col=target_col,
+    context_cols=context_cols,
+    raw_target_values=target_raw_for_quality_control.reindex(data.index)
+    if hasattr(target_raw_for_quality_control, "reindex")
+    else target_raw_for_quality_control,
+)
+if not st.session_state.get("data_quality_applied"):
+    st.stop()
 
 property_interpretation, activity_transform, property_interpretation_info = qspr_show_property_interpretation_block(
     target_col,
@@ -18188,51 +18533,6 @@ df_desc = st.session_state.df_desc
 desc_names_current = st.session_state.desc_names
 
 descriptor_source_message()
-descriptor_coverage_view = st.session_state.get("descriptor_coverage_df")
-descriptor_coverage_summary_view = st.session_state.get("descriptor_coverage_summary_df")
-if isinstance(descriptor_coverage_view, pd.DataFrame) and not descriptor_coverage_view.empty:
-    final_col = t("descriptor_coverage.final_column")
-    included_count = int(
-        descriptor_coverage_view[final_col]
-        .astype(str)
-        .eq(t("descriptor_coverage.status_included"))
-        .sum()
-    ) if final_col in descriptor_coverage_view.columns else len(valid_indices or [])
-    excluded_count = int(len(descriptor_coverage_view) - included_count)
-
-    with st.expander(t("descriptor_coverage.title"), expanded=excluded_count > 0):
-        c_cov_1, c_cov_2, c_cov_3 = st.columns(3)
-        c_cov_1.metric(t("descriptor_coverage.metric_total"), len(descriptor_coverage_view))
-        c_cov_2.metric(t("descriptor_coverage.metric_included"), included_count)
-        c_cov_3.metric(t("descriptor_coverage.metric_excluded"), excluded_count)
-
-        if isinstance(descriptor_coverage_summary_view, pd.DataFrame) and not descriptor_coverage_summary_view.empty:
-            st.dataframe(
-                _streamlit_safe_table_data(descriptor_coverage_summary_view),
-                width="stretch",
-                hide_index=True,
-            )
-
-        show_descriptor_coverage_details = st.checkbox(
-            t("descriptor_coverage.show_details"),
-            value=False,
-            key="show_descriptor_coverage_details",
-        )
-        if show_descriptor_coverage_details:
-            st.dataframe(
-                _streamlit_safe_table_data(descriptor_coverage_view),
-                width="stretch",
-                hide_index=True,
-            )
-        else:
-            st.caption(t("descriptor_coverage.details_deferred"))
-        st.download_button(
-            t("descriptor_coverage.download"),
-            qspr_core.qspr_csv_download_bytes(descriptor_coverage_view),
-            "descriptor_coverage.csv",
-            "text/csv",
-            key="download_descriptor_coverage_csv",
-        )
 
 descriptor_quality_view = st.session_state.get("descriptor_quality_df")
 if isinstance(descriptor_quality_view, pd.DataFrame) and not descriptor_quality_view.empty:
@@ -18310,14 +18610,19 @@ except Exception as e:
     st.warning(t('leakage_control.failed', error=e))
 
 # ------------------------------------------------------------------
+# Auto descriptor selection and tuning settings
+
+render_auto_selection_settings({**globals(), **locals()})
+
+# ------------------------------------------------------------------
 # Descriptor diagnostics
 
 st.subheader(t('descriptor_diagnostics.title'))
 
 show_markdown_help(
-    t('mahalanobis.help_title'),
-    os.path.join(HELP_DIR, "mahalanobis_help.md"),
-    expanded=False
+    t('descriptor_diagnostics.comparison_help_title'),
+    os.path.join(HELP_DIR, "descriptor_diagnostics_comparison_help.md"),
+    expanded=False,
 )
 
 fig_mahal = None
@@ -18329,24 +18634,197 @@ mahal_message = None
 mahal_message_type = "info"
 descriptor_diagnostics_rows = int(getattr(X_all, "shape", [0, 0])[0] or 0)
 descriptor_diagnostics_features = int(getattr(X_all, "shape", [0, 0])[1] or 0)
-descriptor_diagnostics_is_heavy = (
-    descriptor_diagnostics_features > 500
-    or descriptor_diagnostics_features >= max(100, descriptor_diagnostics_rows * 2)
-)
 run_descriptor_diagnostics = True
+st.caption(
+    t(
+        "descriptor_diagnostics.auto_caption",
+        rows=descriptor_diagnostics_rows,
+        descriptors=descriptor_diagnostics_features,
+    )
+)
 
-if descriptor_diagnostics_is_heavy:
-    st.info(
-        t(
-            "descriptor_diagnostics.deferred",
-            rows=descriptor_diagnostics_rows,
-            descriptors=descriptor_diagnostics_features,
+descriptor_selection_preview = st.session_state.get("descriptor_selection_preview")
+selected_preview_names = (
+    list(descriptor_selection_preview.get("selected_desc_names", []) or [])
+    if isinstance(descriptor_selection_preview, dict)
+    else []
+)
+descriptor_name_to_index = {
+    str(name): index
+    for index, name in enumerate(desc_names_current)
+}
+selected_preview_names = [
+    name for name in selected_preview_names
+    if str(name) in descriptor_name_to_index
+]
+
+
+def _descriptor_diagnostic_snapshot(matrix, names, target):
+    frame = pd.DataFrame(np.asarray(matrix, dtype=float), columns=list(names))
+    frame = frame.replace([np.inf, -np.inf], np.nan)
+    missing_mask = frame.isna()
+    unique_counts = frame.nunique(dropna=True)
+    target_series = pd.Series(np.asarray(target, dtype=float), index=frame.index)
+    correlations = frame.corrwith(target_series, method="pearson")
+    correlations = correlations.replace([np.inf, -np.inf], np.nan).dropna().abs()
+    return {
+        "rows": int(frame.shape[0]),
+        "descriptors": int(frame.shape[1]),
+        "constant": int((unique_counts <= 1).sum()),
+        "with_missing": int(missing_mask.any(axis=0).sum()),
+        "missing_percent": float(missing_mask.to_numpy().mean() * 100.0) if frame.size else 0.0,
+        "median_abs_target_corr": float(correlations.median()) if not correlations.empty else np.nan,
+        "max_abs_target_corr": float(correlations.max()) if not correlations.empty else np.nan,
+        "correlations": correlations.sort_values(ascending=False),
+    }
+
+
+if selected_preview_names:
+    selected_preview_indices = [
+        descriptor_name_to_index[str(name)]
+        for name in selected_preview_names
+    ]
+    X_after_preview = np.asarray(X_all, dtype=float)[:, selected_preview_indices]
+    diagnostics_before = _descriptor_diagnostic_snapshot(
+        X_all,
+        desc_names_current,
+        y_all,
+    )
+    diagnostics_after = _descriptor_diagnostic_snapshot(
+        X_after_preview,
+        selected_preview_names,
+        y_all,
+    )
+
+    st.markdown(t('descriptor_diagnostics.comparison_title'))
+    st.success(t(
+        'descriptor_diagnostics.comparison_ready',
+        before=diagnostics_before["descriptors"],
+        after=diagnostics_after["descriptors"],
+    ))
+
+    diagnostic_metrics = [
+        ("rows", t('descriptor_diagnostics.metric_rows'), 0),
+        ("descriptors", t('descriptor_diagnostics.metric_descriptors'), 0),
+        ("constant", t('descriptor_diagnostics.metric_constant'), 0),
+        ("with_missing", t('descriptor_diagnostics.metric_with_missing'), 0),
+        ("missing_percent", t('descriptor_diagnostics.metric_missing_percent'), 3),
+        ("median_abs_target_corr", t('descriptor_diagnostics.metric_median_corr'), 3),
+        ("max_abs_target_corr", t('descriptor_diagnostics.metric_max_corr'), 3),
+    ]
+    diagnostic_comparison_rows = []
+    for metric_key, metric_label, digits in diagnostic_metrics:
+        before_value = diagnostics_before[metric_key]
+        after_value = diagnostics_after[metric_key]
+        if isinstance(before_value, (float, np.floating)):
+            before_display = round(float(before_value), digits) if np.isfinite(before_value) else None
+            after_display = round(float(after_value), digits) if np.isfinite(after_value) else None
+        else:
+            before_display = int(before_value)
+            after_display = int(after_value)
+        diagnostic_comparison_rows.append({
+            t('descriptor_diagnostics.col_indicator'): metric_label,
+            t('descriptor_diagnostics.col_before'): before_display,
+            t('descriptor_diagnostics.col_after'): after_display,
+        })
+    st.dataframe(
+        pd.DataFrame(diagnostic_comparison_rows),
+        width="stretch",
+        hide_index=True,
+    )
+
+    selection_summary_preview = descriptor_selection_preview.get("selection_summary", {}) or {}
+    selection_stages = [
+        (t('descriptor_diagnostics.stage_initial'), diagnostics_before["descriptors"]),
+        (
+            t('descriptor_diagnostics.stage_after_constant'),
+            int(selection_summary_preview.get(
+                "n_after_constant_filter",
+                diagnostics_before["descriptors"] - diagnostics_before["constant"],
+            )),
+        ),
+        (
+            t('descriptor_diagnostics.stage_after_correlation'),
+            int(selection_summary_preview.get(
+                "n_after_correlation_filter",
+                diagnostics_after["descriptors"],
+            )),
+        ),
+        (t('descriptor_diagnostics.stage_final'), diagnostics_after["descriptors"]),
+    ]
+    selection_stages_df = pd.DataFrame(
+        selection_stages,
+        columns=[
+            t('descriptor_diagnostics.col_stage'),
+            t('descriptor_diagnostics.col_descriptor_count'),
+        ],
+    )
+
+    comparison_plot_col_1, comparison_plot_col_2 = st.columns(2)
+    with comparison_plot_col_1:
+        fig_selection_stages, ax_selection_stages = plt.subplots(figsize=(7, 4))
+        stage_colors = ["#4C78A8", "#72B7B2", "#F2CF5B", "#54A24B"]
+        ax_selection_stages.bar(
+            selection_stages_df[t('descriptor_diagnostics.col_stage')],
+            selection_stages_df[t('descriptor_diagnostics.col_descriptor_count')],
+            color=stage_colors,
         )
-    )
-    run_descriptor_diagnostics = st.button(
-        t("descriptor_diagnostics.run_button"),
-        key="run_heavy_descriptor_diagnostics",
-    )
+        ax_selection_stages.set_ylabel(t('descriptor_diagnostics.col_descriptor_count'))
+        ax_selection_stages.set_title(t('descriptor_diagnostics.stages_chart_title'))
+        ax_selection_stages.tick_params(axis="x", labelrotation=20)
+        ax_selection_stages.grid(axis="y", alpha=0.25)
+        fig_selection_stages.tight_layout()
+        st.pyplot(fig_selection_stages)
+        plt.close(fig_selection_stages)
+        st.dataframe(selection_stages_df, width="stretch", hide_index=True)
+
+    with comparison_plot_col_2:
+        before_corr_values = diagnostics_before["correlations"].to_numpy(dtype=float)
+        after_corr_values = diagnostics_after["correlations"].to_numpy(dtype=float)
+        if len(before_corr_values) and len(after_corr_values):
+            fig_corr_comparison, ax_corr_comparison = plt.subplots(figsize=(7, 4))
+            ax_corr_comparison.boxplot(
+                [before_corr_values, after_corr_values],
+                labels=[
+                    t('descriptor_diagnostics.col_before'),
+                    t('descriptor_diagnostics.col_after'),
+                ],
+                patch_artist=True,
+                boxprops={"facecolor": "#72B7B2"},
+                medianprops={"color": "#C44E52", "linewidth": 2},
+            )
+            ax_corr_comparison.set_ylabel(t('descriptor_diagnostics.metric_abs_target_corr'))
+            ax_corr_comparison.set_title(t('descriptor_diagnostics.correlation_chart_title'))
+            ax_corr_comparison.grid(axis="y", alpha=0.25)
+            fig_corr_comparison.tight_layout()
+            st.pyplot(fig_corr_comparison)
+            plt.close(fig_corr_comparison)
+
+        top_before_corr = diagnostics_before["correlations"].head(10)
+        top_after_corr = diagnostics_after["correlations"].head(10)
+        max_top_corr_rows = max(len(top_before_corr), len(top_after_corr))
+        top_corr_comparison = pd.DataFrame({
+            t('descriptor_diagnostics.col_rank'): range(1, max_top_corr_rows + 1),
+            t('descriptor_diagnostics.col_descriptor_before'): list(top_before_corr.index)
+            + [""] * (max_top_corr_rows - len(top_before_corr)),
+            t('descriptor_diagnostics.col_corr_before'): [round(float(value), 3) for value in top_before_corr.values]
+            + [None] * (max_top_corr_rows - len(top_before_corr)),
+            t('descriptor_diagnostics.col_descriptor_after'): list(top_after_corr.index)
+            + [""] * (max_top_corr_rows - len(top_after_corr)),
+            t('descriptor_diagnostics.col_corr_after'): [round(float(value), 3) for value in top_after_corr.values]
+            + [None] * (max_top_corr_rows - len(top_after_corr)),
+        })
+        st.dataframe(top_corr_comparison, width="stretch", hide_index=True)
+else:
+    st.info(t('descriptor_diagnostics.comparison_pending'))
+
+st.markdown(t('descriptor_diagnostics.full_matrix_details_title'))
+
+show_markdown_help(
+    t('mahalanobis.help_title'),
+    os.path.join(HELP_DIR, "mahalanobis_help.md"),
+    expanded=False,
+)
 
 # ------------------------------------------------------------
 # 1. Расчёт Махаланобиса
@@ -18462,9 +18940,6 @@ if run_descriptor_diagnostics and len(y_all) > X_all.shape[1] + 10:
         mahal_message_type = "warning"
 elif run_descriptor_diagnostics:
     mahal_message = t('mahalanobis.insufficient_data')
-    mahal_message_type = "info"
-else:
-    mahal_message = t("descriptor_diagnostics.deferred_short")
     mahal_message_type = "info"
 
 # ------------------------------------------------------------
@@ -18656,6 +19131,55 @@ if mahal_table_for_view is not None and not mahal_table_for_view.empty:
         key_prefix="mahalanobis_outliers_full_width"
     )
 
+# ------------------------------------------------------------------
+# Descriptor coverage
+
+descriptor_coverage_view = st.session_state.get("descriptor_coverage_df")
+descriptor_coverage_summary_view = st.session_state.get("descriptor_coverage_summary_df")
+if isinstance(descriptor_coverage_view, pd.DataFrame) and not descriptor_coverage_view.empty:
+    final_col = t("descriptor_coverage.final_column")
+    included_count = int(
+        descriptor_coverage_view[final_col]
+        .astype(str)
+        .eq(t("descriptor_coverage.status_included"))
+        .sum()
+    ) if final_col in descriptor_coverage_view.columns else len(valid_indices or [])
+    excluded_count = int(len(descriptor_coverage_view) - included_count)
+
+    with st.expander(t("descriptor_coverage.title"), expanded=excluded_count > 0):
+        c_cov_1, c_cov_2, c_cov_3 = st.columns(3)
+        c_cov_1.metric(t("descriptor_coverage.metric_total"), len(descriptor_coverage_view))
+        c_cov_2.metric(t("descriptor_coverage.metric_included"), included_count)
+        c_cov_3.metric(t("descriptor_coverage.metric_excluded"), excluded_count)
+
+        if isinstance(descriptor_coverage_summary_view, pd.DataFrame) and not descriptor_coverage_summary_view.empty:
+            st.dataframe(
+                _streamlit_safe_table_data(descriptor_coverage_summary_view),
+                width="stretch",
+                hide_index=True,
+            )
+
+        show_descriptor_coverage_details = st.checkbox(
+            t("descriptor_coverage.show_details"),
+            value=False,
+            key="show_descriptor_coverage_details",
+        )
+        if show_descriptor_coverage_details:
+            st.dataframe(
+                _streamlit_safe_table_data(descriptor_coverage_view),
+                width="stretch",
+                hide_index=True,
+            )
+        else:
+            st.caption(t("descriptor_coverage.details_deferred"))
+        st.download_button(
+            t("descriptor_coverage.download"),
+            qspr_core.qspr_csv_download_bytes(descriptor_coverage_view),
+            "descriptor_coverage.csv",
+            "text/csv",
+            key="download_descriptor_coverage_csv",
+        )
+
 mark_target_extremes_choice = st.checkbox(
     t("target_extremes.mark_checkbox"),
     help=t("target_extremes.mark_help"),
@@ -18793,6 +19317,8 @@ if mark_target_extremes_choice:
 # ------------------------------------------------------------------
 # Model training
 
+st.header(t('model_selection.header'))
+
 training_mode = st.radio(
     t("post_descriptor_flow.mode_label"),
     ["single", "compare"],
@@ -18807,7 +19333,12 @@ training_mode = st.radio(
 
 training_context = {}
 if training_mode == "single":
-    training_context = render_training_section({**globals(), **locals()})
+    training_context = render_training_section({
+        **globals(),
+        **locals(),
+        "skip_model_selection_header": True,
+        "skip_auto_select_settings": True,
+    })
     globals().update(training_context)
 else:
     render_model_comparison_section({**globals(), **locals()})
@@ -18869,17 +19400,6 @@ if model_name in st.session_state.trained_models:
         validation_completed=verified_validation_completed,
         add_log=add_log,
     )
-
-# ------------------------------------------------------------------
-# Model comparison
-
-if training_mode != "compare":
-    render_model_comparison_section({**globals(), **locals()})
-
-# ------------------------------------------------------------------
-# Consensus prediction
-
-render_consensus_section({**globals(), **locals()})
 
 # ------------------------------------------------------------------
 # Prognostic model

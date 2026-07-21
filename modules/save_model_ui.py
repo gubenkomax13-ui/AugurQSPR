@@ -24,10 +24,19 @@ def qspr_save_is_online_mode():
 
 try:
     from modules.prognostic_model_core import (
+        qspr_prog_build_ad_profile,
         qspr_prog_build_descriptor_groups,
         qspr_prog_descriptor_schema,
     )
 except Exception:
+    def qspr_prog_build_ad_profile(
+        X_train_raw=None,
+        X_train_scaled=None,
+        train_smiles=None,
+        desc_names=None,
+    ):
+        return {}
+
     def qspr_prog_build_descriptor_groups(desc_names):
         spectral_prefixes = (
             "IR_", "FTIR_", "SPEC_IR_", "WN_", "MS_", "MASS_",
@@ -122,6 +131,12 @@ def render_verified_model_save(
         "X_train": np.asarray(X_train, dtype=float),
         "y_train": np.asarray(y_train, dtype=float),
         "train_smiles": list(train_smiles),
+        "ad_profile": qspr_prog_build_ad_profile(
+            X_train_raw=np.asarray(X_train, dtype=float),
+            X_train_scaled=np.asarray(X_train, dtype=float),
+            train_smiles=list(train_smiles),
+            desc_names=package_desc_names,
+        ),
         "descriptor_mode": descriptor_mode,
         "desc_lists": desc_lists,
         "validation_completed": True,

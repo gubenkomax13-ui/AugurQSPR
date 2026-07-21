@@ -21,6 +21,10 @@ from modules.statistics_summary_ui import (
     build_final_statistics_summary,
     final_statistics_to_flat_dataframe,
 )
+from modules.descriptor_mechanism_core import (
+    mechanism_descriptor_formula,
+    mechanism_descriptor_source,
+)
 
 try:
     from rdkit import Chem as _ReportChem
@@ -30,6 +34,216 @@ except Exception:
     _ReportChem = None
     Draw = None
     rdkit_draw_available = False
+
+
+QMRF_SCHEMA_VERSION = "1.0"
+
+
+def _qmrf_json_safe(value):
+    """Return a compact JSON-compatible representation without losing audit data."""
+    if isinstance(value, pd.DataFrame):
+        return [_qmrf_json_safe(row) for row in value.to_dict(orient="records")]
+    if isinstance(value, pd.Series):
+        return _qmrf_json_safe(value.to_dict())
+    if isinstance(value, dict):
+        return {str(key): _qmrf_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_qmrf_json_safe(item) for item in value]
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    return str(value)
+
+
+def _qmrf_versions():
+    versions = {"Augur QSPR report schema": QMRF_SCHEMA_VERSION}
+    try:
+        import sklearn
+        versions["scikit-learn"] = sklearn.__version__
+    except Exception:
+        versions["scikit-learn"] = "not available"
+    try:
+        import rdkit
+        versions["RDKit"] = getattr(rdkit, "__version__", "version not exposed")
+    except Exception:
+        versions["RDKit"] = "not available"
+    return versions
+
+
+def _qmrf_validation_table(result, kind):
+    """Normalise cached validation lists for both the human report and JSON."""
+    if not isinstance(result, dict):
+        return pd.DataFrame()
+    if kind == "holdout":
+        tables = []
+        for name, key in (("train", "train_table"), ("test", "test_table")):
+            frame = result.get(key)
+            if isinstance(frame, pd.DataFrame) and not frame.empty:
+                frame = frame.copy()
+                frame.insert(0, "Set", name)
+                tables.append(frame)
+        return pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
+    frame = result.get("result_table")
+    if isinstance(frame, pd.DataFrame) and not frame.empty:
+        frame = frame.copy()
+        frame.insert(0, "Set", "OOF K-Fold")
+        return frame
+    y = np.asarray(result.get("y", []), dtype=float)
+    y_pred = np.asarray(result.get("y_pred_cv", []), dtype=float)
+    smiles = list(result.get("smiles", []))
+    n = min(len(y), len(y_pred))
+    if n == 0:
+        return pd.DataFrame()
+    return pd.DataFrame({
+        "Set": ["OOF K-Fold"] * n,
+        "SMILES": smiles[:n] if len(smiles) >= n else [""] * n,
+        "Experimental": y[:n],
+        "Predicted": y_pred[:n],
+        "Residual": y[:n] - y_pred[:n],
+    })
+
+
+def _qmrf_metrics_rows(train_metrics, holdout, kfold):
+    rows = []
+    for label, metrics in (("Training (apparent)", train_metrics),
+                           ("K-Fold OOF", (kfold or {}).get("metrics", {})),
+                           ("Hold-out", (holdout or {}).get("metrics_test", {}))):
+        if not isinstance(metrics, dict) or not metrics:
+            rows.append({"Evaluation": label, "Status": "not calculated"})
+            continue
+        rows.append({
+            "Evaluation": label,
+            "Status": "available",
+            "R2_or_Q2": metrics.get("R2", metrics.get("Q2")),
+            "RMSE": metrics.get("RMSE"),
+            "MAE": metrics.get("MAE"),
+            "n": metrics.get("n", metrics.get("N")),
+        })
+    return pd.DataFrame(rows)
+
+
+def _build_qmrf_payload(*, state, report_dataset_name, report_author, report_created_at,
+                        intended_use, regulatory_endpoint, endpoint_unit, model_name,
+                        target_col, descriptor_names, model_data, holdout, kfold):
+    """Build the same evidence package for HTML/Word and a machine-readable JSON file."""
+    data = state.get("data")
+    y_values = np.asarray(state.get("y_all", []), dtype=float)
+    y_values = y_values[np.isfinite(y_values)]
+    train_metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
+    quality = state.get("data_quality_result") or {}
+    audit = state.get("data_quality_audit_df")
+    if not isinstance(audit, pd.DataFrame):
+        audit = quality.get("audit_df") if isinstance(quality, dict) else pd.DataFrame()
+    if not isinstance(audit, pd.DataFrame):
+        audit = pd.DataFrame()
+    ad = state.get("ad_info") or state.get("model_ad_info") or {}
+    params = {}
+    estimator = model_data.get("model") if isinstance(model_data, dict) else None
+    try:
+        params = estimator.get_params(deep=False) if estimator is not None else {}
+    except Exception:
+        params = {}
+    descriptor_rows = [{
+        "name": str(name),
+        "definition": mechanism_descriptor_formula(name),
+        "source": mechanism_descriptor_source(name),
+    } for name in list(descriptor_names or [])]
+    valid_indices = list(state.get("valid_indices", []) or [])
+    original_rows = len(data) if isinstance(data, pd.DataFrame) else None
+    payload = {
+        "schema": {"name": "Augur QSPR QMRF-like report", "version": QMRF_SCHEMA_VERSION},
+        "report_identity": {
+            "dataset_name": report_dataset_name, "author": report_author or "not specified",
+            "created_at": report_created_at, "model": model_name or "not specified",
+        },
+        "intended_use_and_endpoint": {
+            "intended_use": intended_use or "not specified",
+            "regulatory_endpoint": regulatory_endpoint or target_col or "not specified",
+            "endpoint_column": target_col or "not specified",
+            "endpoint_unit": endpoint_unit or "not specified",
+        },
+        "chemical_and_endpoint_space": {
+            "n_rows_original": original_rows,
+            "n_rows_modelled": int(len(y_values)),
+            "valid_row_indices": valid_indices,
+            "endpoint_min": float(np.min(y_values)) if len(y_values) else None,
+            "endpoint_max": float(np.max(y_values)) if len(y_values) else None,
+            "endpoint_mean": float(np.mean(y_values)) if len(y_values) else None,
+            "chemical_space_note": "Defined by the curated training structures and stored AD profile; no class labels are inferred automatically.",
+        },
+        "dataset_curation_ledger": {
+            "quality_control_applied": bool(state.get("data_quality_applied")),
+            "summary": quality.get("summary_df", pd.DataFrame()) if isinstance(quality, dict) else pd.DataFrame(),
+            "audit": audit,
+            "excluded_rows": state.get("data_quality_excluded_df", pd.DataFrame()),
+            "unit_conversions": state.get("data_quality_conversions_df", pd.DataFrame()),
+            "replicates": state.get("data_quality_replicates_df", pd.DataFrame()),
+            "outliers_for_review": state.get("data_quality_outliers_df", pd.DataFrame()),
+        },
+        "algorithm_and_versions": {
+            "algorithm": model_name or "not specified", "hyperparameters": params,
+            "descriptor_source": state.get("custom_descriptor_source", "not specified"),
+            "descriptor_mode": state.get("molecular_descriptor_calculation_mode", state.get("descriptor_calculation_mode", "not specified")),
+            "software_versions": _qmrf_versions(),
+        },
+        "descriptors": descriptor_rows,
+        "validation": {
+            "training_metrics": train_metrics,
+            "kfold_settings": (kfold or {}).get("validation_settings", {}),
+            "kfold_metrics": (kfold or {}).get("metrics", {}),
+            "holdout_settings": (holdout or {}).get("validation_settings", {}),
+            "holdout_metrics": (holdout or {}).get("metrics_test", {}),
+            "train_and_test_list": _qmrf_validation_table(holdout, "holdout"),
+            "oof_list": _qmrf_validation_table(kfold, "kfold"),
+        },
+        "applicability_domain_and_uncertainty": {
+            "ad": ad,
+            "prediction_uncertainty": state.get("prediction_uncertainty_results", {}),
+            "status": "AD thresholds are saved with a verified model package when that package is exported.",
+        },
+        "limitations_and_applicability_conditions": [
+            "Predictions are intended only for substances represented by the curated chemical and endpoint space.",
+            "A prediction outside the applicability domain must be reported as limited and not used as a stand-alone regulatory conclusion.",
+            "Training metrics are apparent fit; predictive performance is supported by OOF and, where available, frozen hold-out data.",
+            "The report does not replace expert review of endpoint definition, experimental quality, and regulatory context.",
+        ],
+    }
+    return _qmrf_json_safe(payload)
+
+
+def _qmrf_tables_and_html(payload, df_to_html):
+    """Render mandatory QMRF sections, preserving 'not specified' rather than inventing data."""
+    sections, tables = [], {}
+    def add(title, frame):
+        tables[title] = frame
+        sections.append(f"<h2>{escape(title)}</h2>{df_to_html(frame)}")
+    ident = payload["report_identity"] | payload["intended_use_and_endpoint"]
+    add("QMRF 1. Intended use and regulatory endpoint", pd.DataFrame([ident]))
+    add("QMRF 2. Chemical and endpoint space", pd.DataFrame([payload["chemical_and_endpoint_space"]]))
+    ledger = payload["dataset_curation_ledger"]
+    add("QMRF 3. Dataset curation ledger", pd.DataFrame(ledger.get("summary", [])))
+    for label, key in (("QMRF 3a. Curation audit", "audit"), ("QMRF 3b. Excluded records", "excluded_rows"),
+                       ("QMRF 3c. Unit conversions", "unit_conversions"), ("QMRF 3d. Replicate policy", "replicates"),
+                       ("QMRF 3e. Outliers for expert review", "outliers_for_review")):
+        add(label, pd.DataFrame(ledger.get(key, [])))
+    add("QMRF 4. Algorithm and software versions", pd.DataFrame([payload["algorithm_and_versions"]]))
+    add("QMRF 5. Descriptor definitions", pd.DataFrame(payload["descriptors"]))
+    validation = payload["validation"]
+    add("QMRF 6. Validation metrics", _qmrf_metrics_rows(validation.get("training_metrics", {}),
+        {"metrics_test": validation.get("holdout_metrics", {})}, {"metrics": validation.get("kfold_metrics", {})}))
+    add("QMRF 6a. Train/test list", pd.DataFrame(validation.get("train_and_test_list", [])))
+    add("QMRF 6b. K-Fold OOF list", pd.DataFrame(validation.get("oof_list", [])))
+    ad = payload["applicability_domain_and_uncertainty"]
+    add("QMRF 7. Applicability domain and uncertainty", pd.DataFrame([ad]))
+    add("QMRF 8. Limitations and applicability conditions", pd.DataFrame({"Condition": payload["limitations_and_applicability_conditions"]}))
+    return tables, sections
 
 
 def _add_molecule_grid_section(section_title, smiles_list, add_html_section, quality_comment_parts=None):
@@ -197,6 +411,31 @@ def render_report_section(context):
             height=90,
             key="current_qspr_report_user_comment"
         )
+
+        with st.expander("QMRF-паспорт отчёта", expanded=False):
+            st.caption(
+                "Эти поля входят в обязательные разделы HTML/Word и JSON. "
+                "Если сведения не введены, отчёт явно отметит это как «не указано»."
+            )
+            qmrf_col_1, qmrf_col_2 = st.columns(2)
+            with qmrf_col_1:
+                qmrf_intended_use = st.text_area(
+                    "Intended use (назначение модели)",
+                    value="Экспертная поддержка и приоритизация веществ; не самостоятельное регуляторное решение.",
+                    height=90,
+                    key="report_qmrf_intended_use",
+                )
+            with qmrf_col_2:
+                qmrf_endpoint = st.text_input(
+                    "Regulatory endpoint",
+                    value=str(st.session_state.get("target_col", "")),
+                    key="report_qmrf_endpoint",
+                )
+                qmrf_endpoint_unit = st.text_input(
+                    "Единица endpoint",
+                    value="не указано",
+                    key="report_qmrf_endpoint_unit",
+                )
     
         st.markdown(t('report.sections_title'))
     
@@ -591,6 +830,7 @@ def render_report_section(context):
                 # 3. Current trained model
     
                 model_report_df = pd.DataFrame()
+                model_data_report = {}
                 train_metrics_df_report = pd.DataFrame()
                 prediction_report_df = pd.DataFrame()
                 error_outliers_report_df = pd.DataFrame()
@@ -1239,6 +1479,36 @@ def render_report_section(context):
                         t('report.prog_section_title'),
                         _df_to_html_table(prognostic_summary_df, max_rows=100)
                     )
+
+                    ad_profile = st.session_state.get("prog_ad_profile")
+                    if isinstance(ad_profile, dict) and ad_profile:
+                        ad_profile_rows = []
+                        for key in (
+                            "leverage",
+                            "distance",
+                            "density",
+                            "similarity",
+                            "descriptor_range",
+                        ):
+                            payload = ad_profile.get(key, {})
+                            if not isinstance(payload, dict):
+                                continue
+                            ad_profile_rows.append({
+                                "AD signal": key,
+                                "Method": payload.get("method", ""),
+                                "Threshold": payload.get("threshold", ""),
+                                "Rule": payload.get(
+                                    "threshold_formula",
+                                    payload.get("status", ""),
+                                ),
+                            })
+                        if ad_profile_rows:
+                            ad_profile_df = pd.DataFrame(ad_profile_rows)
+                            report_tables["Prognostic AD profile"] = ad_profile_df
+                            _add_html_section(
+                                "Prognostic Applicability Domain profile",
+                                _df_to_html_table(ad_profile_df, max_rows=100),
+                            )
     
                     uncertainty_payload = st.session_state.get(
                         "prediction_uncertainty_result"
@@ -1370,6 +1640,38 @@ def render_report_section(context):
                             )
                     except Exception as exc:
                         quality_comment_parts.append(t('report.final_statistics_error', error=exc))
+
+                # --------------------------------------------------------
+                # 10.3 Mandatory QMRF-like evidence package
+                # It intentionally does not depend on optional report checkboxes.
+                # Missing evidence remains visible as “not specified/not calculated”.
+                qmrf_payload = _build_qmrf_payload(
+                    state=st.session_state,
+                    report_dataset_name=report_dataset_name,
+                    report_author=report_author,
+                    report_created_at=report_created_at,
+                    intended_use=qmrf_intended_use,
+                    regulatory_endpoint=qmrf_endpoint,
+                    endpoint_unit=qmrf_endpoint_unit,
+                    model_name=model_name,
+                    target_col=target_col,
+                    descriptor_names=report_desc_names_used,
+                    model_data=model_data_report,
+                    holdout=holdout_current,
+                    kfold=kfold_current,
+                )
+                qmrf_tables, qmrf_html_sections = _qmrf_tables_and_html(
+                    qmrf_payload,
+                    _df_to_html_table,
+                )
+                report_tables.update(qmrf_tables)
+                html_sections.extend(qmrf_html_sections)
+                qmrf_json_bytes = json.dumps(
+                    qmrf_payload,
+                    ensure_ascii=False,
+                    indent=2,
+                    allow_nan=False,
+                ).encode("utf-8")
     
                 # --------------------------------------------------------
                 # 11. Excel report
@@ -1530,6 +1832,7 @@ def render_report_section(context):
                 st.session_state.current_qspr_report_excel = excel_buffer.getvalue()
                 st.session_state.current_qspr_report_html = html_bytes
                 st.session_state.current_qspr_report_word = word_bytes
+                st.session_state.current_qspr_report_qmrf_json = qmrf_json_bytes
                 st.session_state.current_qspr_report_base_filename = safe_report_name
     
                 st.success(t('report.success_generated'))
@@ -1552,7 +1855,7 @@ def render_report_section(context):
                 "qspr_current_analysis_report"
             )
     
-            download_report_col_1, download_report_col_2, download_report_col_3 = st.columns(3)
+            download_report_col_1, download_report_col_2, download_report_col_3, download_report_col_4 = st.columns(4)
     
             with download_report_col_1:
                 st.download_button(
@@ -1579,6 +1882,15 @@ def render_report_section(context):
                     f"{report_base_filename}.doc",
                     "application/msword",
                     key="download_current_qspr_report_word"
+                )
+
+            with download_report_col_4:
+                st.download_button(
+                    "⬇️ Скачать QMRF JSON",
+                    st.session_state.get("current_qspr_report_qmrf_json", b"{}"),
+                    f"{report_base_filename}.qmrf.json",
+                    "application/json",
+                    key="download_current_qspr_report_qmrf_json",
                 )
     st.markdown("---")
     st.subheader(t('methodology.subheader'))
