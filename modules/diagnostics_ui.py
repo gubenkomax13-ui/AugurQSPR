@@ -7,12 +7,21 @@ import pandas as pd
 import re
 import streamlit as st
 
+from modules.applicability_domain_core import (
+    ad_build_williams_plot_df,
+    ad_make_williams_plot,
+    ad_williams_summary,
+    qspr_make_ad_table,
+)
 from modules.error_analysis_core import error_analysis_structural_annotations
 from modules.descriptor_importance_core import (
     descriptor_coefficient_importance,
     descriptor_grouped_permutation_importance,
+    descriptor_importance_final_estimator,
+    descriptor_importance_model_feature_names,
     descriptor_native_importance,
     descriptor_permutation_importance,
+    descriptor_refit_for_holdout,
     descriptor_unified_importance_table,
 )
 from modules.descriptor_mechanism_core import (
@@ -28,6 +37,11 @@ try:
 except Exception:
     pearsonr = None
     spearmanr = None
+
+try:
+    from sklearn.pipeline import Pipeline
+except Exception:
+    Pipeline = ()
 
 
 def _diagnostics_strength(abs_corr):
@@ -133,11 +147,60 @@ def _model_has_completed_validation(model_name, current_checker=None):
 
 
 def _diagnostics_descriptor_matrix(context):
-    desc_names = list(context.get("desc_names_current") or [])
-    if not desc_names:
+    model_data = context.get("model_data") or {}
+    if not model_data and "st" in globals():
+        model_name = context.get("model_name")
+        model_data = st.session_state.get("trained_models", {}).get(model_name, {}) or {}
+
+    auto_result = model_data.get("auto_result") or st.session_state.get("auto_tuning_result", {}) or {}
+    all_desc_names = [str(name) for name in list(context.get("desc_names_current") or [])]
+    selected_desc_names = [str(name) for name in list(
+        model_data.get("selected_desc_names")
+        or (auto_result.get("selected_desc_names") if isinstance(auto_result, dict) else [])
+        or st.session_state.get("model_used_descriptor_names", [])
+        or []
+    )]
+    preferred_desc_names = selected_desc_names or all_desc_names
+    if not preferred_desc_names:
         return None, []
 
-    for key in ("X_all_current", "X_current", "X_scaled"):
+    # X_model_space/X_selected already contain the selector output. Never
+    # apply selected feature positions to those matrices a second time.
+    for key in ("X_model_space", "X_selected", "X_scaled", "X_original", "X_all_current", "X_current"):
+        value = model_data.get(key)
+        if value is None:
+            value = context.get(key)
+        if value is None:
+            continue
+        try:
+            matrix = np.asarray(value, dtype=float)
+        except Exception:
+            continue
+        if matrix.ndim != 2:
+            continue
+        if matrix.shape[1] == len(preferred_desc_names):
+            return matrix, preferred_desc_names
+        if (
+            selected_desc_names
+            and all_desc_names
+            and matrix.shape[1] == len(all_desc_names)
+        ):
+            name_to_index = {name: index for index, name in enumerate(all_desc_names)}
+            selected_positions = [
+                name_to_index[name]
+                for name in selected_desc_names
+                if name in name_to_index
+            ]
+            if (
+                len(selected_positions) == len(selected_desc_names)
+                and len(set(selected_positions)) == len(selected_positions)
+                and max(selected_positions, default=-1) < matrix.shape[1]
+            ):
+                return matrix[:, selected_positions], selected_desc_names
+        if all_desc_names and matrix.shape[1] == len(all_desc_names):
+            return matrix, all_desc_names
+
+    for key in ("X_all_current", "X_current"):
         value = context.get(key)
         if value is None:
             continue
@@ -145,9 +208,63 @@ def _diagnostics_descriptor_matrix(context):
             matrix = np.asarray(value, dtype=float)
         except Exception:
             continue
-        if matrix.ndim == 2 and matrix.shape[1] == len(desc_names):
-            return matrix, desc_names
-    return None, desc_names
+        if (
+            matrix.ndim == 2
+            and all_desc_names
+            and matrix.shape[1] == len(all_desc_names)
+            and selected_desc_names
+        ):
+            name_to_index = {name: index for index, name in enumerate(all_desc_names)}
+            selected_positions = [
+                name_to_index[name]
+                for name in selected_desc_names
+                if name in name_to_index
+            ]
+            if (
+                len(selected_positions) == len(selected_desc_names)
+                and len(set(selected_positions)) == len(selected_positions)
+                and max(selected_positions, default=-1) < matrix.shape[1]
+            ):
+                return matrix[:, selected_positions], selected_desc_names
+
+    return None, preferred_desc_names
+
+
+def _diagnostics_prediction_vector(context, matrix=None):
+    model_data = context.get("model_data") or {}
+    y_pred = model_data.get("y_pred")
+    if y_pred is None:
+        y_pred = context.get("y_pred_all")
+    if y_pred is not None:
+        try:
+            y_pred = np.asarray(y_pred, dtype=float).ravel()
+            if matrix is None or len(y_pred) == getattr(matrix, "shape", [len(y_pred)])[0]:
+                return y_pred
+        except Exception:
+            pass
+
+    model = context.get("model")
+    if model is None or matrix is None:
+        return None
+
+    # Auto-selected models are Pipelines that expect the original descriptor
+    # matrix. The AD matrix is already in selected model space and is only for
+    # leverage; passing it back into the pipeline applies selection twice.
+    if isinstance(model, Pipeline):
+        original_matrix = model_data.get("X_original")
+        if original_matrix is None:
+            original_matrix = context.get("X_all_current")
+        try:
+            original_matrix = np.asarray(original_matrix, dtype=float)
+            if (
+                original_matrix.ndim == 2
+                and original_matrix.shape[0] == matrix.shape[0]
+            ):
+                return np.asarray(model.predict(original_matrix), dtype=float).ravel()
+        except Exception:
+            pass
+
+    return np.asarray(model.predict(matrix), dtype=float).ravel()
 
 
 def _diagnostics_dimension_context(context):
@@ -213,10 +330,20 @@ def _log_dimension_failure(stage, exc, context, event):
         match = re.search(r"index\s+(\d+)\s+is out of bounds", str(exc))
         requested = int(match.group(1)) if match else None
 
-    user_message = (
-        "Диагностика не рассчитана из-за несовместимости матрицы признаков после отбора дескрипторов. "
-        "Вероятная причина: индексы выбранных дескрипторов применены повторно."
+    error_text = str(exc).lower()
+    is_index_mismatch = isinstance(exc, IndexError) or (
+        "out of bounds" in error_text
+        or "indices are out-of-bounds" in error_text
+        or "index exceeds matrix dimensions" in error_text
     )
+    if is_index_mismatch:
+        user_message = (
+            "Диагностика не рассчитана из-за несовместимости матрицы признаков "
+            "после отбора дескрипторов. Проверьте журнал событий для точных размеров матрицы."
+        )
+    else:
+        user_message = f"Диагностика не рассчитана: {exc}"
+
     if "log_streamlit_message" in globals():
         if x_cols is not None and requested is not None:
             log_message = (
@@ -300,7 +427,9 @@ def _diagnostics_render_residual_vs_descriptor(context):
 
     try:
         y_true = np.asarray(y_true, dtype=float)
-        y_pred = np.asarray(model.predict(context.get("X_scaled")), dtype=float)
+        y_pred = _diagnostics_prediction_vector(context, matrix)
+        if y_pred is None:
+            raise ValueError("No compatible prediction vector is available for residual diagnostics.")
     except Exception as exc:
         user_message = _log_dimension_failure(
             "RESIDUAL_DIAGNOSTICS",
@@ -530,27 +659,30 @@ def render_model_diagnostics_section(context):
     try:
         smiles_for_ad = data[smiles_col_current].iloc[valid_indices_current].values
     
+        ad_matrix, ad_desc_names = _diagnostics_descriptor_matrix(context)
+        if ad_matrix is None:
+            raise ValueError("No compatible descriptor matrix is available for Applicability Domain.")
+
         ad_table, ad_info = qspr_make_ad_table(
-            X_train=X_scaled,
+            X_train=ad_matrix,
             smiles=smiles_for_ad,
             y=y_all_current,
             original_indices=valid_indices_current,
-            desc_names=desc_names_current
+            desc_names=ad_desc_names
         )
         
         st.session_state.ad_info = ad_info
-        ad_status = ad_table[t('ad_table.col_status')]
+        ad_status_codes = np.asarray(ad_info.get("status", []), dtype=str)
         n_out_ad = int(
-            (
-                (ad_status == "OUT_OF_AD")
-                | (ad_status == t('ad_leverage.out_ad'))
-            ).sum()
+            np.sum(ad_status_codes == "OUT_OF_AD")
         )
     
         # --------------------------------------------------
         # Williams Plot данные
     
-        y_pred_ad = model.predict(X_scaled)
+        y_pred_ad = _diagnostics_prediction_vector(context, ad_matrix)
+        if y_pred_ad is None:
+            raise ValueError("No compatible prediction vector is available for Williams Plot.")
     
         williams_df = ad_build_williams_plot_df(
             y_true=y_all_current,
@@ -603,7 +735,19 @@ def render_model_diagnostics_section(context):
                 t("applicability_domain.noninformative_threshold_warning")
             )
         if ad_info.get("warnings"):
-            st.caption("AD warnings: " + "; ".join(map(str, ad_info.get("warnings", []))))
+            warning_labels = {
+                "DESCRIPTOR_MATRIX_RANK_DEFICIENT": t(
+                    "applicability_domain.rank_deficient_warning"
+                ),
+                "LEVERAGE_THRESHOLD_GE_1_NOT_INFORMATIVE": t(
+                    "applicability_domain.noninformative_threshold_warning"
+                ),
+            }
+            warnings_text = [
+                warning_labels.get(str(code), str(code))
+                for code in ad_info.get("warnings", [])
+            ]
+            st.caption("; ".join(warnings_text))
     
         # --------------------------------------------------
         # Leverage plot
@@ -612,7 +756,7 @@ def render_model_diagnostics_section(context):
     
         ax_ad.scatter(
             range(len(ad_table)),
-            ad_table[t('ad_table.col_leverage')],
+            np.asarray(ad_info["leverage"], dtype=float),
             alpha=0.75,
             s=35
         )
@@ -666,9 +810,9 @@ def render_model_diagnostics_section(context):
             )
     
             if smiles_for_ad is not None:
-                high_residual_df["SMILES"] = np.array(
-                    smiles_for_ad
-                )[high_residual_df.index]
+                high_residual_df["SMILES"] = np.asarray(smiles_for_ad)[
+                    high_residual_df.index.to_numpy(dtype=int)
+                ]
     
             message = t('applicability_domain.warning_high_residual', count=len(high_residual_df))
             st.warning(message)
@@ -714,8 +858,8 @@ def render_model_diagnostics_section(context):
             )
     
             if smiles_for_ad is not None:
-                critical_df["SMILES"] = np.array(smiles_for_ad)[
-                    critical_df.index
+                critical_df["SMILES"] = np.asarray(smiles_for_ad)[
+                    critical_df.index.to_numpy(dtype=int)
                 ]
     
             message = t('applicability_domain.error_critical', count=len(critical_df))
@@ -805,10 +949,8 @@ def render_model_diagnostics_section(context):
         )
     
         if n_out_ad > 0:
-            ad_status = ad_table[t('ad_table.col_status')]
             ad_outside = ad_table[
-                (ad_status == "OUT_OF_AD")
-                | (ad_status == t('ad_leverage.out_ad'))
+                ad_status_codes == "OUT_OF_AD"
             ].copy()
     
             show_molecule_grid_from_table(
@@ -1203,6 +1345,7 @@ def render_model_diagnostics_section(context):
                 if st.button(
                     t('feature_importance.shap_button'),
                     key=f"calculate_descriptor_shap_{model_name}",
+                    type="primary",
                 ):
                     try:
                         sample_size = min(

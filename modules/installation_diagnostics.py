@@ -109,7 +109,11 @@ def _padel_functional(java_ok: bool) -> tuple[bool, str]:
     if not java_ok:
         return False, "Java is required for PaDEL"
     try:
+        from modules.padel_runtime import prepare_padel_runtime
         from padelpy import from_smiles
+        runtime = prepare_padel_runtime()
+        if not runtime.get("ready", False):
+            return False, runtime.get("message", "PaDEL runtime preparation failed")
         result = from_smiles(["CCO"], fingerprints=False)
         if result and isinstance(result, list) and result[0]:
             return True, f"{len(result[0])} descriptors"

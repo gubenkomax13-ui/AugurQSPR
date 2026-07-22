@@ -75,6 +75,10 @@ class ValidationExtensionsCoreTests(unittest.TestCase):
         self.assertIn("train_size", table.columns)
         self.assertIn("cv_rmse_mean", table.columns)
         self.assertGreaterEqual(len(table), 2)
+        interpretation = result["interpretation"]
+        self.assertIn("primary_diagnosis", interpretation)
+        self.assertIn("signals", interpretation)
+        self.assertIn("gap_fraction", interpretation)
 
     def test_prediction_interval_coverage_returns_observed_coverage(self):
         result = prediction_interval_holdout_coverage(

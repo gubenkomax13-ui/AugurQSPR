@@ -9,6 +9,7 @@ import streamlit as st
 from modules.i18n import t
 from modules.validation_extensions_core import (
     group_holdout_validation,
+    interpret_learning_curve_table,
     learning_curve_validation,
     prediction_interval_holdout_coverage,
     repeated_kfold_validation,
@@ -65,6 +66,63 @@ def _render_metric_triplet(metrics, prefix=""):
     col1.metric(f"{prefix}R2", _format_metric(metrics.get("R2")))
     col2.metric(f"{prefix}RMSE", _format_metric(metrics.get("RMSE")))
     col3.metric(f"{prefix}MAE", _format_metric(metrics.get("MAE")))
+
+
+def _render_learning_curve_interpretation(result):
+    interpretation = result.get("interpretation", {}) or {}
+    if not interpretation:
+        table = result.get("table")
+        try:
+            interpretation = interpret_learning_curve_table(table, y=y_all_current)
+            result["interpretation"] = interpretation
+            result["diagnosis"] = interpretation["primary_diagnosis"]
+            result["rmse_gap"] = interpretation["rmse_gap"]
+        except (TypeError, ValueError):
+            interpretation = {}
+    signals = interpretation.get("signals", {}) or {}
+    if not interpretation:
+        return
+
+    values = {
+        "train": _format_metric(interpretation.get("train_rmse")),
+        "cv": _format_metric(interpretation.get("cv_rmse")),
+        "gap": _format_metric(interpretation.get("rmse_gap")),
+        "gap_percent": _format_metric(100.0 * interpretation.get("gap_fraction", 0.0), digits=1),
+    }
+    diagnosis = interpretation.get("primary_diagnosis")
+    diagnosis_key = {
+        "possible_overfitting": "overfitting",
+        "possible_underfitting": "underfitting",
+        "more_data_may_help": "more_data",
+        "curve_plateau": "plateau",
+    }.get(diagnosis, "plateau")
+    message = t(f"advanced_validation.lc_diagnosis_{diagnosis_key}", **values)
+    if diagnosis in {"possible_overfitting", "possible_underfitting"}:
+        st.warning(message)
+    elif diagnosis == "more_data_may_help":
+        st.info(message)
+    else:
+        st.success(message)
+
+    improvement = interpretation.get("improvement_fraction")
+    if signals.get("more_data_may_help") and pd.notna(improvement):
+        st.markdown(t(
+            "advanced_validation.lc_more_data_signal",
+            improvement=_format_metric(100.0 * improvement, digits=1),
+        ))
+    elif signals.get("curve_plateau"):
+        st.markdown(t("advanced_validation.lc_plateau_signal"))
+
+    cv_variation = interpretation.get("cv_variation")
+    if signals.get("unstable_cv") and pd.notna(cv_variation):
+        st.markdown(t(
+            "advanced_validation.lc_unstable_signal",
+            variation=_format_metric(100.0 * cv_variation, digits=1),
+        ))
+    else:
+        st.markdown(t("advanced_validation.lc_stable_signal"))
+
+    st.caption(t(f"advanced_validation.lc_recommendation_{diagnosis_key}"))
 
 
 def render_advanced_validation_section(context):
@@ -317,12 +375,22 @@ def render_advanced_validation_section(context):
                 )
                 ax_lc.set_xlabel(t("advanced_validation.training_set_size"))
                 ax_lc.set_ylabel("RMSE")
-                ax_lc.set_title(t("advanced_validation.learning_curve_title", diagnosis=lc_result.get("diagnosis")))
+                diagnosis_key = {
+                    "possible_overfitting": "overfitting",
+                    "possible_underfitting": "underfitting",
+                    "more_data_may_help": "more_data",
+                    "curve_plateau": "plateau",
+                }.get(lc_result.get("diagnosis"), "plateau")
+                ax_lc.set_title(t(
+                    "advanced_validation.learning_curve_title",
+                    diagnosis=t(f"advanced_validation.lc_label_{diagnosis_key}"),
+                ))
                 ax_lc.legend()
                 ax_lc.grid(True, alpha=0.3)
                 fig_lc.tight_layout()
                 st.pyplot(fig_lc)
                 plt.close(fig_lc)
+                _render_learning_curve_interpretation(lc_result)
                 st.dataframe(lc_table, width="stretch", hide_index=True)
 
     _render_tool_badge()

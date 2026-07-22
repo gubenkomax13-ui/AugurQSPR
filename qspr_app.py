@@ -169,6 +169,8 @@ QSPR_PROPERTY_ALIASES = [
     "activity", "value", "property", "property_value", "response",
     "target", "y", "ic50", "ec50", "ki", "kd", "pic50", "pec50",
     "pki", "pkd", "affinity", "potency", "inhibition", "effect",
+    "bp", "bp exp", "bp_exp", "boiling point", "boiling_point",
+    "boilingpoint", "температура кипения", "темп кипения", "т кип",
     "свойство", "активность", "значение", "ответ",
 ]
 
@@ -1239,6 +1241,14 @@ st.markdown(
         width: 320px !important;
     }
 
+    /* Streamlit keeps the sidebar section in the DOM when collapsed. Do not
+       let the expanded-width override leave a clipped strip on the canvas. */
+    section[data-testid="stSidebar"][aria-expanded="false"],
+    section[data-testid="stSidebar"][aria-expanded="false"] > div {
+        min-width: 0 !important;
+        width: 0 !important;
+    }
+
     section[data-testid="stSidebar"] * {
         white-space: normal !important;
         overflow-wrap: anywhere !important;
@@ -1788,8 +1798,16 @@ def show_dataset_change_report(
 
     st.markdown(t('dataset_change.boxplot_title'))
 
+    # Series.attrs may contain nested DataFrames from the QC pipeline. Pandas
+    # compares attrs during concat, which makes a DataFrame comparison
+    # ambiguous. The boxplot only needs numeric values, so drop metadata here.
+    before_box_values = pd.Series(before_values, copy=True)
+    after_box_values = pd.Series(after_values, copy=True)
+    before_box_values.attrs = {}
+    after_box_values.attrs = {}
+
     compare_box_df = pd.DataFrame({
-        target_col: pd.concat([before_values, after_values], ignore_index=True),
+        target_col: pd.concat([before_box_values, after_box_values], ignore_index=True),
         t('dataset_change.state'): (
             [t('dataset_change.state_before')] * len(before_values)
             + [t('dataset_change.state_after')] * len(after_values)
@@ -3438,18 +3456,21 @@ def qspr_detect_data_leakage_columns(
         "response",
         "endpoint",
         "activity",
-        "boiling",
-        "boilingpoint",
-        "boil",
-        "bp",
-        "melting",
-        "meltingpoint",
-        "mp",
-        "logp_exp",
-        "logpexp",
-        "solubility_exp",
-        "solubilityexp",
     ]
+
+    # Property-specific names are suspicious only for the matching endpoint.
+    # Otherwise ordinary molecular descriptors such as Mordred::Mp are falsely
+    # treated as a copied target when modelling an unrelated property.
+    target_property_tokens = []
+    if any(marker in target_norm for marker in ["boil", "bp"]):
+        target_property_tokens.extend(["boiling", "boilingpoint", "boil", "bp"])
+    if any(marker in target_norm for marker in ["melt", "mp"]):
+        target_property_tokens.extend(["melting", "meltingpoint", "mp"])
+    if "logp" in target_norm:
+        target_property_tokens.extend(["logp_exp", "logpexp"])
+    if "solubility" in target_norm:
+        target_property_tokens.extend(["solubility_exp", "solubilityexp"])
+    suspicious_tokens.extend(target_property_tokens)
 
     target_parts = [
         p for p in target_lower
@@ -9146,7 +9167,7 @@ SESSION_DEFAULTS = {
     "voting_rf_weight": 1.0,
     "voting_extra_trees_weight": 1.0,
     "voting_ridge_weight": 1.0,
-    "auto_feature_selection": False,
+    "auto_feature_selection": True,
     "auto_hyperparameter_optimization": False,
     "auto_feature_selection_method": "fast",
     "auto_max_features": 50,
@@ -9191,6 +9212,7 @@ SESSION_DEFAULTS = {
     "struct_filter_result_df": None,
     "struct_filter_applied": False,
     "struct_filter_note": "",
+    "struct_filter_report": {},
     "xtb_descriptors_df": None,
     "xtb_descriptors_report": None,
     "et_n_estimators": 300,
@@ -9309,6 +9331,7 @@ def reset_project_state_for_new_file():
         "struct_filter_result_df",
         "struct_filter_applied",
         "struct_filter_note",
+        "struct_filter_report",
 
         # Пользовательские дескрипторы / МНК
         "incremental_result",
@@ -9822,7 +9845,18 @@ if not numeric_cols:
     st.stop()
 
 property_priority = qspr_pick_columns_by_aliases(numeric_cols, QSPR_PROPERTY_ALIASES)
-numeric_cols = property_priority + [col for col in numeric_cols if col not in property_priority]
+numeric_identifier_names = {
+    "no", "number", "номер", "id", "index", "row", "rowid", "record", "recordid"
+}
+identifier_cols = [
+    col for col in numeric_cols
+    if qspr_norm_column_name(col) in numeric_identifier_names or str(col).strip() == "№"
+]
+non_identifier_numeric_cols = [col for col in numeric_cols if col not in identifier_cols]
+if property_priority:
+    numeric_cols = property_priority + [col for col in numeric_cols if col not in property_priority]
+elif non_identifier_numeric_cols:
+    numeric_cols = non_identifier_numeric_cols + identifier_cols
 
 st.markdown(
     f"""
@@ -10317,7 +10351,6 @@ if isinstance(st.session_state.get("standardized_molecule_df"), pd.DataFrame):
                     context_cols=duplicate_context_cols,
                 )
                 st.session_state.standardization_duplicate_policy_report = duplicate_policy_report
-                st.session_state.standardization_duplicate_policy = duplicate_policy
 
                 private_cols = [
                     col for col in applied_df.columns
@@ -11166,6 +11199,7 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
     if reset_struct_filter:
         st.session_state.struct_filter_result_df = None
         st.session_state.struct_filter_note = ""
+        st.session_state.struct_filter_report = {}
         st.success(t('struct_filter.reset_success'))
 
     if run_struct_filter:
@@ -11218,6 +11252,7 @@ with st.expander(t('struct_filter.expander_title'), expanded=False):
             )
 
             st.session_state.struct_filter_result_df = filtered_df.copy()
+            st.session_state.struct_filter_report = filter_report if isinstance(filter_report, dict) else {}
 
             st.session_state.struct_filter_note = t('struct_filter.filter_note', found=len(filtered_df), total=len(data))
 
@@ -11330,7 +11365,7 @@ if filtered_result is not None:
                 dataset_provenance = {
                     "parent_hash": parent_hash,
                     "operation": "structural_filter",
-                    "parameters": deepcopy(filter_report) if isinstance(filter_report, dict) else {},
+                    "parameters": deepcopy(st.session_state.get("struct_filter_report", {})),
                     "parent_row_count": int(len(parent_df)),
                     "kept_row_count": int(len(filtered_result)),
                     "removed_row_count": int(max(len(parent_df) - len(filtered_result), 0)),

@@ -44,6 +44,11 @@ import numpy as np
 import pandas as pd
 
 try:
+    from .padel_runtime import prepare_padel_runtime
+except ImportError:
+    from modules.padel_runtime import prepare_padel_runtime
+
+try:
     from .model_catalog import (
         MODEL_GROUP_BOOSTING,
         MODEL_GROUP_KERNEL_SIMILARITY,
@@ -162,6 +167,12 @@ try:
     from padelpy import from_smiles
     padel_available = True
     padel_status = _optional_dependency_status("padelpy")
+    padel_runtime = prepare_padel_runtime()
+    if not padel_runtime.get("ready", False):
+        padel_status = _optional_dependency_status(
+            "padelpy",
+            RuntimeError(padel_runtime.get("message", "PaDEL runtime preparation failed")),
+        )
 except Exception as exc:
     padel_available = False
     padel_status = _optional_dependency_status("padelpy", exc)

@@ -121,35 +121,44 @@ def render_model_comparison_section(context):
         except Exception:
             online_light_mode = False
 
-    online_default_models = [
-        "Множественная линейная регрессия (MLR)",
-        "PLS Regression",
-        "Ridge",
-        "LASSO",
-        "Elastic Net",
-        "CART Regression",
-    ]
-    
-    safe_default_models = [
-        "Множественная линейная регрессия (MLR)",
-        "PLS Regression",
-        "Ridge",
-        "LASSO",
-        "Elastic Net",
-        "SVR",
-        "KNN Regression",
-        "Random Forest",
-        "CART Regression",
-        "MARS-like Regression",
-        "Spline Regression",
-        "GAM Regression",
-        "Voting Regressor",
+    requested_default_models = [
+        "linear_regression",
+        "pls_regression",
+        "random_forest",
+        "svr",
+        "hist_gradient_boosting",
+        "ridge_regression",
+        "lasso_regression",
+        "elastic_net",
     ]
 
+    online_default_models = [
+        "linear_regression",
+        "pls_regression",
+        "ridge_regression",
+        "lasso_regression",
+        "elastic_net",
+    ]
+
+    safe_default_models = requested_default_models
     if online_light_mode:
         safe_default_models = online_default_models
     
     safe_default_models = [m for m in safe_default_models if m in all_models_for_compare]
+    compare_models_widget_key = "auto_compare_selected_models_v3"
+    if compare_models_widget_key not in st.session_state:
+        legacy_selection = st.session_state.get("auto_compare_selected_models")
+        if isinstance(legacy_selection, list) and legacy_selection:
+            initial_selection = [
+                model_name
+                for model_name in legacy_selection
+                if model_name in all_models_for_compare
+            ]
+        else:
+            initial_selection = []
+        st.session_state[compare_models_widget_key] = (
+            initial_selection or list(safe_default_models)
+        )
     
     if not all_models_for_compare:
         trained_models = st.session_state.get("trained_models", {}) or {}
@@ -193,9 +202,18 @@ def render_model_comparison_section(context):
                 t('model_comparison.candidates_label'),
                 options=all_models_for_compare,
                 default=safe_default_models,
-                key="auto_compare_selected_models",
+                key=compare_models_widget_key,
                 help=t('model_comparison.candidates_help'),
                 format_func=get_model_display_name,
+            )
+
+            def restore_recommended_models():
+                st.session_state[compare_models_widget_key] = list(safe_default_models)
+
+            st.button(
+                t('model_comparison.restore_recommended_models'),
+                key="restore_recommended_compare_models",
+                on_click=restore_recommended_models,
             )
 
             st.caption(t(
@@ -298,7 +316,7 @@ def render_model_comparison_section(context):
                     t('model_comparison.top_n_per_check_label'),
                     min_value=1,
                     max_value=extra_top_max,
-                    value=min(3, extra_top_max),
+                    value=1,
                     step=1,
                     key="cmp_loo_top_n",
                     disabled=not cmp_run_loo_top,
@@ -316,7 +334,7 @@ def render_model_comparison_section(context):
                     t('model_comparison.mc_repeats_label'),
                     min_value=10,
                     max_value=50 if online_light_mode else 500,
-                    value=10 if online_light_mode else 50,
+                    value=10,
                     step=10,
                     key="cmp_mc_repeats",
                     disabled=not cmp_run_montecarlo_top,
@@ -326,7 +344,7 @@ def render_model_comparison_section(context):
                     t('model_comparison.top_n_per_check_label'),
                     min_value=1,
                     max_value=extra_top_max,
-                    value=min(3, extra_top_max),
+                    value=1,
                     step=1,
                     key="cmp_mc_top_n",
                     disabled=not cmp_run_montecarlo_top,
@@ -344,7 +362,7 @@ def render_model_comparison_section(context):
                     t('model_comparison.bootstrap_repeats_label'),
                     min_value=10,
                     max_value=50 if online_light_mode else 500,
-                    value=10 if online_light_mode else 100,
+                    value=10,
                     step=10,
                     key="cmp_bootstrap_repeats",
                     disabled=not cmp_run_bootstrap_top,
@@ -354,7 +372,7 @@ def render_model_comparison_section(context):
                     t('model_comparison.top_n_per_check_label'),
                     min_value=1,
                     max_value=extra_top_max,
-                    value=min(3, extra_top_max),
+                    value=1,
                     step=1,
                     key="cmp_bootstrap_top_n",
                     disabled=not cmp_run_bootstrap_top,
@@ -372,7 +390,7 @@ def render_model_comparison_section(context):
                     t('model_comparison.yrandom_repeats_label'),
                     min_value=10,
                     max_value=50 if online_light_mode else 1000,
-                    value=10 if online_light_mode else 100,
+                    value=10,
                     step=10,
                     key="cmp_yrandom_repeats",
                     disabled=not cmp_run_yrandom_top,

@@ -247,7 +247,9 @@ def qspr_calculate_leverage_ad(X_train, X_query=None, desc_names=None):
         "n": int(n),
         "status": status,
         "warnings": warnings,
-        "informative": bool(threshold < 1.0 and rank >= p + 1),
+        # Rank deficiency is reported separately. With a pseudoinverse and a
+        # rank-aware threshold, it does not by itself make leverage unusable.
+        "informative": bool(threshold < 1.0),
     }
 
 

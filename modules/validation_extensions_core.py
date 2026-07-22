@@ -406,22 +406,99 @@ def learning_curve_validation(
         "cv_r2_mean": np.nanmean(test_r2, axis=1),
         "cv_r2_std": np.nanstd(test_r2, axis=1, ddof=1),
     })
-    final = table.iloc[-1]
-    rmse_gap = float(final["cv_rmse_mean"] - final["train_rmse_mean"])
-    if rmse_gap > max(0.25 * abs(float(final["train_rmse_mean"])), 1e-12):
-        diagnosis = "possible_overfitting"
-    elif len(table) >= 2 and table["cv_rmse_mean"].iloc[-2] - table["cv_rmse_mean"].iloc[-1] > 1e-12:
-        diagnosis = "more_data_may_help"
-    else:
-        diagnosis = "curve_plateau"
+    interpretation = interpret_learning_curve_table(table, y=y)
 
     return {
         "method": "learning_curve",
         "model_name": model_name,
         "k": k,
         "table": table,
-        "diagnosis": diagnosis,
+        "diagnosis": interpretation["primary_diagnosis"],
+        "rmse_gap": interpretation["rmse_gap"],
+        "interpretation": interpretation,
+    }
+
+
+def interpret_learning_curve_table(table, y=None):
+    """Summarize learning-curve signals without treating heuristics as proof."""
+    required = {
+        "train_rmse_mean",
+        "cv_rmse_mean",
+        "cv_rmse_std",
+    }
+    if not isinstance(table, pd.DataFrame) or table.empty or not required.issubset(table.columns):
+        raise ValueError("Learning-curve table is empty or incomplete.")
+
+    usable = table.replace([np.inf, -np.inf], np.nan).dropna(
+        subset=["train_rmse_mean", "cv_rmse_mean"]
+    )
+    if usable.empty:
+        raise ValueError("Learning-curve table contains no finite RMSE values.")
+
+    final = usable.iloc[-1]
+    train_rmse = float(final["train_rmse_mean"])
+    cv_rmse = float(final["cv_rmse_mean"])
+    cv_rmse_std = float(final.get("cv_rmse_std", np.nan))
+    scale = max(abs(cv_rmse), np.finfo(float).eps)
+    rmse_gap = float(cv_rmse - train_rmse)
+    gap_fraction = float(max(rmse_gap, 0.0) / scale)
+    cv_variation = float(cv_rmse_std / scale) if np.isfinite(cv_rmse_std) else np.nan
+
+    improvement_fraction = np.nan
+    if len(usable) >= 2:
+        previous_cv = float(usable["cv_rmse_mean"].iloc[-2])
+        previous_scale = max(abs(previous_cv), np.finfo(float).eps)
+        improvement_fraction = float((previous_cv - cv_rmse) / previous_scale)
+
+    target_std = np.nan
+    if y is not None:
+        y_values = np.asarray(y, dtype=float).reshape(-1)
+        finite_y = y_values[np.isfinite(y_values)]
+        if finite_y.size >= 2:
+            target_std = float(np.std(finite_y, ddof=1))
+
+    overfitting = bool(rmse_gap > 0.0 and gap_fraction >= 0.25)
+    more_data_may_help = bool(
+        np.isfinite(improvement_fraction) and improvement_fraction >= 0.05
+    )
+    curve_plateau = bool(
+        np.isfinite(improvement_fraction) and abs(improvement_fraction) < 0.05
+    )
+    unstable_cv = bool(np.isfinite(cv_variation) and cv_variation >= 0.25)
+    underfitting = bool(
+        np.isfinite(target_std)
+        and target_std > np.finfo(float).eps
+        and train_rmse / target_std >= 0.75
+        and cv_rmse / target_std >= 0.75
+        and gap_fraction < 0.25
+    )
+
+    if underfitting:
+        primary_diagnosis = "possible_underfitting"
+    elif overfitting:
+        primary_diagnosis = "possible_overfitting"
+    elif more_data_may_help:
+        primary_diagnosis = "more_data_may_help"
+    else:
+        primary_diagnosis = "curve_plateau"
+
+    return {
+        "primary_diagnosis": primary_diagnosis,
+        "train_rmse": train_rmse,
+        "cv_rmse": cv_rmse,
+        "cv_rmse_std": cv_rmse_std,
         "rmse_gap": rmse_gap,
+        "gap_fraction": gap_fraction,
+        "improvement_fraction": improvement_fraction,
+        "cv_variation": cv_variation,
+        "target_std": target_std,
+        "signals": {
+            "possible_overfitting": overfitting,
+            "possible_underfitting": underfitting,
+            "more_data_may_help": more_data_may_help,
+            "curve_plateau": curve_plateau,
+            "unstable_cv": unstable_cv,
+        },
     }
 
 
